@@ -263,10 +263,16 @@ FLINT/lsplit/ls-inline.sml
 
 (* The CPS stages *)
 CPS/clos/globalfix.sml
-CPS/clos/closure.sml
-CPS/clos/freeclose.sml
-CPS/clos/staticprof.sml
-CPS/clos/unrebind.sml
+(* CPS/clos/closure.sml *)
+(* CPS/clos/freeclose.sml *)
+(* CPS/clos/staticprof.sml *)
+(* CPS/clos/unrebind.sml *)
+CPS/cfa-clos/closure.sml
+CPS/cfa-clos/cfa/cfa.sig
+CPS/cfa-clos/cfa/0cfa.sml
+CPS/cfa-clos/cfa/call-graph.sml
+CPS/cfa-clos/cfa/labelled-cps.sml
+
 CPS/convert/convert.sml
 CPS/convert/cpstrans.sml
 CPS/convert/switch.sml
