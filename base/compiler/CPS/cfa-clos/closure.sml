@@ -3,11 +3,11 @@
  * Closure-convert a CPS function.
  *)
 
-signature CLOSURE = sig
-  val closeCPS : CPS.function -> CPS.function
-end (* signature CLOSURE *)
+(* signature CLOSURE = sig *)
+(*   val closeCPS : CPS.function -> CPS.function *)
+(* end (1* signature CLOSURE *1) *)
 
-functor Closure(MachSpec : MACH_SPEC) : CLOSURE = struct
+functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
   exception Unimp
 
   fun test cps =
@@ -20,6 +20,6 @@ functor Closure(MachSpec : MACH_SPEC) : CLOSURE = struct
       ()
     end
 
-  fun closeCPS cps = (test cps; raise Unimp)
+  fun closeCPS cps = (test cps; cps)
 
 end

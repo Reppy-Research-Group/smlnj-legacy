@@ -18,6 +18,7 @@ functor CPSCompFn (
     structure CPStrans = CPStrans(MachSpec)
     structure CPSopt = CPSopt(MachSpec)
     structure Closure = Closure(MachSpec)
+    structure CFAClosure = CFAClosure(MachSpec)
     structure Spill = SpillFn(MachSpec)
 
     structure Machine = Gen
@@ -35,7 +36,7 @@ functor CPSCompFn (
     val cpsopt    = phase "CPS 070 cpsopt" CPSopt.reduce
     val litsplit  = phase "CPS 075 litsplit" Literals.split
     val newlitsplit = phase "CPS 075 litsplit" NewLiterals.split
-    val closure   = phase "CPS 080 closure"  Closure.closeCPS
+    val closure   = phase "CPS 080 closure"  (fn x => (CFAClosure.closeCPS x; Closure.closeCPS x))
     val globalfix = phase "CPS 090 globalfix" GlobalFix.globalfix
     val spill     = phase "CPS 100 spill" Spill.spill
     val limit     = phase "CPS 110 limit" Limit.nolimit
