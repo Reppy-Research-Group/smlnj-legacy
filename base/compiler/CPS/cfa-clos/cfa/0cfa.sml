@@ -217,169 +217,242 @@ structure ZeroCFA :> CFA = struct
 
   exception Unimp
   exception Impossible of string
-  fun analyze (fun_kind, name, formals, tys, body) =
-    let
-      exception EpochLookUp
-      val epochTable = LCPS.Tbl.mkTable (1024, EpochLookUp)
-      val store = Store.new ()
+  structure Context :> sig
+    type t
 
-      fun fetchEpoch cexp =
-        case LCPS.Tbl.find epochTable cexp
-          of SOME epoch => epoch
-           | NONE => (LCPS.Tbl.insert epochTable (cexp, ~1); ~1)
+    val new: unit -> t
+    val guard: (t -> LCPS.cexp -> unit) -> t -> LCPS.cexp -> unit
+    val lookup: t -> LCPS.lvar -> Value.t
+    val add: t -> (LCPS.lvar * Value.concrete) -> bool
+    val merge: t -> (LCPS.lvar * Value.t) -> bool
+    val dump: t -> unit
+    val escape: t -> LCPS.lvar -> unit
+    val escapeSet: t -> LambdaVar.Set.set
+  end = struct
 
-      fun evalVar v = Store.lookup store v
+    type t = { epochTable: int LCPS.Tbl.hash_table
+             , store: Store.t
+             , escapeSet: LambdaVar.Set.set ref
+             }
 
-      fun evalValue (CPS.VAR v) =
-            evalVar v
-        | evalValue (CPS.LABEL _) =
-            raise (Impossible "Label value before closure conversion")
-        | evalValue _ =
-            Value.mk Value.DATA
+    exception EpochLookUp
+    fun new () =
+      { epochTable = LCPS.Tbl.mkTable (1024, EpochLookUp)
+      , store = Store.new ()
+      , escapeSet = ref LambdaVar.Set.empty
+      }
 
-      fun access (concretes, CPS.OFFp 0) = concretes
-        | access (concretes, CPS.OFFp i) =
-            let
-              fun offset addrs = SOME (Value.RECORD (List.drop (addrs, i)))
-                                 handle Subscript => NONE
-            in
-              case Value.recordsL concretes
-                of SOME candidates => List.mapPartial offset candidates
-                 | NONE => [Value.T]
-            end
-        | access (concretes, CPS.SELp (i, p)) =
-            let
-              fun get addrs =
-                (let
-                   val addr = List.nth (addrs, i)
-                   val values = Value.toList (Store.lookup store addr)
-                 in
-                   access (values, p)
-                 end)
-                handle Subscript => []
-            in
-              case Value.recordsL concretes
-                of SOME candidates => List.concatMap get candidates
-                 | NONE => [Value.T]
-            end
+    fun fetchEpoch epochTable cexp =
+      case LCPS.Tbl.find epochTable cexp
+        of SOME epoch => epoch
+         | NONE => (LCPS.Tbl.insert epochTable (cexp, ~1); ~1)
 
-      fun allocValue (dest, src, path) =
+    fun guard f (ctx as {epochTable, store, ...}: t) cexp =
+      let
+        val lastEpoch = fetchEpoch epochTable cexp
+        val currEpoch = Store.epoch store
+      in
+        if currEpoch <= lastEpoch then
+          ()
+        else
+          (LCPS.Tbl.insert epochTable (cexp, currEpoch);
+           f ctx cexp)
+      end
+
+    val lookup = Store.lookup o (fn (ctx: t) => #store ctx)
+    val add = Store.update o (fn (ctx: t) => #store ctx)
+    val merge = Store.merge o (fn (ctx: t) => #store ctx)
+    fun dump {epochTable, store, escapeSet} =
+      (Store.dump store;
+       print "\nEscaping: {";
+       LambdaVar.Set.app (fn x => print (LambdaVar.lvarName x ^ ","))
+                         (!escapeSet);
+       print "}")
+    fun escape (ctx: t) name =
+      let val setRef = #escapeSet ctx
+      in  setRef := LambdaVar.Set.add (!setRef, name)
+      end
+
+    fun escapeSet ({escapeSet, ...}: t) = !escapeSet
+  end
+
+  fun evalValue ctx (CPS.VAR v) =
+        Context.lookup ctx v
+    | evalValue ctx (CPS.LABEL _) =
+        raise (Impossible "Label value before closure conversion")
+    | evalValue _ _ =
+        Value.mk Value.DATA
+
+  fun dump ctx cexp =
+    (print "Current expression:\n";
+     PPCps.prcps (LCPS.unlabel cexp);
+     print "\nCurrent state:\n";
+     Context.dump ctx;
+     print "=================\n\n\n")
+
+  fun loopExp ctx cexp = Context.guard loopExpCase ctx cexp
+  and loopExpCase ctx (LCPS.APP (_, f, args)) =
         let
-          val concretes = access (Value.toList (evalValue src), path)
-          val value = Value.from concretes
+          val argVals = map (evalValue ctx) args
+          fun call (Value.FUN (_, name, formals, types, body)) =
+                ((app (ignore o Context.merge ctx)
+                     (ListPair.zipEq (formals, argVals));
+                  loopExp ctx body)
+                 handle ListPair.UnequalLengths => ())
+                (* if the function is applied with incorrect number
+                 * of arguments, this path is aborted *)
+             | call Value.T =
+                 app (fn (CPS.VAR v) => Context.escape ctx v | _ => ()) args
+             | call _ = ()
+                (* if applying a non-function, nothing to be done *)
         in
-          Store.merge store (dest, value); dest
+          Value.app call (evalValue ctx f)
         end
-
-      fun dump cexp =
-        (print "Current expression:\n";
-         PPCps.prcps (LCPS.unlabel cexp);
-         print "\nCurrent state:\n";
-         Store.dump store;
-         print "=================\n\n\n")
-
-      fun go cexp =
+    | loopExpCase ctx (LCPS.RECORD (_, _, values, x, body)) =
         let
-          val lastEpoch = fetchEpoch cexp
-          val currEpoch = Store.epoch store
+          fun access (concretes, CPS.OFFp 0) = concretes
+            | access (concretes, CPS.OFFp i) =
+                let
+                  fun offset addrs =
+                    SOME (Value.RECORD (List.drop (addrs, i)))
+                    handle Subscript => NONE
+                in
+                  case Value.recordsL concretes
+                    of SOME candidates => List.mapPartial offset candidates
+                     | NONE => [Value.T]
+                end
+            | access (concretes, CPS.SELp (i, p)) =
+                let
+                  fun get addrs =
+                    (let
+                       val addr = List.nth (addrs, i)
+                       val values = Value.toList (Context.lookup ctx addr)
+                     in
+                       access (values, p)
+                     end)
+                    handle Subscript => []
+                in
+                  case Value.recordsL concretes
+                    of SOME candidates => List.concatMap get candidates
+                     | NONE => [Value.T]
+                end
+
+          fun alloc (dest, src, path) =
+            let
+              val concretes = access (Value.toList (evalValue ctx src), path)
+              val value = Value.from concretes
+            in
+              Context.merge ctx (dest, value); dest
+            end
+
+          val record = Value.RECORD (map alloc values)
         in
-          if currEpoch <= lastEpoch then
-            ()
-          else
-            (LCPS.Tbl.insert epochTable (cexp, currEpoch);
-             dump cexp;
-             case cexp
-               of LCPS.APP (_, f, args) =>
-                    let
-                      val argVals = map evalValue args
-                      fun call (Value.FUN (_, name, formals, types, body)) =
-                            ((app (ignore o Store.merge store)
-                                 (ListPair.zipEq (formals, argVals));
-                              go body)
-                             handle ListPair.UnequalLengths => ())
-                            (* if the function is applied with incorrect number
-                             * of arguments, this path is aborted *)
-                         | call Value.T = ()
-                            (* FIXME: escape *)
-                         | call _ = ()
-                            (* if applying a non-function, nothing to be done *)
-                    in
-                      Value.app call (evalValue f)
-                    end
-                | LCPS.RECORD (_, _, values, x, body) =>
-                    let
-                      val record = Value.RECORD (map allocValue values)
-                    in
-                      Store.update store (x, record);
-                      go body
-                    end
-                | LCPS.SELECT (_, i, value, dest, _, body) =>
-                    let
-                      val values =
-                        case Value.records (evalValue value)
-                          of SOME records =>
-                               List.mapPartial
-                                 (fn addrs => SOME (Store.lookup store
-                                                      (List.nth (addrs, i)))
-                                              handle Subscript => NONE)
-                                 records
-                           | NONE => [Value.mk Value.T]
-                    in
-                      app (fn v => (Store.merge store (dest, v); ())) values;
-                      go body
-                    end
-                | LCPS.OFFSET (_, i, value, dest, body) =>
-                    let
-                      val v =
-                        case Value.records (evalValue value)
-                          of SOME records =>
-                               let
-                                 fun truncate addrs =
-                                   SOME (Value.RECORD (List.drop (addrs, i)))
-                                   handle Subscript => NONE
-                                 val records' = List.mapPartial truncate records
-                               in
-                                 Value.from records'
-                               end
-                           | NONE => Value.mk Value.T
-                    in
-                      Store.merge store (dest, v);
-                      go body
-                    end
-                | LCPS.FIX (_, bindings, body) =>
-                    let
-                      fun bind (f as (_, name, _, _, _)) =
-                        ignore (Store.update store (name, Value.FUN f))
-                    in
-                      app bind bindings;
-                      go body
-                    end
-                | LCPS.SWITCH (_, _, _, arms) =>
-                    (* Since we are not tracking integers, visit all arms *)
-                    app go arms
-                | LCPS.BRANCH (_, _, _, _, trueExp, falseExp) =>
-                    (go trueExp; go falseExp)
-                | LCPS.SETTER (_, _, _, body) =>
-                    (* TODO: Array/Ref support; should have some marker of
-                     * escaping function here *)
-                    go body
-                | LCPS.LOOKER (_, _, _, dest, _, body) =>
-                    raise Impossible "Oh no LOOKER"
-                | LCPS.ARITH (_, _, _, dest, _, body) =>
-                    (* FIXME: There is no support for exception now *)
-                    (Store.update store (dest, Value.DATA); go body)
-                | LCPS.PURE (_, _, _, dest, (CPS.NUMt _ | CPS.FLTt _), body) =>
-                    (Store.update store (dest, Value.DATA); go body)
-                | LCPS.PURE (_, _, _, dest, cty, body) =>
-                    raise Impossible "Oh no PURE"
-                | LCPS.RCC _ =>
-                    raise Unimp
-            )
+          Context.add ctx (x, record);
+          loopExp ctx body
+        end
+    | loopExpCase ctx (LCPS.SELECT (_, i, value, dest, _, body)) =
+        let
+          val values =
+            case Value.records (evalValue ctx value)
+              of SOME records =>
+                   List.mapPartial
+                     (fn addrs => SOME (Context.lookup ctx
+                                          (List.nth (addrs, i)))
+                                  handle Subscript => NONE)
+                     records
+               | NONE => [Value.mk Value.T]
+        in
+          app (fn v => (Context.merge ctx (dest, v); ())) values;
+          loopExp ctx body
+        end
+    | loopExpCase ctx (LCPS.OFFSET (_, i, value, dest, body)) =
+        let
+          val v =
+            case Value.records (evalValue ctx value)
+              of SOME records =>
+                   let
+                     fun truncate addrs =
+                       SOME (Value.RECORD (List.drop (addrs, i)))
+                       handle Subscript => NONE
+                     val records' = List.mapPartial truncate records
+                   in
+                     Value.from records'
+                   end
+               | NONE => Value.mk Value.T
+        in
+          Context.merge ctx (dest, v);
+          loopExp ctx body
+        end
+    | loopExpCase ctx (LCPS.FIX (_, bindings, body)) =
+        let
+          fun bind (f as (_, name, _, _, _)) =
+            ignore (Context.add ctx (name, Value.FUN f))
+        in
+          app bind bindings;
+          loopExp ctx body
+        end
+    | loopExpCase ctx (LCPS.SWITCH (_, _, _, arms)) =
+        (* Since we are not tracking integers, visit all arms *)
+        app (loopExp ctx) arms
+    | loopExpCase ctx (LCPS.BRANCH (_, _, _, _, trueExp, falseExp)) =
+        (loopExp ctx trueExp; loopExp ctx falseExp)
+    | loopExpCase ctx (LCPS.SETTER (_, _, _, body)) =
+        (* TODO: Array/Ref support; should have some marker of
+         * escaping function here *)
+        loopExp ctx body
+    | loopExpCase ctx (LCPS.LOOKER (_, _, _, dest, _, body)) =
+        raise Impossible "Oh no LOOKER"
+    | loopExpCase ctx (LCPS.ARITH (_, _, _, dest, _, body)) =
+        (* FIXME: There is no support for exception now *)
+        (Context.add ctx (dest, Value.DATA); loopExp ctx body)
+    | loopExpCase ctx (LCPS.PURE (_, _, _, dest,
+                                      (CPS.NUMt _ | CPS.FLTt _), body)) =
+        (Context.add ctx (dest, Value.DATA); loopExp ctx body)
+    | loopExpCase ctx (LCPS.PURE (_, _, _, dest, cty, body)) =
+        raise Impossible "Oh no PURE"
+    | loopExpCase ctx (LCPS.RCC _) =
+        raise Unimp
+
+  fun loopEscape ctx q visited =
+    let
+      fun doFunction (fun_kind, name, formals, tys, body) =
+        let
+          val currSet = Context.escapeSet ctx
+          fun enqueueValue (Value.FUN f) = Queue.enqueue (q, f)
+            | enqueueValue (Value.RECORD addrs) =
+                app enqueue addrs
+            | enqueueValue (Value.ARRAY addrs) =
+                app enqueue addrs
+            | enqueueValue Value.DATA = ()
+            | enqueueValue Value.T = ()
+          and enqueue name =
+                app enqueueValue (Value.toList (Context.lookup ctx name))
+        in
+          app (fn arg => ignore (Context.add ctx (arg, Value.T))) formals;
+          loopExp ctx body;
+          LambdaVar.Set.app enqueue
+            (LambdaVar.Set.difference (Context.escapeSet ctx, currSet))
         end
     in
-      app (fn arg => ignore (Store.update store (arg, Value.T))) formals;
-      go body;
-      Store.dump store;
-      raise Unimp
+      case Queue.next q
+        of SOME (function as (_, name, _, _, _)) =>
+             if LambdaVar.Set.member (visited, name) then
+               loopEscape ctx q visited
+             else
+               (Context.escape ctx name;
+                doFunction function;
+                loopEscape ctx q (LambdaVar.Set.add (visited, name)))
+         | NONE => ()
+    end
+
+  fun analyze function =
+    let
+      val ctx = Context.new ()
+      val queue = Queue.mkQueue ()
+      val () = Queue.enqueue (queue, function)
+    in
+      loopEscape ctx queue LambdaVar.Set.empty;
+      Context.dump ctx;
+      CallGraph.new ()
     end
 end
