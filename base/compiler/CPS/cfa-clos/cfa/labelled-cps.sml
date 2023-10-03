@@ -1,5 +1,5 @@
 structure LabelledCPS :> sig
-  eqtype label
+  type label = LambdaVar.lvar
 
   type record_kind = CPS.record_kind
   type pkind       = CPS.pkind
@@ -38,7 +38,7 @@ structure LabelledCPS :> sig
   structure Set : ORD_SET where type Key.ord_key = cexp
   structure Tbl : MONO_HASH_TABLE where type Key.hash_key = cexp
 end = struct
-  type label = int
+  type label = LambdaVar.lvar
 
   type record_kind = CPS.record_kind
   type pkind       = CPS.pkind
@@ -65,11 +65,7 @@ end = struct
              (lvar * cty) list * cexp
     withtype function = fun_kind * lvar * lvar list * cty list * cexp
 
-  local
-    val cnt = ref (0: int)
-  in
-    fun mkLabel () = !cnt before (cnt := !cnt + 1)
-  end
+  val mkLabel = LambdaVar.mkLvar
 
   fun nameValueList (values : (value * accesspath) list) =
     map (fn (v, p) => (LambdaVar.mkLvar (), v, p)) values
@@ -146,13 +142,13 @@ end = struct
 
   structure OrdKey : ORD_KEY = struct
     type ord_key = cexp
-    fun compare (c1, c2) = Int.compare (labelOf c1, labelOf c2)
+    fun compare (c1, c2) = LambdaVar.compare (labelOf c1, labelOf c2)
   end
 
   structure HashKey : HASH_KEY = struct
     type hash_key = cexp
-    val hashVal = Word.fromInt o labelOf
-    fun sameKey (c1, c2) = labelOf c1 = labelOf c2
+    val hashVal = Word.fromInt o LambdaVar.toId o labelOf
+    fun sameKey (c1, c2) = LambdaVar.same (labelOf c1, labelOf c2)
   end
 
   structure Map = RedBlackMapFn(OrdKey)
