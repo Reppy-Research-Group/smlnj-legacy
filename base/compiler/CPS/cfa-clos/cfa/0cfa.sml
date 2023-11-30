@@ -30,9 +30,11 @@ structure ZeroCFA :> CFA = struct
 
     val records: t -> (addr list) list option
     val functions: t -> (LCPS.function) list option
+    val refs: t -> addr list option
 
     val recordsL: concrete list -> (addr list) list option
     val functionsL: concrete list -> (LCPS.function) list option
+    val refsL: concrete list -> addr list option
   end = struct
     datatype concrete
       = FUN    of LCPS.function
@@ -232,6 +234,8 @@ structure ZeroCFA :> CFA = struct
   structure Context :> sig
     type t
 
+    structure FunctionSet : ORD_SET where type Key.ord_key = LCPS.function
+
     val new: unit -> t
     val guard: (t -> LCPS.cexp -> unit) -> t -> LCPS.cexp -> unit
     val lookup: t -> LCPS.lvar -> Value.t
@@ -239,21 +243,34 @@ structure ZeroCFA :> CFA = struct
     val merge: t -> (LCPS.lvar * Value.t) -> bool
     val dump: t -> unit
     val escape: t -> LCPS.lvar -> unit
-    val escapeSet: t -> LambdaVar.Set.set
+    val escapeSet: t -> FunctionSet.set
     val getHdlr: t -> Value.t
     val addHdlr: t -> Value.t -> unit
   end = struct
 
+    structure FunctionSet = RedBlackSetFn(struct
+      type ord_key = LCPS.function
+      fun compare (f1: ord_key, f2: ord_key) = LambdaVar.compare (#2 f1, #2 f2)
+    end)
+
+    structure LambdaVarSet = HashSetFn(struct
+      type hash_key = LambdaVar.lvar
+      val sameKey = LambdaVar.same
+      val hashVal = Word.fromInt o LambdaVar.toId
+    end)
+
     type t = { epochTable: int LCPS.Tbl.hash_table
              , store: Store.t
-             , escapeSet: LambdaVar.Set.set ref
+             , escapeSet: FunctionSet.set ref
+             , escapingAddr: LambdaVarSet.set
              }
 
     exception EpochLookUp
     fun new () =
       { epochTable = LCPS.Tbl.mkTable (1024, EpochLookUp)
       , store = Store.new ()
-      , escapeSet = ref LambdaVar.Set.empty
+      , escapeSet = ref FunctionSet.empty
+      , escapingAddr = LambdaVarSet.mkEmpty 2048
       }
 
     fun getHdlr ({store, ...}: t) = Store.getHdlr store
@@ -273,24 +290,97 @@ structure ZeroCFA :> CFA = struct
           ()
         else
           (LCPS.Tbl.insert epochTable (cexp, currEpoch);
-           print ("\r" ^ Int.toString currEpoch);
+           (* print ("\r" ^ Int.toString currEpoch); *)
            f ctx cexp)
       end
 
-    val lookup = Store.lookup o (fn (ctx: t) => #store ctx)
-    val add = Store.update o (fn (ctx: t) => #store ctx)
-    val merge = Store.merge o (fn (ctx: t) => #store ctx)
-    fun dump {epochTable, store, escapeSet} =
+    fun dump {epochTable, store, escapeSet, escapingAddr} =
       (Store.dump store;
        print "\nEscaping: {";
-       LambdaVar.Set.app (fn x => print (LambdaVar.lvarName x ^ ","))
-                         (!escapeSet);
-       print "}")
-    (* FIXME: names don't escape; functions do *)
-    fun escape (ctx: t) name =
-      let val setRef = #escapeSet ctx
-      in  setRef := LambdaVar.Set.add (!setRef, name)
+       FunctionSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ","))
+                        (!escapeSet);
+       print "}\n")
+
+    fun dump _ = ()
+
+    val lookup = Store.lookup o (fn (ctx: t) => #store ctx)
+
+    fun scanValue (Value.FUN f, (todo, result)) =
+          (todo, FunctionSet.add (result, f))
+      | scanValue (Value.RECORD addrs, (todo, result)) =
+          (addrs @ todo, result)
+      | scanValue (Value.REF addr, (todo, result)) =
+          (addr :: todo, result)
+      | scanValue ((Value.DATA | Value.T | Value.UNCAUGHTEXN), acc) =
+          acc
+    and scanAddr ctx seen result [] = result
+      | scanAddr ctx seen result (addr::todo) =
+          if LambdaVar.Set.member (seen, addr) then
+            scanAddr ctx seen result todo
+          else
+            let
+              val seen' = LambdaVar.Set.add (seen, addr)
+              val (todo', result') =
+                foldl scanValue (todo, result) (Value.toList (lookup ctx addr))
+            in
+              scanAddr ctx seen' result' todo'
+            end
+
+    (* fun scanValue ctx seen (Value.FUN f, set) = FunctionSet.add (set, f) *)
+    (*   | scanValue ctx seen (Value.RECORD addrs, set) = *)
+    (*       foldl (scanAddr ctx seen) set addrs *)
+    (*   | scanValue ctx seen (Value.REF addr, set) = *)
+    (*       scanAddr ctx seen (addr, set) *)
+    (*   | scanValue ctx seen ((Value.DATA | Value.T | Value.UNCAUGHTEXN), set) = *)
+    (*       set *)
+    (* and scanAddr ctx seen (name, set) = *)
+    (*   if LambdaVar.Set.member (seen, name) then *)
+    (*     (print ("seen: " ^ LambdaVar.prLvar name ^"\n"); set) *)
+    (*   else *)
+    (*     (let val () = print ("<scanAddr " ^ LambdaVar.prLvar name ^ ">\n"); *)
+    (*      val set' = foldl (scanValue ctx (LambdaVar.Set.add (seen, name))) *)
+    (*            set *)
+    (*            (Value.toList (lookup ctx name)) *)
+    (*            val () = print ("</scanAddr " ^ LambdaVar.prLvar name ^ ">\n") *)
+    (*      in set' end) *)
+
+    fun addEscapingFun (ctx: t) name =
+      let val escapeSet = #escapeSet ctx
+      in
+        (* escapeSet := scanAddr ctx LambdaVar.Set.empty (name, !escapeSet) *)
+        escapeSet := scanAddr ctx LambdaVar.Set.empty (!escapeSet) [name]
       end
+
+    fun escape (ctx: t) name =
+      let val escapingAddr = #escapingAddr ctx
+      in  if LambdaVarSet.member (escapingAddr, name) then
+            (* if we knew that this address is escaping already, nothing needs
+             * to be done here since any value added to this address is marked
+             * as escaping *)
+             ()
+          else
+            (LambdaVarSet.add (escapingAddr, name);
+             addEscapingFun ctx name)
+      end
+
+    fun add (ctx: t) (addr, c) =
+      (if LambdaVarSet.member (#escapingAddr ctx, addr) then
+        let val (addrs, escapeSet) = scanValue (c, ([], !(#escapeSet ctx)))
+            val () = app (escape ctx) addrs
+        in  (#escapeSet ctx) := escapeSet
+        end
+       else ();
+       Store.update (#store ctx) (addr, c))
+
+    fun merge (ctx: t) (addr, v) =
+      (if LambdaVarSet.member (#escapingAddr ctx, addr) then
+        let val (addrs, escapeSet) =
+              foldl scanValue ([], !(#escapeSet ctx)) (Value.toList v)
+            val () = app (escape ctx) addrs
+        in  (#escapeSet ctx) := escapeSet
+        end
+       else ();
+       Store.merge (#store ctx) (addr, v))
 
     fun escapeSet ({escapeSet, ...}: t) = !escapeSet
   end
@@ -310,6 +400,7 @@ structure ZeroCFA :> CFA = struct
      print "\nCurrent state:\n";
      Context.dump ctx;
      print "=================\n\n\n")
+  fun dump ctx cexp = ()
 
   fun loopExp ctx cexp = Context.guard loopExpCase ctx cexp
   and loopExpCase ctx (LCPS.APP (_, f, args)) =
@@ -330,11 +421,9 @@ structure ZeroCFA :> CFA = struct
             | access (concretes, CPS.SELp (i, p)) =
                 let
                   fun get addrs =
-                    (let
-                       val addr = List.nth (addrs, i)
-                       val values = Value.toList (Context.lookup ctx addr)
-                     in
-                       access (values, p)
+                    (let val addr = List.nth (addrs, i)
+                         val values = Value.toList (Context.lookup ctx addr)
+                     in  access (values, p)
                      end)
                     handle Subscript => []
                 in
@@ -342,7 +431,6 @@ structure ZeroCFA :> CFA = struct
                     of SOME candidates => List.concatMap get candidates
                      | NONE => [Value.T]
                 end
-
           fun alloc (dest, src, path) =
             let
               val concretes = access (Value.toList (evalValue ctx src), path)
@@ -408,15 +496,44 @@ structure ZeroCFA :> CFA = struct
         (Context.addHdlr ctx (evalValue ctx hdlr); loopExp ctx body)
     | loopExpCase ctx (LCPS.SETTER (_, CPS.P.SETHDLR, _, _)) =
         raise Impossible "SETHDLR cannot take more than one continuation"
+    | loopExpCase ctx (LCPS.SETTER (_, (CPS.P.UNBOXEDASSIGN | CPS.P.ASSIGN),
+                                       [dest, src], body)) =
+        (case Value.refs (evalValue ctx dest)
+           of SOME addrs =>
+                let val srcVal = evalValue ctx src
+                in  app (fn addr => ignore (Context.merge ctx (addr, srcVal)))
+                        addrs;
+                    loopExp ctx body
+                end
+            | NONE => (* when dest is TOP, src escapes *)
+                (case src
+                   of CPS.VAR var => Context.escape ctx var
+                    | _ => ();
+                 loopExp ctx body))
+    | loopExpCase ctx (LCPS.SETTER (_, (CPS.P.UNBOXEDASSIGN | CPS.P.ASSIGN),
+                                       _, _)) =
+        raise Impossible "ASSIGN takes wrong arguments"
     | loopExpCase ctx (LCPS.SETTER (_, _, _, body)) =
-        (* TODO: Array/Ref support; should have some marker of
-         * escaping function here *)
         loopExp ctx body
     | loopExpCase ctx (LCPS.LOOKER (_, CPS.P.GETHDLR, [], dest, _, body)) =
         (Context.merge ctx (dest, Context.getHdlr ctx);
          loopExp ctx body)
     | loopExpCase ctx (LCPS.LOOKER (_, CPS.P.GETHDLR, _, dest, _, body)) =
         raise Impossible "GETHDLR does not take arguments"
+    | loopExpCase ctx (LCPS.LOOKER (_, CPS.P.DEREF, [cell], dest, _, body)) =
+        let
+          val values =
+            case Value.refs (evalValue ctx cell)
+              of SOME addrs => map (Context.lookup ctx) addrs
+               | NONE => [Value.mk Value.T]
+        in
+          case values
+            of [] => () (* no ref cell is accessible here; type error *)
+             | _ => (app (fn v => ignore (Context.merge ctx (dest, v))) values;
+                     loopExp ctx body)
+        end
+    | loopExpCase ctx (LCPS.LOOKER (_, CPS.P.DEREF, _, _, _, _)) =
+       raise Impossible "DEREF with wrong number of arguments"
     | loopExpCase ctx (LCPS.LOOKER (_, _, _, dest,
                                       (CPS.NUMt _ | CPS.FLTt _), body)) =
         (Context.add ctx (dest, Value.DATA); loopExp ctx body)
@@ -467,24 +584,13 @@ structure ZeroCFA :> CFA = struct
     let
       fun doFunction (fun_kind, name, formals, tys, body) =
         let
-          val currSet = Context.escapeSet ctx
-          fun enqueueValue seen (Value.FUN f) = Queue.enqueue (q, f)
-            | enqueueValue seen (Value.RECORD addrs) =
-                app (enqueue seen) addrs
-            | enqueueValue seen (Value.REF addr) =
-                enqueue seen addr
-            | enqueueValue seen (Value.DATA | Value.T | Value.UNCAUGHTEXN) = ()
-          and enqueue seen name =
-                if LambdaVar.Set.member (seen, name) then
-                  ()
-                else
-                  app (enqueueValue (LambdaVar.Set.add (seen, name)))
-                      (Value.toList (Context.lookup ctx name))
+          val beforeSet = Context.escapeSet ctx
         in
           app (fn arg => ignore (Context.add ctx (arg, Value.T))) formals;
           loopExp ctx body;
-          LambdaVar.Set.app (enqueue LambdaVar.Set.empty)
-            (LambdaVar.Set.difference (Context.escapeSet ctx, currSet))
+          Context.FunctionSet.app (fn f => Queue.enqueue (q, f))
+            (Context.FunctionSet.difference (Context.escapeSet ctx, beforeSet));
+          ()
         end
     in
       case Queue.next q
@@ -492,12 +598,21 @@ structure ZeroCFA :> CFA = struct
              if LambdaVar.Set.member (visited, name) then
                loopEscape ctx q visited
              else
-               (Context.escape ctx name;
-                print "\nhere\n";
-                doFunction function;
-                print "\nhere2\n";
-                loopEscape ctx q (LambdaVar.Set.add (visited, name)))
+               (doFunction function;
+                loopEscape ctx q (LambdaVar.Set.add (visited, name));
+                ())
          | NONE => ()
+    end
+
+  fun timeit str thunk =
+    let
+      val start = Time.now()
+      val result = thunk ()
+      val stop = Time.now()
+      val diff = Time.- (stop, start)
+      val () = (print (str ^ Time.toString diff); print "\n")
+    in
+      result
     end
 
   fun analyze function =
@@ -505,8 +620,9 @@ structure ZeroCFA :> CFA = struct
       val ctx = Context.new ()
       val queue = Queue.mkQueue ()
       val () = Queue.enqueue (queue, function)
+      val () = ignore (Context.add ctx (#2 function, Value.FUN function))
     in
-      loopEscape ctx queue LambdaVar.Set.empty;
+      timeit "0cfa: " (fn () => loopEscape ctx queue LambdaVar.Set.empty);
       Context.dump ctx;
       CallGraph.new ()
     end

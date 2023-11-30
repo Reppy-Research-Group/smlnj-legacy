@@ -12,7 +12,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
 
   fun test cps =
     let
-      val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n")
+      (* val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n") *)
       val lcps = LabelledCPS.labelF cps
       val callgraph = CallGraph.new ()
       val analyze = ZeroCFA.analyze lcps
