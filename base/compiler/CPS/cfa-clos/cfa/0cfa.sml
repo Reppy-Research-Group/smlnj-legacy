@@ -326,29 +326,9 @@ structure ZeroCFA :> CFA = struct
               scanAddr ctx seen' result' todo'
             end
 
-    (* fun scanValue ctx seen (Value.FUN f, set) = FunctionSet.add (set, f) *)
-    (*   | scanValue ctx seen (Value.RECORD addrs, set) = *)
-    (*       foldl (scanAddr ctx seen) set addrs *)
-    (*   | scanValue ctx seen (Value.REF addr, set) = *)
-    (*       scanAddr ctx seen (addr, set) *)
-    (*   | scanValue ctx seen ((Value.DATA | Value.T | Value.UNCAUGHTEXN), set) = *)
-    (*       set *)
-    (* and scanAddr ctx seen (name, set) = *)
-    (*   if LambdaVar.Set.member (seen, name) then *)
-    (*     (print ("seen: " ^ LambdaVar.prLvar name ^"\n"); set) *)
-    (*   else *)
-    (*     (let val () = print ("<scanAddr " ^ LambdaVar.prLvar name ^ ">\n"); *)
-    (*      val set' = foldl (scanValue ctx (LambdaVar.Set.add (seen, name))) *)
-    (*            set *)
-    (*            (Value.toList (lookup ctx name)) *)
-    (*            val () = print ("</scanAddr " ^ LambdaVar.prLvar name ^ ">\n") *)
-    (*      in set' end) *)
-
     fun addEscapingFun (ctx: t) name =
       let val escapeSet = #escapeSet ctx
-      in
-        (* escapeSet := scanAddr ctx LambdaVar.Set.empty (name, !escapeSet) *)
-        escapeSet := scanAddr ctx LambdaVar.Set.empty (!escapeSet) [name]
+      in  escapeSet := scanAddr ctx LambdaVar.Set.empty (!escapeSet) [name]
       end
 
     fun escape (ctx: t) name =
@@ -624,6 +604,10 @@ structure ZeroCFA :> CFA = struct
     in
       timeit "0cfa: " (fn () => loopEscape ctx queue LambdaVar.Set.empty);
       Context.dump ctx;
-      CallGraph.new ()
+      CallGraph.build {cps=function,
+                       lookup=Context.lookup ctx,
+                       filter=Value.functions,
+                       escapingLambdas=Vector.fromList 
+                         (FunctionSet.toList Context.escapeSet ctx)}
     end
 end

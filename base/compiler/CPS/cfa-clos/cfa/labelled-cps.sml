@@ -30,6 +30,7 @@ structure LabelledCPS :> sig
   val unlabel : cexp -> CPS.cexp
 
   val labelOf : cexp -> label
+  val same : cexp * cexp -> bool
 
   val labelF   : CPS.function -> function
   val unlabelF : function -> CPS.function
@@ -140,6 +141,8 @@ end = struct
   and unlabelF (funkind, name, formals, types, body) =
         (funkind, name, formals, types, unlabel body)
 
+  fun same (c1, c2) = LambdaVar.same (labelOf c1, labelOf c2)
+
   structure OrdKey : ORD_KEY = struct
     type ord_key = cexp
     fun compare (c1, c2) = LambdaVar.compare (labelOf c1, labelOf c2)
@@ -148,7 +151,7 @@ end = struct
   structure HashKey : HASH_KEY = struct
     type hash_key = cexp
     val hashVal = Word.fromInt o LambdaVar.toId o labelOf
-    fun sameKey (c1, c2) = LambdaVar.same (labelOf c1, labelOf c2)
+    val sameKey = same
   end
 
   structure Map = RedBlackMapFn(OrdKey)
