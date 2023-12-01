@@ -1,3 +1,18 @@
+signature CALL_GRAPH = sig
+  type t
+
+  val build : {
+    cps: LabelledCPS.function,
+    lookup : CPS.lvar -> 'value option,
+    filter :'value -> LabelledCPS.function list option,
+    escapingLambdas: LabelledCPS.function vector
+  } -> t
+
+  datatype component = SINGLE of LabelledCPS.function
+                     | GROUP of LabelledCPS.function list
+  val scc : t -> component list
+end
+
 structure CallGraph :> CALL_GRAPH = struct
   structure VTbl = LambdaVar.Tbl
   structure VSet = LambdaVar.Set
@@ -19,10 +34,11 @@ structure CallGraph :> CALL_GRAPH = struct
     fun sameKey (f1, f2) = LambdaVar.same (nameOf f1, nameOf f2)
   end)
 
-  fun build {cps: LCPS.function, lookup, filter, escapingLambdas} =
+  fun build {cps, lookup, filter, escapingLambdas} =
     let
       type call_data = {
         callees: LCPS.function vector option,
+        dead: bool,
         enclosing: LCPS.function
       }
       val appTbl = LCPS.Tbl.mkTable (2048, Fail "callee table")
@@ -55,17 +71,29 @@ structure CallGraph :> CALL_GRAPH = struct
       fun walkF (function as (_, _, _, _, body)) =
         let
           val () = allLambdas := function :: (!allLambdas)
-          fun exp (cexp as LCPS.APP (_, CPS.VAR f, args)) =
-               let
-                 val callees = Option.map Vector.fromList (filter (lookup f))
-                 val callData = { callees=callees, enclosing=function }
-                 val () = LCPS.Tbl.insert appTbl (cexp, callData)
-                 val () = Option.app (Vector.app (insertCallsite cexp)) callees
-                 val () = insertTerminator function cexp
-               in
-                 ()
-               end
+          fun register f cexp =
+            case lookup f
+              of NONE =>
+                   let
+                     val callData = {callees=NONE, dead=true, enclosing=function}
+                   in
+                     LCPS.Tbl.insert appTbl (cexp, callData);
+                     insertTerminator function cexp
+                   end
+               | SOME values =>
+                   let
+                     val callees = Option.map Vector.fromList (filter values)
+                     val callData =
+                       { callees=callees, dead=false, enclosing=function }
+                   in
+                     LCPS.Tbl.insert appTbl (cexp, callData);
+                     Option.app (Vector.app (insertCallsite cexp)) callees;
+                     insertTerminator function cexp
+                   end
+
+          fun exp (cexp as LCPS.APP (_, CPS.VAR f, args)) = register f cexp
             | exp (LCPS.APP _) = raise Fail "app not var impossible"
+            | exp (LCPS.RECORD (_, kind, values, v, cexp)) = exp cexp
             | exp (LCPS.SELECT (_, n, v, x, cty, cexp)) = exp cexp
             | exp (LCPS.OFFSET (_, n, v, x, cexp)) = exp cexp
             | exp (LCPS.FIX (_, bindings, body)) =
@@ -97,41 +125,26 @@ structure CallGraph :> CALL_GRAPH = struct
       }
     end
 
+  datatype component = SINGLE of LCPS.function
+                     | GROUP of LCPS.function list
+  structure SCCSolver = GraphSCCFn(struct
+    type ord_key = LCPS.function
+    fun compare (f1: ord_key, f2: ord_key) = LambdaVar.compare (#2 f1, #2 f2)
+  end)
 
-  type tbl = VSet.set VTbl.hash_table
-  type t = tbl * tbl
-
-  exception LookUp
-
-  fun new () = (VTbl.mkTable (4096, LookUp), VTbl.mkTable (4096, LookUp))
-
-  fun insert map (k, v) =
-    let val set' = case VTbl.find map k
-                     of SOME set => VSet.add (set, v)
-                      | NONE => VSet.singleton v
-    in  VTbl.insert map (k, set')
+  fun scc (T {getCallees, getTerminators, escapingLam, ...}) =
+    let
+      fun concatMapToList f xs =
+        Vector.foldr (fn (x, acc) =>
+          case f x
+            of SOME xs => Vector.foldr (op::) acc xs
+             | NONE => acc) [] xs
+      val _ = concatMapToList : ('a -> 'b vector option) -> 'a vector -> 'b list
+      fun follow func = concatMapToList getCallees (getTerminators func)
+      fun convert (SCCSolver.SIMPLE f) = SINGLE f
+        | convert (SCCSolver.RECURSIVE fs) = GROUP fs
+    in
+      map convert (SCCSolver.topOrder'
+                     { roots=Vector.toList escapingLam, follow=follow })
     end
-
-  fun member map (f, g) =
-    case VTbl.find map f
-      of SOME set => VSet.member (set, g)
-       | NONE => false
-
-  fun add ((caller, callee), f, g) =
-    (insert caller (g, f); (* f is a caller of g *)
-     insert callee (f, g)) (* g is a callee of f *)
-
-  fun callers ((caller, _), f) =
-    case VTbl.find caller f
-      of SOME set => VSet.toList set
-       | NONE => []
-
-  fun callees ((_, callee), f) =
-    case VTbl.find callee f
-      of SOME set => VSet.toList set
-       | NONE => []
-
-  fun isCaller (caller, _) = member caller
-  fun isCallee (_, callee) = member callee
-
 end

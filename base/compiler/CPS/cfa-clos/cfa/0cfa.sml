@@ -1,5 +1,4 @@
 structure ZeroCFA :> CFA = struct
-  structure CallGraph = CallGraph
   structure LCPS = LabelledCPS
 
   structure Value :> sig
@@ -170,6 +169,7 @@ structure ZeroCFA :> CFA = struct
     val addHdlr: t -> Value.t -> bool
     val merge: t -> CPS.lvar * Value.t -> bool
     val lookup: t -> CPS.lvar -> Value.t
+    val find: t -> CPS.lvar -> Value.t option
     val dump: t -> unit
   end = struct
     structure LVarTbl = LambdaVar.Tbl
@@ -227,6 +227,8 @@ structure ZeroCFA :> CFA = struct
                              say "\n";
                              dump s;
                              raise StoreLookUp)
+
+    fun find (s as {table, ...}: t) lvar = LVarTbl.find table lvar
   end
 
   exception Unimp
@@ -239,6 +241,7 @@ structure ZeroCFA :> CFA = struct
     val new: unit -> t
     val guard: (t -> LCPS.cexp -> unit) -> t -> LCPS.cexp -> unit
     val lookup: t -> LCPS.lvar -> Value.t
+    val find: t -> LCPS.lvar -> Value.t option
     val add: t -> (LCPS.lvar * Value.concrete) -> bool
     val merge: t -> (LCPS.lvar * Value.t) -> bool
     val dump: t -> unit
@@ -304,6 +307,7 @@ structure ZeroCFA :> CFA = struct
     fun dump _ = ()
 
     val lookup = Store.lookup o (fn (ctx: t) => #store ctx)
+    val find = Store.find o (fn (ctx: t) => #store ctx)
 
     fun scanValue (Value.FUN f, (todo, result)) =
           (todo, FunctionSet.add (result, f))
@@ -605,9 +609,9 @@ structure ZeroCFA :> CFA = struct
       timeit "0cfa: " (fn () => loopEscape ctx queue LambdaVar.Set.empty);
       Context.dump ctx;
       CallGraph.build {cps=function,
-                       lookup=Context.lookup ctx,
+                       lookup=Context.find ctx,
                        filter=Value.functions,
                        escapingLambdas=Vector.fromList 
-                         (FunctionSet.toList Context.escapeSet ctx)}
+                         (Context.FunctionSet.toList (Context.escapeSet ctx))}
     end
 end
