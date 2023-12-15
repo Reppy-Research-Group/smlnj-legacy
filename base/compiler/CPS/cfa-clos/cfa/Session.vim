@@ -13,12 +13,15 @@ if &shortmess =~ 'A'
 else
   set shortmess=aoO
 endif
-badd +403 0cfa.sml
-badd +0 ~/Documents/School/Research/master-thesis/smlnj-legacy/base/compiler/CPS/cps/cps.sig
+badd +178 call-graph.sml
+badd +96 dot-lang.sml
+badd +40 ../closure.sml
+badd +307 0cfa.sml
+badd +1 labelled-cps.sml
 argglobal
 %argdel
-$argadd 0cfa.sml
-edit ~/Documents/School/Research/master-thesis/smlnj-legacy/base/compiler/CPS/cps/cps.sig
+$argadd call-graph.sml
+edit call-graph.sml
 let s:save_splitbelow = &splitbelow
 let s:save_splitright = &splitright
 set splitbelow splitright
@@ -35,10 +38,10 @@ set winminheight=0
 set winheight=1
 set winminwidth=0
 set winwidth=1
-exe 'vert 1resize ' . ((&columns * 95 + 95) / 191)
-exe 'vert 2resize ' . ((&columns * 95 + 95) / 191)
+exe 'vert 1resize ' . ((&columns * 102 + 106) / 212)
+exe 'vert 2resize ' . ((&columns * 109 + 106) / 212)
 argglobal
-balt 0cfa.sml
+balt ../closure.sml
 setlocal fdm=manual
 setlocal fde=0
 setlocal fmr={{{,}}}
@@ -49,18 +52,19 @@ setlocal fdn=20
 setlocal fen
 silent! normal! zE
 let &fdl = &fdl
-let s:l = 82 - ((19 * winheight(0) + 25) / 50)
+let s:l = 93 - ((52 * winheight(0) + 28) / 56)
 if s:l < 1 | let s:l = 1 | endif
 keepjumps exe s:l
 normal! zt
-keepjumps 82
-normal! 022|
+keepjumps 93
+normal! 063|
 wincmd w
 argglobal
-if bufexists(fnamemodify("0cfa.sml", ":p")) | buffer 0cfa.sml | else | edit 0cfa.sml | endif
+if bufexists(fnamemodify("labelled-cps.sml", ":p")) | buffer labelled-cps.sml | else | edit labelled-cps.sml | endif
 if &buftype ==# 'terminal'
-  silent file 0cfa.sml
+  silent file labelled-cps.sml
 endif
+balt dot-lang.sml
 setlocal fdm=manual
 setlocal fde=0
 setlocal fmr={{{,}}}
@@ -71,15 +75,15 @@ setlocal fdn=20
 setlocal fen
 silent! normal! zE
 let &fdl = &fdl
-let s:l = 404 - ((22 * winheight(0) + 25) / 50)
+let s:l = 155 - ((43 * winheight(0) + 28) / 56)
 if s:l < 1 | let s:l = 1 | endif
 keepjumps exe s:l
 normal! zt
-keepjumps 404
-normal! 053|
+keepjumps 155
+normal! 0
 wincmd w
-exe 'vert 1resize ' . ((&columns * 95 + 95) / 191)
-exe 'vert 2resize ' . ((&columns * 95 + 95) / 191)
+exe 'vert 1resize ' . ((&columns * 102 + 106) / 212)
+exe 'vert 2resize ' . ((&columns * 109 + 106) / 212)
 tabnext 1
 if exists('s:wipebuf') && len(win_findbuf(s:wipebuf)) == 0 && getbufvar(s:wipebuf, '&buftype') isnot# 'terminal'
   silent exe 'bwipe ' . s:wipebuf
@@ -95,7 +99,6 @@ if filereadable(s:sx)
 endif
 let &g:so = s:so_save | let &g:siso = s:siso_save
 set hlsearch
-nohlsearch
 doautoall SessionLoadPost
 unlet SessionLoad
 " vim: set ft=vim :

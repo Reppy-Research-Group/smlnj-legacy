@@ -11,6 +11,8 @@ signature CALL_GRAPH = sig
   datatype component = SINGLE of LabelledCPS.function
                      | GROUP of LabelledCPS.function list
   val scc : t -> component list
+  val callGraphDot : t -> DotLanguage.t
+  val callWebDot : t -> DotLanguage.t
 end
 
 structure CallGraph :> CALL_GRAPH = struct
@@ -20,6 +22,7 @@ structure CallGraph :> CALL_GRAPH = struct
 
   datatype t = T of {
     getCallees : LCPS.cexp -> LCPS.function vector option,
+    isUnreachable : LCPS.cexp -> bool,
     getCallsites: LCPS.function -> LCPS.cexp vector,
     getEnclosingLam : LCPS.cexp -> LCPS.function,
     getTerminators : LCPS.function -> LCPS.cexp vector,
@@ -117,6 +120,7 @@ structure CallGraph :> CALL_GRAPH = struct
     in
       T {
         getCallees = #callees o (LCPS.Tbl.lookup appTbl),
+        isUnreachable = #dead o (LCPS.Tbl.lookup appTbl),
         getCallsites = #callsites o (FunTbl.lookup funTbl'),
         getTerminators = #terminators o (FunTbl.lookup funTbl'),
         getEnclosingLam = #enclosing o (LCPS.Tbl.lookup appTbl),
@@ -132,7 +136,7 @@ structure CallGraph :> CALL_GRAPH = struct
     fun compare (f1: ord_key, f2: ord_key) = LambdaVar.compare (#2 f1, #2 f2)
   end)
 
-  fun scc (T {getCallees, getTerminators, escapingLam, ...}) =
+  fun toGraph (T {getCallees, getTerminators, escapingLam, ...}) =
     let
       fun concatMapToList f xs =
         Vector.foldr (fn (x, acc) =>
@@ -141,10 +145,85 @@ structure CallGraph :> CALL_GRAPH = struct
              | NONE => acc) [] xs
       val _ = concatMapToList : ('a -> 'b vector option) -> 'a vector -> 'b list
       fun follow func = concatMapToList getCallees (getTerminators func)
+    in
+      { roots=Vector.toList escapingLam, follow=follow }
+    end
+
+  fun scc cg =
+    let
       fun convert (SCCSolver.SIMPLE f) = SINGLE f
         | convert (SCCSolver.RECURSIVE fs) = GROUP fs
     in
-      map convert (SCCSolver.topOrder'
-                     { roots=Vector.toList escapingLam, follow=follow })
+      map convert (SCCSolver.topOrder' (toGraph cg))
+    end
+
+  fun callGraphDot (cg as T {escapingLam, ...}) =
+    let
+      fun escaping (f: LCPS.function) =
+        Vector.exists (fn f' => LambdaVar.same (#2 f, #2 f')) escapingLam
+      fun convert f = (LambdaVar.lvarName (#2 f),
+                       if escaping f then [("color", "red")] else [])
+    in
+      DotLanguage.fromGraph convert (toGraph cg)
+    end
+
+  structure D = DotLanguage
+
+  fun fkToString CPS.CONT = "std_cont"
+    | fkToString CPS.KNOWN = "known"
+    | fkToString CPS.KNOWN_REC = "known_rec"
+    | fkToString CPS.KNOWN_CHECK = "known_chk"
+    | fkToString CPS.KNOWN_TAIL = "known_tail"
+    | fkToString CPS.KNOWN_CONT = "known_cont"
+    | fkToString CPS.ESCAPE = "std"
+
+  fun callWebDot (cg as
+      T { allLambdas, getTerminators, getCallees, isUnreachable, escapingLam,
+          ... }) =
+    let
+      val counter = ref 0
+      fun newTopNode () =
+        let val name = "top" ^ Int.toString (!counter)
+            val () = counter := !counter + 1
+        in  (name, D.NODE (name, [("label", "top")]))
+        end
+      fun draw (f, doc) =
+        let
+          val callsites = getTerminators f
+          val callId = LambdaVar.lvarName o LCPS.labelOf
+          fun funId (f as (fk, name, _, _, _)) =
+            (LambdaVar.lvarName name) ^ "(" ^ fkToString fk ^ ")"
+          fun escaping (f: LCPS.function) =
+            Vector.exists (fn f' => LambdaVar.same (#2 f, #2 f')) escapingLam
+          fun callColor c =
+            if isUnreachable c then [("bgcolor", "black")] else []
+          fun callvarstr (LCPS.APP (_, CPS.VAR f, _)) = LambdaVar.lvarName f
+            | callvarstr _ = raise Fail "not a call"
+          fun termNode (c: LCPS.cexp) =
+            D.NODE (callId c, ("label",  callvarstr c) :: callColor c)
+          fun drawCalls site =
+            case getCallees site
+              of NONE =>
+                   let val (name, node) = newTopNode ()
+                   in  [node, D.EDGE (callId site, name, [])]
+                   end
+               | SOME callees =>
+                   map (fn f => D.EDGE (callId site, funId f, []))
+                       (Vector.toList callees)
+          val stmts = [
+            if escaping f then
+              D.NODE (funId f, [("color", "red")])
+            else
+              D.NODE (funId f, []),
+            D.SUBGRAPH (SOME ("cluster_" ^ funId f ^ "_callsites"),
+              [D.ATTR ("label=\"" ^ funId f ^ "\""),
+               D.ATTR "graph[style=dotted]"]
+              @ (map termNode (Vector.toList callsites)))]
+            @ List.concatMap drawCalls (Vector.toList callsites)
+        in
+          D.<+< (doc, stmts)
+        end
+    in
+      Vector.foldl draw (D.empty (true, "call-graph")) allLambdas
     end
 end

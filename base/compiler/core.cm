@@ -272,6 +272,7 @@ CPS/cfa-clos/cfa/cfa.sig
 CPS/cfa-clos/cfa/0cfa.sml
 CPS/cfa-clos/cfa/call-graph.sml
 CPS/cfa-clos/cfa/labelled-cps.sml
+CPS/cfa-clos/cfa/dot-lang.sml
 
 CPS/convert/convert.sml
 CPS/convert/cpstrans.sml
