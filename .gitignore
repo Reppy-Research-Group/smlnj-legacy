@@ -90,6 +90,10 @@ latex.out/
 ## Other stuff ##
 *.tgz
 *.swp
+*.dot
+*.pdf
+
+scratch
 
 # macOS finder
 .DS_Store
@@ -194,8 +198,8 @@ smlnj-lib/Doc/tools/make-index/Makefile
 smlnj-lib/Doc/tools/make-index/make-index.*
 
 base/system/smlnj/internal/version.sml
-/bin/
-/lib/
+bin
+lib
 
 # files created when building a distribution (macOS or Windows)
 osx-dist/smlnj.dst
