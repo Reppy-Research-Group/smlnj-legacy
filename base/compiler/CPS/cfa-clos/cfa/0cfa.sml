@@ -611,7 +611,7 @@ structure ZeroCFA :> CFA = struct
       CallGraph.build {cps=function,
                        lookup=Context.find ctx,
                        filter=Value.functions,
-                       escapingLambdas=Vector.fromList 
+                       escapingLambdas=Vector.fromList
                          (Context.FunctionSet.toList (Context.escapeSet ctx))}
     end
 end
