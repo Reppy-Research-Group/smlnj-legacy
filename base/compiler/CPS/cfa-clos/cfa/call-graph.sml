@@ -8,9 +8,29 @@ signature CALL_GRAPH = sig
     escapingLambdas: LabelledCPS.function vector
   } -> t
 
+  datatype info
+    = ESCAPE
+    | UNREACHABLE
+    | WELLKNOWN of LabelledCPS.function vector
+    | PROTOCOL  of caller_info vector
+  withtype caller_info = { caller: LabelledCPS.function,
+                           colleagues: LabelledCPS.function vector option }
+
   datatype component = SINGLE of LabelledCPS.function
                      | GROUP of LabelledCPS.function list
   val scc : t -> component list
+
+  val info : t -> LabelledCPS.function -> info
+  val callees     : t -> LabelledCPS.cexp -> LabelledCPS.function vector option
+  val callsitesOf : t -> LabelledCPS.function -> LabelledCPS.cexp vector
+  val isUnreachable : t -> LabelledCPS.cexp -> bool
+
+  val enclosingFun : t -> LabelledCPS.cexp -> LabelledCPS.function
+  val callsitesIn  : t -> LabelledCPS.function -> LabelledCPS.cexp vector
+
+  val escapingFunctions : t -> LabelledCPS.function vector
+  val allFunctions : t -> LabelledCPS.function vector
+
   val callGraphDot : t -> DotLanguage.t
   val callWebDot : t -> DotLanguage.t
 end
@@ -20,7 +40,18 @@ structure CallGraph :> CALL_GRAPH = struct
   structure VSet = LambdaVar.Set
   structure LCPS = LabelledCPS
 
+  datatype info
+    = ESCAPE
+    | UNREACHABLE
+    | WELLKNOWN of LCPS.function vector
+    | PROTOCOL  of caller_info vector
+  withtype caller_info = { caller: LCPS.function,
+                           colleagues: LCPS.function vector option }
+
+  (* FIXME REFACTOR: Some of these are just syntactic properties; it's better
+   * to split them into another module *)
   datatype t = T of {
+    getInfo : LCPS.function -> info,
     getCallees : LCPS.cexp -> LCPS.function vector option,
     isUnreachable : LCPS.cexp -> bool,
     getCallsites: LCPS.function -> LCPS.cexp vector,
@@ -29,6 +60,14 @@ structure CallGraph :> CALL_GRAPH = struct
     escapingLam : LCPS.function vector,
     allLambdas  : LCPS.function vector
   }
+
+  fun callees (T { getCallees, ... }) = getCallees
+  fun callsitesOf (T { getCallsites, ... }) = getCallsites
+  fun isUnreachable (T { isUnreachable, ... }) = isUnreachable
+  fun enclosingFun (T { getEnclosingLam, ... }) = getEnclosingLam
+  fun callsitesIn (T { getTerminators, ... }) = getTerminators
+  fun escapingFunctions (T { escapingLam, ... }) = escapingLam
+  fun allFunctions (T { allLambdas, ... }) = allLambdas
 
   structure FunTbl = HashTableFn(struct
     type hash_key = LCPS.function
@@ -47,7 +86,10 @@ structure CallGraph :> CALL_GRAPH = struct
       val appTbl = LCPS.Tbl.mkTable (2048, Fail "callee table")
       val _ = appTbl : call_data LCPS.Tbl.hash_table
 
-      type fun_data = { callsites: LCPS.cexp list, terminators: LCPS.cexp list }
+      type fun_data = {
+        callsites: LCPS.cexp list,
+        terminators: LCPS.cexp list
+      }
       val funTbl = FunTbl.mkTable (2048, Fail "function table")
       val _ = funTbl : fun_data FunTbl.hash_table
 
@@ -113,21 +155,60 @@ structure CallGraph :> CALL_GRAPH = struct
         in
           exp body
         end
+
       val () = walkF cps
       val funTbl' = FunTbl.map (fn {callsites, terminators} =>
         { callsites=Vector.fromList callsites,
           terminators=Vector.fromList terminators }) funTbl
+      val allLambdas' = Vector.fromList (!allLambdas)
+
+      val infoTbl: info FunTbl.hash_table =
+        FunTbl.mkTable (Vector.length allLambdas', Fail "info")
+      fun getInfo (function as (_, name, _, _, _)) =
+        if Vector.exists (fn f => LambdaVar.same (name, LCPS.nameOfF f)) escapingLambdas then
+          ESCAPE
+        else
+          case #callsites (FunTbl.lookup funTbl' function)
+            of #[] => UNREACHABLE
+             | callsites =>
+                 let
+                   val getEnclosing = #enclosing o (LCPS.Tbl.lookup appTbl)
+                   val getCallees = #callees o (LCPS.Tbl.lookup appTbl)
+                   val removeF = Option.map
+                     (Vector.foldl (fn (x, acc) =>
+                        if LambdaVar.same (name, LCPS.nameOfF x) then
+                          acc
+                        else
+                          Vector.append (acc, x)) #[])
+                   fun hasOneCallee callsite =
+                     case getCallees callsite
+                       of SOME #[_] => true
+                        | _ => false
+                 in
+                   if Vector.all hasOneCallee callsites then
+                     WELLKNOWN (Vector.map getEnclosing callsites)
+                   else
+                     PROTOCOL (Vector.map
+                       (fn callsite =>
+                         { caller=getEnclosing callsite,
+                           colleagues=removeF (getCallees callsite) }) callsites)
+                 end
+      val () = Vector.app (fn lam => FunTbl.insert infoTbl (lam, getInfo lam))
+                          allLambdas'
     in
       T {
+        getInfo = FunTbl.lookup infoTbl,
         getCallees = #callees o (LCPS.Tbl.lookup appTbl),
         isUnreachable = #dead o (LCPS.Tbl.lookup appTbl),
         getCallsites = #callsites o (FunTbl.lookup funTbl'),
         getTerminators = #terminators o (FunTbl.lookup funTbl'),
         getEnclosingLam = #enclosing o (LCPS.Tbl.lookup appTbl),
         escapingLam = escapingLambdas,
-        allLambdas = Vector.fromList (!allLambdas)
+        allLambdas = allLambdas'
       }
     end
+
+  fun info (T {getInfo, ...}) = getInfo
 
   datatype component = SINGLE of LCPS.function
                      | GROUP of LCPS.function list
@@ -176,6 +257,7 @@ structure CallGraph :> CALL_GRAPH = struct
     | fkToString CPS.KNOWN_TAIL = "known_tail"
     | fkToString CPS.KNOWN_CONT = "known_cont"
     | fkToString CPS.ESCAPE = "std"
+    | fkToString CPS.NO_INLINE_INTO = "noinline"
 
   fun callWebDot (cg as
       T { allLambdas, getTerminators, getCallees, isUnreachable, escapingLam,

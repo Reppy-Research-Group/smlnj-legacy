@@ -26,6 +26,8 @@ structure LabelledCPS :> sig
              (lvar * cty) list * cexp
     withtype function = fun_kind * lvar * lvar list * cty list * cexp
 
+  val nameOfF : function -> lvar
+
   val label   : CPS.cexp -> cexp
   val unlabel : cexp -> CPS.cexp
 
@@ -38,6 +40,10 @@ structure LabelledCPS :> sig
   structure Map : ORD_MAP where type Key.ord_key = cexp
   structure Set : ORD_SET where type Key.ord_key = cexp
   structure Tbl : MONO_HASH_TABLE where type Key.hash_key = cexp
+
+  structure FunMap : ORD_MAP where type Key.ord_key = function
+  structure FunSet : ORD_SET where type Key.ord_key = function
+  structure FunTbl : MONO_HASH_TABLE where type Key.hash_key = function
 end = struct
   type label = LambdaVar.lvar
 
@@ -114,6 +120,8 @@ end = struct
     | labelOf (PURE data) = #1 data
     | labelOf (RCC data) = #1 data
 
+  fun nameOfF ((_, name, _, _, _): function) = name
+
   fun unlabel (RECORD (_, kind, values, v, cexp)) =
         CPS.RECORD (kind, unnameValueList values, v, unlabel cexp)
     | unlabel (SELECT (_, n, v, x, cty, cexp)) =
@@ -157,4 +165,18 @@ end = struct
   structure Map = RedBlackMapFn(OrdKey)
   structure Set = RedBlackSetFn(OrdKey)
   structure Tbl = HashTableFn(HashKey)
+
+  structure FunOrdKey : ORD_KEY = struct
+    type ord_key = function
+    fun compare (f1, f2) = LambdaVar.compare (nameOfF f1, nameOfF f2)
+  end
+  structure FunHashKey : HASH_KEY = struct
+    type hash_key = function
+    val hashVal = Word.fromInt o LambdaVar.toId o nameOfF
+    fun sameKey (f1, f2) = LambdaVar.same (nameOfF f1, nameOfF f2)
+  end
+
+  structure FunMap = RedBlackMapFn(FunOrdKey)
+  structure FunSet = RedBlackSetFn(FunOrdKey)
+  structure FunTbl = HashTableFn(FunHashKey)
 end
