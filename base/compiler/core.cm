@@ -268,6 +268,7 @@ CPS/clos/freeclose.sml
 CPS/clos/staticprof.sml
 CPS/clos/unrebind.sml
 CPS/cfa-clos/closure.sml
+CPS/cfa-clos/lifetime.sml
 CPS/cfa-clos/cfa/cfa.sig
 CPS/cfa-clos/cfa/0cfa.sml
 CPS/cfa-clos/cfa/call-graph.sml

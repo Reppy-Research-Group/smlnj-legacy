@@ -22,19 +22,27 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
 
   fun test cps =
     let
-      val cps = #1 (FreeClose.freemapClose cps)
+      (* val cps = #1 (FreeClose.freemapClose cps) *)
       val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n")
       val lcps = LabelledCPS.labelF cps
       val callgraph = ZeroCFA.analyze lcps
       val scc = CallGraph.scc callgraph
       val cg  = CallGraph.callGraphDot callgraph
       val web = CallGraph.callWebDot callgraph
-      val () = DotLanguage.dump web
+      val lifetime = Lifetime.analyze (lcps, callgraph)
+      (* val () = DotLanguage.dump web *)
       (* val () = dumpSCC scc *)
     in
       ()
     end
 
-  fun closeCPS cps = (test cps; cps)
+  fun closeCPS cps =
+    let
+      (* val lcps = LabelledCPS.labelF cps *)
+      (* val callgraph = ZeroCFA.analyze lcps *)
+      (* val lifetime = Lifetime.analyze (lcps, callgraph) *)
+    in
+      test cps; cps
+    end
 
 end
