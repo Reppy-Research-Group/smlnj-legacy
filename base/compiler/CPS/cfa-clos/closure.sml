@@ -10,6 +10,11 @@
 functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
   exception Unimp
 
+  structure ClosureRep = ClosureRepFn(MachSpec)
+  structure CG   = CallGraph
+  structure LCPS = LabelledCPS
+  structure LV   = LambdaVar
+
   fun dumpSCC components =
     let
       fun p (CallGraph.SINGLE f) =
@@ -29,12 +34,15 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       val scc = CallGraph.scc callgraph
       val cg  = CallGraph.callGraphDot callgraph
       val web = CallGraph.callWebDot callgraph
-      val lifetime = Lifetime.analyze (lcps, callgraph)
-      (* val () = DotLanguage.dump web *)
-      (* val () = dumpSCC scc *)
+      val (lcps, lifetime) = Lifetime.analyze (lcps, callgraph)
+      val slots = ClosureRep.analyze (lcps, callgraph, lifetime)
+      val () = DotLanguage.dump cg
+      val () = dumpSCC scc
     in
       ()
     end
+
+  (* fun closeFix *)
 
   fun closeCPS cps =
     let

@@ -26,6 +26,7 @@ signature CALL_GRAPH = sig
   val isUnreachable : t -> LabelledCPS.cexp -> bool
 
   val enclosingFun : t -> LabelledCPS.cexp -> LabelledCPS.function
+  val binderOfF    : t -> LabelledCPS.function -> LabelledCPS.function option
   val callsitesIn  : t -> LabelledCPS.function -> LabelledCPS.cexp vector
 
   val escapingFunctions : t -> LabelledCPS.function vector
@@ -56,6 +57,7 @@ structure CallGraph :> CALL_GRAPH = struct
     isUnreachable : LCPS.cexp -> bool,
     getCallsites: LCPS.function -> LCPS.cexp vector,
     getEnclosingLam : LCPS.cexp -> LCPS.function,
+    getBinderOf : LCPS.function -> LCPS.function option,
     getTerminators : LCPS.function -> LCPS.cexp vector,
     escapingLam : LCPS.function vector,
     allLambdas  : LCPS.function vector
@@ -65,6 +67,7 @@ structure CallGraph :> CALL_GRAPH = struct
   fun callsitesOf (T { getCallsites, ... }) = getCallsites
   fun isUnreachable (T { isUnreachable, ... }) = isUnreachable
   fun enclosingFun (T { getEnclosingLam, ... }) = getEnclosingLam
+  fun binderOfF (T { getBinderOf, ... }) = getBinderOf
   fun callsitesIn (T { getTerminators, ... }) = getTerminators
   fun escapingFunctions (T { escapingLam, ... }) = escapingLam
   fun allFunctions (T { allLambdas, ... }) = allLambdas
@@ -88,34 +91,53 @@ structure CallGraph :> CALL_GRAPH = struct
 
       type fun_data = {
         callsites: LCPS.cexp list,
-        terminators: LCPS.cexp list
+        terminators: LCPS.cexp list,
+        binder: LCPS.function option
       }
       val funTbl = FunTbl.mkTable (2048, Fail "function table")
       val _ = funTbl : fun_data FunTbl.hash_table
 
       fun insertCallsite site f =
         case FunTbl.find funTbl f
-          of SOME { callsites, terminators } =>
+          of SOME { callsites, terminators, binder } =>
                if List.exists (fn s => LCPS.same (site, s)) callsites then
                  ()
                else
                  FunTbl.insert funTbl
-                   (f, { callsites=site::callsites, terminators=terminators })
+                   (f, { callsites=site::callsites, terminators=terminators,
+                         binder=binder })
            | NONE =>
-               FunTbl.insert funTbl (f, { callsites=[site], terminators=[] })
+               FunTbl.insert funTbl (f,
+                 { callsites=[site], terminators=[], binder=NONE })
       fun insertTerminator f cexp =
         case FunTbl.find funTbl f
-          of SOME { callsites, terminators } =>
+          of SOME { callsites, terminators, binder } =>
                FunTbl.insert funTbl
-                 (f, { callsites=callsites, terminators=cexp::terminators })
+                 (f, { callsites=callsites, terminators=cexp::terminators,
+                       binder=binder })
            | NONE =>
-               FunTbl.insert funTbl (f, { callsites=[], terminators=[cexp] })
+               FunTbl.insert funTbl (f,
+                 { callsites=[], terminators=[cexp], binder=NONE })
+
+      fun insertBinder (f, binder: LCPS.function) =
+        case FunTbl.find funTbl f
+          of SOME { callsites, terminators, binder=(SOME _) } =>
+               raise Fail "double binder"
+           | SOME { callsites, terminators, ... } =>
+               FunTbl.insert funTbl
+                 (f, { callsites=callsites, terminators=terminators,
+                       binder=SOME binder })
+           | NONE =>
+               FunTbl.insert funTbl (f,
+                 { callsites=[], terminators=[], binder=SOME binder })
 
       val allLambdas = ref [] : LCPS.function list ref
 
-      fun walkF (function as (_, _, _, _, body)) =
+      fun walkF parent (function as (_, _, _, _, body)) =
         let
           val () = allLambdas := function :: (!allLambdas)
+          val () = case parent of NONE => ()
+                                | SOME p => insertBinder (function, p)
           fun register f cexp =
             case lookup f
               of NONE =>
@@ -142,7 +164,7 @@ structure CallGraph :> CALL_GRAPH = struct
             | exp (LCPS.SELECT (_, n, v, x, cty, cexp)) = exp cexp
             | exp (LCPS.OFFSET (_, n, v, x, cexp)) = exp cexp
             | exp (LCPS.FIX (_, bindings, body)) =
-                (app walkF bindings; exp body)
+                (app (walkF (SOME function)) bindings; exp body)
             | exp (LCPS.SWITCH (_, v, id, branches)) = app exp branches
             | exp (LCPS.BRANCH (_, br, args, id, trueExp, falseExp)) =
                 (exp trueExp; exp falseExp)
@@ -156,10 +178,11 @@ structure CallGraph :> CALL_GRAPH = struct
           exp body
         end
 
-      val () = walkF cps
-      val funTbl' = FunTbl.map (fn {callsites, terminators} =>
+      val () = walkF NONE cps
+      val funTbl' = FunTbl.map (fn {callsites, terminators, binder} =>
         { callsites=Vector.fromList callsites,
-          terminators=Vector.fromList terminators }) funTbl
+          terminators=Vector.fromList terminators,
+          binder=binder }) funTbl
       val allLambdas' = Vector.fromList (!allLambdas)
 
       val infoTbl: info FunTbl.hash_table =
@@ -203,6 +226,7 @@ structure CallGraph :> CALL_GRAPH = struct
         getCallsites = #callsites o (FunTbl.lookup funTbl'),
         getTerminators = #terminators o (FunTbl.lookup funTbl'),
         getEnclosingLam = #enclosing o (LCPS.Tbl.lookup appTbl),
+        getBinderOf = #binder o (FunTbl.lookup funTbl'),
         escapingLam = escapingLambdas,
         allLambdas = allLambdas'
       }

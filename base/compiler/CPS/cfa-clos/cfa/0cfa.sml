@@ -612,6 +612,7 @@ structure ZeroCFA :> CFA = struct
                        lookup=Context.find ctx,
                        filter=Value.functions,
                        escapingLambdas=Vector.fromList
-                         (Context.FunctionSet.toList (Context.escapeSet ctx))}
+                       (function ::
+                        Context.FunctionSet.toList (Context.escapeSet ctx))}
     end
 end
