@@ -2,12 +2,14 @@ structure Lifetime :> sig
   type fvinfo = LabelledCPS.lvar * int * int
   type fv = (int * int) LambdaVar.Map.map
   type stage_num = int
+  type t = fv LabelledCPS.FunTbl.hash_table
   val analyze : LabelledCPS.function * CallGraph.t ->
-                LabelledCPS.function * fv LabelledCPS.FunTbl.hash_table
+                LabelledCPS.function * t
 end = struct
   type fvinfo = LabelledCPS.lvar * int * int
   type fv = (int * int) LambdaVar.Map.map
   type stage_num = int
+  type t = fv LabelledCPS.FunTbl.hash_table
   structure CG   = CallGraph
   structure LCPS = LabelledCPS
   structure LV   = LambdaVar
