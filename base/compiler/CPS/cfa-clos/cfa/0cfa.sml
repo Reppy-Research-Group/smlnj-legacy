@@ -6,7 +6,7 @@ structure ZeroCFA :> CFA = struct
       = FUN    of LCPS.function
       | RECORD of addr list
       | REF    of addr
-      | DATA (* data is everything that cannot contain functions *)
+      | DATA   of LCPS.cty (* data is everything that is not functions *)
       | UNCAUGHTEXN
       | T
     withtype addr = LCPS.lvar
@@ -27,8 +27,9 @@ structure ZeroCFA :> CFA = struct
     val isTop: t -> bool
     val app: (concrete -> unit) -> t -> unit
 
+    val objects: t -> CallGraph.object
     val records: t -> (addr list) list option
-    val functions: t -> (LCPS.function) list option
+    val functions: t -> LCPS.function list option
     val refs: t -> addr list option
 
     val recordsL: concrete list -> (addr list) list option
@@ -39,7 +40,7 @@ structure ZeroCFA :> CFA = struct
       = FUN    of LCPS.function
       | RECORD of addr list
       | REF    of addr
-      | DATA
+      | DATA   of LCPS.cty
       | UNCAUGHTEXN
       | T
     withtype addr = LCPS.lvar
@@ -61,7 +62,7 @@ structure ZeroCFA :> CFA = struct
             ListPair.allEq sameAddr (a, b)
         | sameKey (REF a, REF b) =
             sameAddr (a, b)
-        | sameKey (DATA, DATA) = true
+        | sameKey (DATA _, DATA _) = true (* TODO: CHECK *)
         | sameKey (T, T) = true
         | sameKey (UNCAUGHTEXN, UNCAUGHTEXN) = true
         | sameKey _ = false
@@ -77,7 +78,7 @@ structure ZeroCFA :> CFA = struct
           fun addTag (hash, tag) = Word.orb (Word.<< (hash, 0w3), tag)
         in
           case v
-            of DATA => dataTag
+            of DATA _ => dataTag
              | FUN (_, lvar, _, _, _) =>
                  addTag (Word.fromInt (LambdaVar.toId lvar), funTag)
              | RECORD addrs =>
@@ -139,8 +140,8 @@ structure ZeroCFA :> CFA = struct
            say "} [R]")
       | dumpC (REF addrs) =
           say (LambdaVar.lvarName addrs ^ "[REF]")
-      | dumpC DATA =
-          say "[D]"
+      | dumpC (DATA cty) =
+          say ("[D: " ^ CPSUtil.ctyToString cty ^ "]")
       | dumpC UNCAUGHTEXN =
           say "[UNCAUGHT]"
       | dumpC T =
@@ -148,6 +149,39 @@ structure ZeroCFA :> CFA = struct
 
     fun isTop set = Set.member (set, T)
     fun dump set = (say "["; Set.app (fn c => (dumpC c; say ",")) set; say "]")
+
+    val objects =
+      let fun collect (_, SOME CallGraph.Unknown) = SOME CallGraph.Unknown
+            | collect (FUN f, SOME (CallGraph.Function fs)) =
+                SOME (CallGraph.Function (f :: fs))
+            | collect (FUN f, NONE) =
+                SOME (CallGraph.Function [f])
+            | collect (FUN f, SOME _) =
+                raise Fail "conflicting 1"
+            | collect (RECORD data,
+                       (NONE | SOME (CallGraph.Value (CPS.PTRt _)))) =
+                SOME (CallGraph.Value (CPS.PTRt (CPS.RPT (List.length data))))
+            | collect (RECORD data, SOME _) =
+                raise Fail "conflicting 2"
+            | collect (REF _,
+                       (NONE | SOME (CallGraph.Value (CPS.PTRt CPS.VPT)))) =
+                SOME (CallGraph.Value (CPS.PTRt CPS.VPT))
+            | collect (REF _, SOME _) =
+                raise Fail "conflicting 3"
+            | collect (DATA cty, (NONE | SOME (CallGraph.Value _))) =
+                SOME (CallGraph.Value cty)
+            | collect (DATA cty, _) =
+                raise Fail "conflicting 4"
+            | collect (UNCAUGHTEXN, NONE) =
+                SOME CallGraph.Unknown
+            | collect (UNCAUGHTEXN, SOME _) =
+                raise Fail "conflicting 5"
+            | collect (T, NONE) =
+                SOME CallGraph.Unknown
+            | collect (T, SOME _) =
+                raise Fail "conflicting 5"
+      in  Option.valOf o (Set.fold collect NONE)
+      end
 
     val records = collect (fn (RECORD data) => SOME data | _ => NONE) Set.fold
     val refs = collect (fn (REF data) => SOME data | _ => NONE) Set.fold
@@ -315,7 +349,7 @@ structure ZeroCFA :> CFA = struct
           (addrs @ todo, result)
       | scanValue (Value.REF addr, (todo, result)) =
           (addr :: todo, result)
-      | scanValue ((Value.DATA | Value.T | Value.UNCAUGHTEXN), acc) =
+      | scanValue ((Value.DATA _ | Value.T | Value.UNCAUGHTEXN), acc) =
           acc
     and scanAddr ctx seen result [] = result
       | scanAddr ctx seen result (addr::todo) =
@@ -375,8 +409,12 @@ structure ZeroCFA :> CFA = struct
         raise (Impossible "Label value before closure conversion")
     | evalValue _ CPS.VOID =
         Value.mk Value.T
-    | evalValue _ _ =
-        Value.mk Value.DATA
+    | evalValue _ (CPS.NUM const) =
+        Value.mk (Value.DATA (CPS.NUMt (#ty const)))
+    | evalValue _ (CPS.REAL const) =
+        Value.mk (Value.DATA (CPS.FLTt (#ty const)))
+    | evalValue _ (CPS.STRING _) =
+        Value.mk (Value.DATA (CPS.PTRt CPS.VPT))
 
   fun dump ctx cexp =
     (print "Current expression:\n";
@@ -517,27 +555,27 @@ structure ZeroCFA :> CFA = struct
                      loopExp ctx body)
         end
     | loopExpCase ctx (LCPS.LOOKER (_, CPS.P.DEREF, _, _, _, _)) =
-       raise Impossible "DEREF with wrong number of arguments"
+        raise Impossible "DEREF with wrong number of arguments"
     | loopExpCase ctx (LCPS.LOOKER (_, _, _, dest,
-                                      (CPS.NUMt _ | CPS.FLTt _), body)) =
-        (Context.add ctx (dest, Value.DATA); loopExp ctx body)
+                                    ty as (CPS.NUMt _ | CPS.FLTt _), body)) =
+        (Context.add ctx (dest, Value.DATA ty); loopExp ctx body)
     | loopExpCase ctx (LCPS.LOOKER (_, _, _, dest,
                                     (CPS.FUNt | CPS.CNTt | CPS.PTRt _), body)) =
         (Context.add ctx (dest, Value.T); loopExp ctx body)
-    | loopExpCase ctx (LCPS.ARITH (_, _, _, dest, _, body)) =
+    | loopExpCase ctx (LCPS.ARITH (_, _, _, dest, ty, body)) =
         (apply ctx (Context.getHdlr ctx, [CPS.VOID, CPS.VOID]);
-         Context.add ctx (dest, Value.DATA);
+         Context.add ctx (dest, Value.DATA ty);
          loopExp ctx body)
     | loopExpCase ctx (LCPS.PURE (_, _, _, dest,
-                                      (CPS.NUMt _ | CPS.FLTt _), body)) =
-        (Context.add ctx (dest, Value.DATA); loopExp ctx body)
-    | loopExpCase ctx (LCPS.PURE (label, CPS.P.MAKEREF, [v], dest, _, body)) =
+                                   ty as (CPS.NUMt _ | CPS.FLTt _), body)) =
+        (Context.add ctx (dest, Value.DATA ty); loopExp ctx body)
+    | loopExpCase ctx (LCPS.PURE (label, CPS.P.MAKEREF, [v], dest, ty, body)) =
         (Context.add ctx (dest, Value.REF label);
          case v
            of CPS.VAR w => Context.merge ctx (label, Context.lookup ctx w)
             | CPS.LABEL _ => raise Impossible "label"
             | (CPS.NUM _ | CPS.REAL _ | CPS.STRING _) =>
-                Context.add ctx (label, Value.DATA)
+                Context.add ctx (label, Value.DATA ty)
             | CPS.VOID => Context.add ctx (label, Value.T);
          loopExp ctx body)
     | loopExpCase ctx (LCPS.PURE (_, _, _, dest, _, body)) =
@@ -558,7 +596,7 @@ structure ZeroCFA :> CFA = struct
                  app (fn (CPS.VAR v) => Context.escape ctx v | _ => ()) args
              | call Value.UNCAUGHTEXN =
                  app (fn (CPS.VAR v) => Context.escape ctx v | _ => ()) args
-             | call (Value.RECORD _ | Value.REF _ | Value.DATA) = ()
+             | call (Value.RECORD _ | Value.REF _ | Value.DATA _) = ()
                 (* if applying a non-function, nothing to be done *)
         in
           Value.app call f
@@ -609,8 +647,7 @@ structure ZeroCFA :> CFA = struct
       timeit "0cfa: " (fn () => loopEscape ctx queue LambdaVar.Set.empty);
       Context.dump ctx;
       CallGraph.build {cps=function,
-                       lookup=Context.find ctx,
-                       filter=Value.functions,
+                       lookup=Option.map Value.objects o Context.find ctx,
                        escapingLambdas=Vector.fromList
                        (function ::
                         Context.FunctionSet.toList (Context.escapeSet ctx))}

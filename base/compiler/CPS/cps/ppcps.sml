@@ -210,13 +210,23 @@ structure PPCps : PPCPS =
 		  | f (APP(w,vl)) = (
 			space n; sayv w; say "("; sayvlist vl; say ")\n")
 		  | f (FIX(bl,c)) = let
-			fun g (_,v,wl,cl,d) = (
-				space n; sayv(VAR v); say "(";
+			fun g (fk,v,wl,cl,d) = (
+                                space n; 
+                                (case fk
+                                   of CONT => say "std_cont "
+                                    | KNOWN => say "known "
+                                    | KNOWN_REC => say "known_rec "
+                                    | KNOWN_CHECK => say "known_chk "
+                                    | KNOWN_TAIL => say "known_tail "
+                                    | KNOWN_CONT => say "known_cont "
+                                    | ESCAPE => say "std "
+                                    | NO_INLINE_INTO => say "noinline ");
+				sayv(VAR v); say "(";
 				sayparam (map VAR wl,cl);
 				say ") =\n";
 				indent (n+3) d)
 			in
-			  app g bl; f c
+			  say "<fix>\n"; app g bl; say "</fix>\n"; f c
 			end
 		  | f (SWITCH(v,c,cl)) = let
 			fun g (i,c::cl) = (
