@@ -1,335 +1,208 @@
 signature CALL_GRAPH = sig
   type t
 
+  datatype object
+    = Data of LabelledCPS.cty
+    | FirstOrder of LabelledCPS.function
+    | Function of LabelledCPS.function list
+    | Unknown
+    | NoBinding
+
+  datatype info
+    = Escape
+    | Unreachable
+    | Known of { callers: LabelledCPS.function list }
+    | Family of family_info list
+  withtype family_info = { caller: LabelledCPS.function,
+                           colleagues: LabelledCPS.function vector option }
+
+  datatype component = Single of LabelledCPS.function
+                     | Group of LabelledCPS.function list
+
   val build : {
     cps: LabelledCPS.function,
-    lookup : CPS.lvar -> 'value option,
-    filter :'value -> LabelledCPS.function list option,
+    lookup : CPS.lvar -> object option,
     escapingLambdas: LabelledCPS.function vector
   } -> t
 
-  datatype info
-    = ESCAPE
-    | UNREACHABLE
-    | WELLKNOWN of LabelledCPS.function vector
-    | PROTOCOL  of caller_info vector
-  withtype caller_info = { caller: LabelledCPS.function,
-                           colleagues: LabelledCPS.function vector option }
-
-  datatype component = SINGLE of LabelledCPS.function
-                     | GROUP of LabelledCPS.function list
   val scc : t -> component list
+  val info   : t -> LabelledCPS.function -> info
+  val whatis : t -> LabelledCPS.lvar -> object
 
-  val info : t -> LabelledCPS.function -> info
-  val callees     : t -> LabelledCPS.cexp -> LabelledCPS.function vector option
-  val callsitesOf : t -> LabelledCPS.function -> LabelledCPS.cexp vector
-  val isUnreachable : t -> LabelledCPS.cexp -> bool
+  val predecessors : t -> LabelledCPS.function -> LabelledCPS.function list
+  val successors : t -> LabelledCPS.function -> LabelledCPS.function list
 
-  val enclosingFun : t -> LabelledCPS.cexp -> LabelledCPS.function
-  val binderOfF    : t -> LabelledCPS.function -> LabelledCPS.function option
-  val callsitesIn  : t -> LabelledCPS.function -> LabelledCPS.cexp vector
-
-  val escapingFunctions : t -> LabelledCPS.function vector
   val allFunctions : t -> LabelledCPS.function vector
 
-  val callGraphDot : t -> DotLanguage.t
-  val callWebDot : t -> DotLanguage.t
+  (* val callGraphDot : t -> DotLanguage.t *)
+  (* val callWebDot : t -> DotLanguage.t *)
 end
 
 structure CallGraph :> CALL_GRAPH = struct
-  structure VTbl = LambdaVar.Tbl
-  structure VSet = LambdaVar.Set
+  structure LV = LambdaVar
   structure LCPS = LabelledCPS
 
-  datatype info
-    = ESCAPE
-    | UNREACHABLE
-    | WELLKNOWN of LCPS.function vector
-    | PROTOCOL  of caller_info vector
-  withtype caller_info = { caller: LCPS.function,
-                           colleagues: LCPS.function vector option }
+  datatype object
+    = Data of LabelledCPS.cty
+    | FirstOrder of LabelledCPS.function
+    | Function of LabelledCPS.function list
+    | Unknown
+    | NoBinding
 
-  (* FIXME REFACTOR: Some of these are just syntactic properties; it's better
-   * to split them into another module *)
+  datatype info
+    = Escape
+    | Unreachable
+    | Known of { callers: LabelledCPS.function list }
+    | Family of family_info list
+  withtype family_info = { caller: LabelledCPS.function,
+                           colleagues: LabelledCPS.function vector option }
+
+  datatype component = Single of LabelledCPS.function
+                     | Group of LabelledCPS.function list
+
   datatype t = T of {
-    getInfo : LCPS.function -> info,
-    getCallees : LCPS.cexp -> LCPS.function vector option,
-    isUnreachable : LCPS.cexp -> bool,
-    getCallsites: LCPS.function -> LCPS.cexp vector,
-    getEnclosingLam : LCPS.cexp -> LCPS.function,
-    getBinderOf : LCPS.function -> LCPS.function option,
-    getTerminators : LCPS.function -> LCPS.cexp vector,
-    escapingLam : LCPS.function vector,
-    allLambdas  : LCPS.function vector
+    funTbl: info LCPS.FunTbl.hash_table,
+    varTbl: object LV.Tbl.hash_table,
+    allFunctions: LCPS.function vector,
+    escaping: LCPS.function vector
   }
 
-  fun callees (T { getCallees, ... }) = getCallees
-  fun callsitesOf (T { getCallsites, ... }) = getCallsites
-  fun isUnreachable (T { isUnreachable, ... }) = isUnreachable
-  fun enclosingFun (T { getEnclosingLam, ... }) = getEnclosingLam
-  fun binderOfF (T { getBinderOf, ... }) = getBinderOf
-  fun callsitesIn (T { getTerminators, ... }) = getTerminators
-  fun escapingFunctions (T { escapingLam, ... }) = escapingLam
-  fun allFunctions (T { allLambdas, ... }) = allLambdas
+  fun sameFun f1 f2 = LV.same (LCPS.nameOfF f1, LCPS.nameOfF f2)
 
-  structure FunTbl = HashTableFn(struct
-    type hash_key = LCPS.function
-    val nameOf = #2 : hash_key -> LambdaVar.lvar
-    val hashVal = (Word.fromInt o LambdaVar.toId o nameOf)
-    fun sameKey (f1, f2) = LambdaVar.same (nameOf f1, nameOf f2)
-  end)
-
-  fun build {cps, lookup, filter, escapingLambdas} =
+  exception CallGraph
+  fun build {cps, lookup, escapingLambdas} =
     let
-      type call_data = {
-        callees: LCPS.function vector option,
-        dead: bool,
-        enclosing: LCPS.function
-      }
-      val appTbl = LCPS.Tbl.mkTable (2048, Fail "callee table")
-      val _ = appTbl : call_data LCPS.Tbl.hash_table
+      val funTbl = LCPS.FunTbl.mkTable (32, CallGraph)
+      val varTbl = LV.Tbl.mkTable (1024, CallGraph)
+      val allFunctions = ref ([] : LCPS.function list)
 
-      type fun_data = {
-        callsites: LCPS.cexp list,
-        terminators: LCPS.cexp list,
-        binder: LCPS.function option
-      }
-      val funTbl = FunTbl.mkTable (2048, Fail "function table")
-      val _ = funTbl : fun_data FunTbl.hash_table
+      fun initF function =
+        if Vector.exists (sameFun function) escapingLambdas then
+          LCPS.FunTbl.insert funTbl (function, Escape)
+        else
+          LCPS.FunTbl.insert funTbl (function, Unreachable)
 
-      fun insertCallsite site f =
-        case FunTbl.find funTbl f
-          of SOME { callsites, terminators, binder } =>
-               if List.exists (fn s => LCPS.same (site, s)) callsites then
-                 ()
-               else
-                 FunTbl.insert funTbl
-                   (f, { callsites=site::callsites, terminators=terminators,
-                         binder=binder })
-           | NONE =>
-               FunTbl.insert funTbl (f,
-                 { callsites=[site], terminators=[], binder=NONE })
-      fun insertTerminator f cexp =
-        case FunTbl.find funTbl f
-          of SOME { callsites, terminators, binder } =>
-               FunTbl.insert funTbl
-                 (f, { callsites=callsites, terminators=cexp::terminators,
-                       binder=binder })
-           | NONE =>
-               FunTbl.insert funTbl (f,
-                 { callsites=[], terminators=[cexp], binder=NONE })
+      fun merge _ (Escape, _) = Escape
+        | merge _ (_, Escape) = Escape
+        | merge _ (info, Unreachable) = info
+        | merge _ (Unreachable, info) = info
+        | merge _ (Known {callers=callers1}, Known {callers=callers2}) =
+            Known {callers=callers1 @ callers2}
+        | merge self ((Known {callers}, Family family) |
+                      (Family family, Known {callers})) =
+            let val family' = map (fn f => {caller=f, colleagues=SOME #[self]})
+                                  callers
+            in  Family (family' @ family)
+            end
+        | merge _ (Family family, Family family') =
+            Family (family' @ family)
 
-      fun insertBinder (f, binder: LCPS.function) =
-        case FunTbl.find funTbl f
-          of SOME { callsites, terminators, binder=(SOME _) } =>
-               raise Fail "double binder"
-           | SOME { callsites, terminators, ... } =>
-               FunTbl.insert funTbl
-                 (f, { callsites=callsites, terminators=terminators,
-                       binder=SOME binder })
-           | NONE =>
-               FunTbl.insert funTbl (f,
-                 { callsites=[], terminators=[], binder=SOME binder })
+      fun updateInfo (f, info) =
+        case LCPS.FunTbl.find funTbl f
+          of NONE       => LCPS.FunTbl.insert funTbl (f, info)
+           | SOME info' => LCPS.FunTbl.insert funTbl (f, merge f (info, info'))
 
-      val allLambdas = ref [] : LCPS.function list ref
+      fun updateCall (callerF, var) =
+        case LV.Tbl.lookup varTbl var
+          of Data _ => raise Fail "not a function"
+           | NoBinding => ()
+           | Unknown => raise Fail "TODO"
+           | FirstOrder f => updateInfo (f, Known { callers=[callerF] })
+           | Function [] => raise Fail "object is not bound"
+           | Function [f] => updateInfo (f, Known { callers=[callerF] })
+           | Function fs  =>
+               app (fn f => updateInfo (f, Family [{
+                      caller=callerF, colleagues=SOME (Vector.fromList fs) }]))
+                   fs
 
-      fun walkF parent (function as (_, _, _, _, body)) =
+      fun cacheObj name =
+        case lookup name
+          of SOME obj => LV.Tbl.insert varTbl (name, obj)
+           | NONE     => LV.Tbl.insert varTbl (name, NoBinding)
+
+      fun walkF (function as (_, name, args, _, body)) =
         let
-          val () = allLambdas := function :: (!allLambdas)
-          val () = case parent of NONE => ()
-                                | SOME p => insertBinder (function, p)
-          fun register f cexp =
-            case lookup f
-              of NONE =>
-                   let
-                     val callData = {callees=NONE, dead=true, enclosing=function}
-                   in
-                     LCPS.Tbl.insert appTbl (cexp, callData);
-                     insertTerminator function cexp
-                   end
-               | SOME values =>
-                   let
-                     val callees = Option.map Vector.fromList (filter values)
-                     val callData =
-                       { callees=callees, dead=false, enclosing=function }
-                   in
-                     LCPS.Tbl.insert appTbl (cexp, callData);
-                     Option.app (Vector.app (insertCallsite cexp)) callees;
-                     insertTerminator function cexp
-                   end
-
-          fun exp (cexp as LCPS.APP (_, CPS.VAR f, args)) = register f cexp
-            | exp (LCPS.APP _) = raise Fail "app not var impossible"
-            | exp (LCPS.RECORD (_, kind, values, v, cexp)) = exp cexp
-            | exp (LCPS.SELECT (_, n, v, x, cty, cexp)) = exp cexp
-            | exp (LCPS.OFFSET (_, n, v, x, cexp)) = exp cexp
+          val () = allFunctions := function :: (!allFunctions)
+          val () = LV.Tbl.insert varTbl (name, FirstOrder function)
+          val () = app cacheObj args
+          fun exp (LCPS.APP (_, CPS.VAR f, _)) = updateCall (function, f)
+            | exp (LCPS.APP _) = raise Fail "app not var"
             | exp (LCPS.FIX (_, bindings, body)) =
-                (app (walkF (SOME function)) bindings; exp body)
-            | exp (LCPS.SWITCH (_, v, id, branches)) = app exp branches
-            | exp (LCPS.BRANCH (_, br, args, id, trueExp, falseExp)) =
-                (exp trueExp; exp falseExp)
-            | exp (LCPS.SETTER (_, oper, args, cexp)) = exp cexp
-            | exp (LCPS.LOOKER (_, oper, args, x, cty, cexp)) = exp cexp
-            | exp (LCPS.ARITH (_, oper, args, x, cty, cexp)) = exp cexp
-            | exp (LCPS.PURE (_, oper, args, x, cty, cexp)) = exp cexp
-            | exp (LCPS.RCC (_, b, name, ctype, values, vars, cexp)) = exp cexp
-                (* FIXME: check RCC case *)
+                (app walkF bindings; exp body)
+            | exp (LCPS.SWITCH (_, _, _, es)) = app exp es
+            | exp (LCPS.BRANCH (_, _, _, _, te, fe)) = (exp te; exp fe)
+            | exp (LCPS.RECORD (_, _, _, name, e) |
+                   LCPS.SELECT (_, _, _, name, _, e) |
+                   LCPS.OFFSET (_, _, _, name, e) |
+                   LCPS.LOOKER (_, _, _, name, _, e) |
+                   LCPS.ARITH  (_, _, _, name, _, e) |
+                   LCPS.PURE   (_, _, _, name, _, e)) =
+                (cacheObj name; exp e)
+            | exp (LCPS.SETTER (_, _, _, e)) = exp e
+            | exp (LCPS.RCC    (_, _, _, _, _, returns, e)) =
+                (app (cacheObj o #1) returns; exp e)
         in
           exp body
         end
-
-      val () = walkF NONE cps
-      val funTbl' = FunTbl.map (fn {callsites, terminators, binder} =>
-        { callsites=Vector.fromList callsites,
-          terminators=Vector.fromList terminators,
-          binder=binder }) funTbl
-      val allLambdas' = Vector.fromList (!allLambdas)
-
-      val infoTbl: info FunTbl.hash_table =
-        FunTbl.mkTable (Vector.length allLambdas', Fail "info")
-      fun getInfo (function as (_, name, _, _, _)) =
-        if Vector.exists (fn f => LambdaVar.same (name, LCPS.nameOfF f)) escapingLambdas then
-          ESCAPE
-        else
-          case #callsites (FunTbl.lookup funTbl' function)
-            of #[] => UNREACHABLE
-             | callsites =>
-                 let
-                   val getEnclosing = #enclosing o (LCPS.Tbl.lookup appTbl)
-                   val getCallees = #callees o (LCPS.Tbl.lookup appTbl)
-                   val removeF = Option.map
-                     (Vector.foldl (fn (x, acc) =>
-                        if LambdaVar.same (name, LCPS.nameOfF x) then
-                          acc
-                        else
-                          Vector.append (acc, x)) #[])
-                   fun hasOneCallee callsite =
-                     case getCallees callsite
-                       of SOME #[_] => true
-                        | _ => false
-                 in
-                   if Vector.all hasOneCallee callsites then
-                     WELLKNOWN (Vector.map getEnclosing callsites)
-                   else
-                     PROTOCOL (Vector.map
-                       (fn callsite =>
-                         { caller=getEnclosing callsite,
-                           colleagues=removeF (getCallees callsite) }) callsites)
-                 end
-      val () = Vector.app (fn lam => FunTbl.insert infoTbl (lam, getInfo lam))
-                          allLambdas'
     in
-      T {
-        getInfo = FunTbl.lookup infoTbl,
-        getCallees = #callees o (LCPS.Tbl.lookup appTbl),
-        isUnreachable = #dead o (LCPS.Tbl.lookup appTbl),
-        getCallsites = #callsites o (FunTbl.lookup funTbl'),
-        getTerminators = #terminators o (FunTbl.lookup funTbl'),
-        getEnclosingLam = #enclosing o (LCPS.Tbl.lookup appTbl),
-        getBinderOf = #binder o (FunTbl.lookup funTbl'),
-        escapingLam = escapingLambdas,
-        allLambdas = allLambdas'
-      }
+      walkF cps;
+      T { funTbl=funTbl,
+          varTbl=varTbl,
+          allFunctions=Vector.fromList (!allFunctions),
+          escaping=escapingLambdas }
     end
 
-  fun info (T {getInfo, ...}) = getInfo
+  fun whatis (T {varTbl, ...}) = LV.Tbl.lookup varTbl
+  fun info (T {funTbl, ...}) = LCPS.FunTbl.lookup funTbl
 
-  datatype component = SINGLE of LCPS.function
-                     | GROUP of LCPS.function list
+  fun predecessors t function =
+    case info t function
+      of Escape => []
+       | Unreachable => []
+       | Known {callers} => callers
+       | Family families => map #caller families
+
+  fun successors t (function as (_, _, _, _, body)) =
+    let
+      fun fold (LCPS.APP (_, CPS.VAR f, _), acc) =
+            (case whatis t f
+               of Data _ => raise Fail "not a function"
+                | FirstOrder f => f :: acc
+                | Function fs => fs @ acc
+                | _ => acc)
+        | fold (LCPS.APP _, acc) = raise Fail "call not a var"
+        | fold (LCPS.SWITCH  (_, _, _, es), acc) = foldr fold acc es
+        | fold (LCPS.BRANCH  (_, _, _, _, te, fe), acc) =
+            fold (fe, fold (te, acc))
+        | fold ((LCPS.FIX    (_, _, e) |
+                 LCPS.RECORD (_, _, _, _, e) |
+                 LCPS.SELECT (_, _, _, _, _, e) |
+                 LCPS.OFFSET (_, _, _, _, e) |
+                 LCPS.SETTER (_, _, _, e) |
+                 LCPS.LOOKER (_, _, _, _, _, e) |
+                 LCPS.ARITH  (_, _, _, _, _, e) |
+                 LCPS.PURE   (_, _, _, _, _, e) |
+                 LCPS.RCC    (_, _, _, _, _, _, e)), acc) = fold (e, acc)
+    in
+      fold (body, [])
+    end
+
+  fun allFunctions (T {allFunctions, ...}) = allFunctions
+
   structure SCCSolver = GraphSCCFn(struct
     type ord_key = LCPS.function
     fun compare (f1: ord_key, f2: ord_key) = LambdaVar.compare (#2 f1, #2 f2)
   end)
 
-  fun toGraph (T {getCallees, getTerminators, escapingLam, ...}) =
-    let
-      fun concatMapToList f xs =
-        Vector.foldr (fn (x, acc) =>
-          case f x
-            of SOME xs => Vector.foldr (op::) acc xs
-             | NONE => acc) [] xs
-      val _ = concatMapToList : ('a -> 'b vector option) -> 'a vector -> 'b list
-      fun follow func = concatMapToList getCallees (getTerminators func)
-    in
-      { roots=Vector.toList escapingLam, follow=follow }
-    end
+  fun toGraph (t as T {escaping, ...}) =
+    { roots=Vector.toList escaping, follow=successors t }
 
   fun scc cg =
     let
-      fun convert (SCCSolver.SIMPLE f) = SINGLE f
-        | convert (SCCSolver.RECURSIVE fs) = GROUP fs
+      fun convert (SCCSolver.SIMPLE f) = Single f
+        | convert (SCCSolver.RECURSIVE fs) = Group fs
     in
       map convert (SCCSolver.topOrder' (toGraph cg))
     end
 
-  fun callGraphDot (cg as T {escapingLam, ...}) =
-    let
-      fun escaping (f: LCPS.function) =
-        Vector.exists (fn f' => LambdaVar.same (#2 f, #2 f')) escapingLam
-      fun convert f = (LambdaVar.lvarName (#2 f),
-                       if escaping f then [("color", "red")] else [])
-    in
-      DotLanguage.fromGraph convert (toGraph cg)
-    end
-
-  structure D = DotLanguage
-
-  fun fkToString CPS.CONT = "std_cont"
-    | fkToString CPS.KNOWN = "known"
-    | fkToString CPS.KNOWN_REC = "known_rec"
-    | fkToString CPS.KNOWN_CHECK = "known_chk"
-    | fkToString CPS.KNOWN_TAIL = "known_tail"
-    | fkToString CPS.KNOWN_CONT = "known_cont"
-    | fkToString CPS.ESCAPE = "std"
-    | fkToString CPS.NO_INLINE_INTO = "noinline"
-
-  fun callWebDot (cg as
-      T { allLambdas, getTerminators, getCallees, isUnreachable, escapingLam,
-          ... }) =
-    let
-      val counter = ref 0
-      fun newTopNode () =
-        let val name = "top" ^ Int.toString (!counter)
-            val () = counter := !counter + 1
-        in  (name, D.NODE (name, [("label", "top")]))
-        end
-      fun draw (f, doc) =
-        let
-          val callsites = getTerminators f
-          val callId = LambdaVar.lvarName o LCPS.labelOf
-          fun funId (f as (fk, name, _, _, _)) =
-            (LambdaVar.lvarName name) ^ "(" ^ fkToString fk ^ ")"
-          fun escaping (f: LCPS.function) =
-            Vector.exists (fn f' => LambdaVar.same (#2 f, #2 f')) escapingLam
-          fun callColor c =
-            if isUnreachable c then [("bgcolor", "black")] else []
-          fun callvarstr (LCPS.APP (_, CPS.VAR f, _)) = LambdaVar.lvarName f
-            | callvarstr _ = raise Fail "not a call"
-          fun termNode (c: LCPS.cexp) =
-            D.NODE (callId c, ("label",  callvarstr c) :: callColor c)
-          fun drawCalls site =
-            case getCallees site
-              of NONE =>
-                   let val (name, node) = newTopNode ()
-                   in  [node, D.EDGE (callId site, name, [])]
-                   end
-               | SOME callees =>
-                   map (fn f => D.EDGE (callId site, funId f, []))
-                       (Vector.toList callees)
-          val stmts = [
-            if escaping f then
-              D.NODE (funId f, [("color", "red")])
-            else
-              D.NODE (funId f, []),
-            D.SUBGRAPH (SOME ("cluster_" ^ funId f ^ "_callsites"),
-              [D.ATTR ("label=\"" ^ funId f ^ "\""),
-               D.ATTR "graph[style=dotted]"]
-              @ (map termNode (Vector.toList callsites)))]
-            @ List.concatMap drawCalls (Vector.toList callsites)
-        in
-          D.<+< (doc, stmts)
-        end
-    in
-      Vector.foldl draw (D.empty (true, "call-graph")) allLambdas
-    end
 end
