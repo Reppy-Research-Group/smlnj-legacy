@@ -126,11 +126,6 @@ end = struct
                  insert tbl (f, Vector.foldl constraint (lookup tbl f) callers)
              | _ => ()
         end
-      (* fun numArgsConstraint tbl f = *)
-      (*   let *)
-      (*     fun constraint (f as (kind, name, args, tys, _)) = *)
-      (*       let val nslot = lookup tbl f *)
-      (*           val argslots = foldl (fn (x, CPS.FUNt) => *)
       val functions = CG.allFunctions callgraph
       val tbl = initTbl functions
     in

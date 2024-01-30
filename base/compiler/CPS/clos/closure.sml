@@ -1393,6 +1393,11 @@ val knownB =
             val (fns,other) = partition knownlvar3 vn
          in ({v=v,fe=fe,other=other,fsz=s,lpv=lpv},length fns,fns)
         end) knownB
+(***BZ knownB is ({v: name, fe: function, other: unknown free variables,
+ *                 fsz: size of stack(?), lpv: loop variables},
+ *               length of known functions,
+ *               known functions) list
+ *)
 
 (*** Compute the closure of the call graph of the known functions. ***)
 val knownB =
@@ -1410,6 +1415,12 @@ val knownB =
         end
    in closeCallGraph knownB
   end
+(***BZ knownB is still
+ *              (known function,
+ *               length of known functions,
+ *               known-function free variables in this function) list
+ *  but contains known functions transitively.
+ *)
 
 (*** Compute the closure of the set of free variables ***)
 val knownB =
@@ -1424,6 +1435,15 @@ val knownB =
              {v=v,kind=k,args=args,cl=cl,body=body,lpv=lpv,fsz=fsz,
               other=gatherNbrs fns other,fns=fns}) knownB
   end
+(***BZ knownB is now 
+ *              {v: name of the function,
+ *               kind, args, cl, body: ...,
+ *               lpv: loop variables,
+ *               fsz: size of the stack,
+ *               other: list of free variables of all known functions,
+ *               fns: known-function free variables}
+ *              list.
+ *)
 
 (*** See which known function requires a closure, pass 1. ***)
 val (knownB,recFlag) = foldr
