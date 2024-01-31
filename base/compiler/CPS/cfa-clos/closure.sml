@@ -17,9 +17,9 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
 
   fun dumpSCC components =
     let
-      fun p (CallGraph.SINGLE f) =
+      fun p (CallGraph.Single f) =
            print ("[" ^ LambdaVar.lvarName (#2 f) ^ "]\n")
-        | p (CallGraph.GROUP g) =
+        | p (CallGraph.Group g) =
            print ("[" ^ String.concatWithMap "," (LambdaVar.lvarName o #2) g ^ "]\n")
     in
       app p components
