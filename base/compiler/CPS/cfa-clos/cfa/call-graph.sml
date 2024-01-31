@@ -1,11 +1,13 @@
 signature CALL_GRAPH = sig
   type t
 
+  datatype function
+    = In of LabelledCPS.function
+    | Out
   datatype object
-    = Data of LabelledCPS.cty
+    = Value
     | FirstOrder of LabelledCPS.function
-    | Function of LabelledCPS.function list
-    | Unknown
+    | Function of function list
     | NoBinding
 
   datatype info
@@ -42,11 +44,13 @@ structure CallGraph :> CALL_GRAPH = struct
   structure LV = LambdaVar
   structure LCPS = LabelledCPS
 
+  datatype function
+    = In of LabelledCPS.function
+    | Out
   datatype object
-    = Data of LabelledCPS.cty
+    = Value
     | FirstOrder of LabelledCPS.function
-    | Function of LabelledCPS.function list
-    | Unknown
+    | Function of function list
     | NoBinding
 
   datatype info
@@ -104,16 +108,24 @@ structure CallGraph :> CALL_GRAPH = struct
 
       fun updateCall (callerF, var) =
         case LV.Tbl.lookup varTbl var
-          of Data _ => raise Fail "not a function"
+          of Value => raise Fail "not a function"
            | NoBinding => ()
-           | Unknown => raise Fail "TODO"
            | FirstOrder f => updateInfo (f, Known { callers=[callerF] })
            | Function [] => raise Fail "object is not bound"
-           | Function [f] => updateInfo (f, Known { callers=[callerF] })
+           | Function [In f] => updateInfo (f, Known { callers=[callerF] })
            | Function fs  =>
-               app (fn f => updateInfo (f, Family [{
-                      caller=callerF, colleagues=SOME (Vector.fromList fs) }]))
-                   fs
+               let
+                 val coll = foldr (fn (In f, SOME fs) => SOME (f :: fs)
+                                    | (In f, NONE) => NONE
+                                    | (OUT, _) => NONE)
+                                  (SOME []) fs
+                 val family = { caller=callerF,
+                                colleagues=Option.map Vector.fromList coll }
+                 fun update (In f) = updateInfo (f, Family [family])
+                   | update OUT = ()
+               in
+                 app update fs
+               end
 
       fun cacheObj name =
         case lookup name
@@ -155,6 +167,9 @@ structure CallGraph :> CALL_GRAPH = struct
   fun whatis (T {varTbl, ...}) = LV.Tbl.lookup varTbl
   fun info (T {funTbl, ...}) = LCPS.FunTbl.lookup funTbl
 
+  fun knownFs fs =
+    foldr (fn (In f, acc) => f :: acc | (Out, acc) => acc) [] fs
+
   fun predecessors t function =
     case info t function
       of Escape => []
@@ -166,9 +181,9 @@ structure CallGraph :> CALL_GRAPH = struct
     let
       fun fold (LCPS.APP (_, CPS.VAR f, _), acc) =
             (case whatis t f
-               of Data _ => raise Fail "not a function"
+               of Value => raise Fail "not a function"
                 | FirstOrder f => f :: acc
-                | Function fs => fs @ acc
+                | Function fs => knownFs fs @ acc
                 | _ => acc)
         | fold (LCPS.APP _, acc) = raise Fail "call not a var"
         | fold (LCPS.SWITCH  (_, _, _, es), acc) = foldr fold acc es
