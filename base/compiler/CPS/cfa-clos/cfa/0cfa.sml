@@ -147,10 +147,25 @@ structure ZeroCFA :> CFA = struct
             | collect (FUN (IN f), NONE) =
                 SOME (CallGraph.Function [CallGraph.In f])
             | collect (FUN OUT, SOME (CallGraph.Function fs)) =
-                SOME (CallGraph.Function (CallGraph.Out :: fs))
+                if List.exists (fn CallGraph.Out => true | _ => false) fs then
+                  SOME (CallGraph.Function fs)
+                else
+                  SOME (CallGraph.Function (CallGraph.Out :: fs))
             | collect (FUN OUT, NONE) =
                 SOME (CallGraph.Function [CallGraph.Out])
-            | collect (FUN f, SOME _) =
+
+            | collect (FUN (IN f), SOME CallGraph.Value) =
+                (* FIXME GROSS HACK: Some values in CPS may be bound to both an
+                 * integer and a function pointer. For example, a value of
+                 * datatype t = A of int -> int | B will be represented by one
+                 * ML value -- (A f) is a pointer whereas B is an integer.
+                 * Call-sites discriminate the cases by testing if the value
+                 * is boxed. *)
+                SOME (CallGraph.Function [CallGraph.In f, CallGraph.Out])
+            | collect (FUN OUT, SOME CallGraph.Value) =
+                SOME (CallGraph.Function [CallGraph.Out])
+
+            | collect (FUN _, SOME _) =
                 raise Fail "conflicting 1"
             | collect (RECORD data,
                        (NONE | SOME CallGraph.Value)) =
@@ -164,13 +179,20 @@ structure ZeroCFA :> CFA = struct
                 raise Fail "conflicting 3"
             | collect (DATA, (NONE | SOME CallGraph.Value)) =
                 SOME CallGraph.Value
+            | collect (DATA, SOME (CallGraph.Function fs)) =
+                if List.exists (fn CallGraph.Out => true | _ => false) fs then
+                  SOME (CallGraph.Function fs)
+                else
+                  SOME (CallGraph.Function (CallGraph.Out :: fs))
             | collect (DATA, _) =
                 raise Fail "conflicting 4"
             | collect (UNKNOWN cty, (NONE | SOME CallGraph.Value)) =
                 SOME CallGraph.Value
             | collect (UNKNOWN _, SOME _) =
                 raise Fail "conflicting 5"
-      in  Option.valOf o (Set.fold collect NONE)
+      in  fn v => (Option.valOf o (Set.fold collect NONE)) v
+          handle Fail conflict => (print (conflict ^ ": "); dump v; print "\n"; raise Fail
+          conflict)
       end
 
     val records = collect (fn (RECORD data) => SOME data | _ => NONE) Set.fold
@@ -230,6 +252,21 @@ structure ZeroCFA :> CFA = struct
          | NONE => (LVarTbl.insert table (lvar, Value.copy value);
                     updateEpoch epoch true)
 
+    (* fun merge {epoch, table, hdlr=_} (lvar, value) = *)
+    (*   case LVarTbl.find table lvar *)
+    (*     of SOME orig => *)
+    (*          let val changed = Value.merge (orig, value) *)
+    (*          in  (if !epoch > 10000 andalso changed then *)
+    (*                (print ("\n" ^ LambdaVar.lvarName lvar ^ " ---> "); *)
+    (*                Value.dump orig; *)
+    (*                print "\n") *)
+    (*              else *)
+    (*                ()); *)
+    (*              updateEpoch epoch changed *)
+    (*          end *)
+    (*      | NONE => (LVarTbl.insert table (lvar, Value.copy value); *)
+    (*                 updateEpoch epoch true) *)
+
     fun getHdlr ({hdlr, ...}: t) = hdlr
     fun addHdlr ({hdlr, epoch, ...}: t) v =
       updateEpoch epoch (Value.merge (hdlr, v))
@@ -245,7 +282,7 @@ structure ZeroCFA :> CFA = struct
                     table;
        say "hdlr ---> "; Value.dump hdlr; say "\n")
 
-    fun dump _ = ()
+    (* fun dump _ = () *)
 
     fun lookup (s as {table, ...}: t) lvar = LVarTbl.lookup table lvar
       handle StoreLookUp => (say "LOOKUP FAIL: ";
@@ -273,6 +310,7 @@ structure ZeroCFA :> CFA = struct
     val dump: t -> unit
     val escape: t -> LCPS.lvar -> unit
     val escapeSet: t -> FunctionSet.set
+    val epoch: t -> int
     val getHdlr: t -> Value.t
     val addHdlr: t -> Value.t -> unit
   end = struct
@@ -330,7 +368,7 @@ structure ZeroCFA :> CFA = struct
                         (!escapeSet);
        print "}\n")
 
-    fun dump _ = ()
+    (* fun dump _ = () *)
 
     val lookup = Store.lookup o (fn (ctx: t) => #store ctx)
     val find = Store.find o (fn (ctx: t) => #store ctx)
@@ -393,6 +431,7 @@ structure ZeroCFA :> CFA = struct
        else ();
        Store.merge (#store ctx) (addr, v))
 
+    fun epoch ({store, ...}: t) = Store.epoch store
     fun escapeSet ({escapeSet, ...}: t) = !escapeSet
   end
 
@@ -457,7 +496,15 @@ structure ZeroCFA :> CFA = struct
      print "\nCurrent state:\n";
      Context.dump ctx;
      print "=================\n\n\n")
-  fun dump ctx cexp = ()
+  fun dump ctx cexp =
+    if Context.epoch ctx > 10000 then
+      (print ("\ncurrent epoch:          " ^ Int.toString (Context.epoch ctx));
+       Context.dump ctx;
+       print "=================\n\n\n")
+    else
+      ()
+  fun dump ctx cexp = 
+    print ("\rcurrent epoch:          " ^ Int.toString (Context.epoch ctx))
 
   fun loopExp ctx cexp = (dump ctx cexp; Context.guard loopExpCase ctx cexp)
   and loopExpCase ctx (LCPS.APP (_, f, args)) =
@@ -465,14 +512,11 @@ structure ZeroCFA :> CFA = struct
     | loopExpCase ctx (LCPS.RECORD (_, _, values, x, body)) =
         let
           fun alloc (dest, src, path) =
-            let
-              val concretes = access ctx
-                                     (Value.toList (evalValue ctx src), path)
-              val value = Value.from concretes
-            in
-              Context.merge ctx (dest, value); dest
+            let val concretes = access ctx
+                                       (Value.toList (evalValue ctx src), path)
+                val value = Value.from concretes
+            in  Context.merge ctx (dest, value); dest
             end
-
           val record = Value.RECORD (map alloc values)
         in
           Context.add ctx (x, record);
@@ -590,36 +634,77 @@ structure ZeroCFA :> CFA = struct
           Value.app call f
         end
 
+  (* fun loopEscape ctx q visited = *)
+  (*   let *)
+  (*     fun doFunction (fun_kind, name, formals, tys, body) = *)
+  (*       let *)
+  (*         val beforeSet = Context.escapeSet ctx *)
+  (*         fun mkUnknown (arg, cty) = ignore (Context.add ctx (arg, unknown cty)) *)
+  (*       in *)
+  (*         ListPair.appEq mkUnknown (formals, tys); *)
+  (*         loopExp ctx body; *)
+  (*         Context.FunctionSet.app (fn f => Queue.enqueue (q, f)) *)
+  (*           (Context.FunctionSet.difference (Context.escapeSet ctx, beforeSet)); *)
+  (*         () *)
+  (*       end *)
+  (*   in *)
+  (*     case Queue.next q *)
+  (*       of SOME (function as (_, name, _, _, _)) => *)
+  (*            if LambdaVar.Set.member (visited, name) then *)
+  (*              loopEscape ctx q visited *)
+  (*            else *)
+  (*              (doFunction function; *)
+  (*               loopEscape ctx q (LambdaVar.Set.add (visited, name)); *)
+  (*               ()) *)
+  (*        | NONE => () *)
+  (*   end *)
+
   fun loopEscape ctx q visited =
     let
-      fun doFunction (fun_kind, name, formals, tys, body) =
-        let
-          val beforeSet = Context.escapeSet ctx
-          fun mkUnknown (arg, cty) = ignore (Context.add ctx (arg, unknown cty))
-        in
-          ListPair.appEq mkUnknown (formals, tys);
-          loopExp ctx body;
-          Context.FunctionSet.app (fn f => Queue.enqueue (q, f))
-            (Context.FunctionSet.difference (Context.escapeSet ctx, beforeSet));
-          ()
+      fun doFunction (funkind, name, formals, tys, body) =
+        let fun addArg (arg, cty) = ignore (Context.add ctx (arg, unknown cty))
+        in  ListPair.appEq addArg (formals, tys);
+            loopExp ctx body
         end
+      fun enqueueChanged () =
+        let val currEpoch = Context.epoch ctx
+            fun addFun function =
+              case LCPS.FunTbl.find visited function
+                of SOME epoch => 
+                     if currEpoch > epoch then
+                       Queue.enqueue (q, function)
+                     else
+                       ()
+                 | NONE => Queue.enqueue (q, function)
+            val escaped = Context.escapeSet ctx
+        in  Context.FunctionSet.app addFun escaped
+        end
+      fun needToVisit f =
+        case LCPS.FunTbl.find visited f
+          of SOME epoch => Context.epoch ctx > epoch
+           | NONE => true
+      (* val () = (print "Queue: "; Queue.app *) 
+      (*   (fn f => print (LambdaVar.lvarName (#2 f) ^ ", ")) q; *)
+      (*   print "\n") *)
+      val () = print ("\rQueue length: " ^ Int.toString (Queue.length q))
     in
       case Queue.next q
-        of SOME (function as (_, name, _, _, _)) =>
-             if LambdaVar.Set.member (visited, name) then
-               loopEscape ctx q visited
+        of SOME function =>
+             if needToVisit function then
+               (LCPS.FunTbl.insert visited (function, Context.epoch ctx);
+                doFunction function;
+                enqueueChanged ();
+                loopEscape ctx q visited)
              else
-               (doFunction function;
-                loopEscape ctx q (LambdaVar.Set.add (visited, name));
-                ())
+               loopEscape ctx q visited
          | NONE => ()
     end
 
   fun timeit str thunk =
     let
-      val start = Time.now()
+      val start = Time.now ()
       val result = thunk ()
-      val stop = Time.now()
+      val stop = Time.now ()
       val diff = Time.- (stop, start)
       val () = (print (str ^ Time.toString diff); print "\n")
     in
@@ -630,11 +715,12 @@ structure ZeroCFA :> CFA = struct
     let
       val ctx = Context.new ()
       val queue = Queue.mkQueue ()
+      val visited = LCPS.FunTbl.mkTable (32, Fail "visited table")
       val () = Queue.enqueue (queue, function)
       val () = ignore
         (Context.add ctx (#2 function, Value.FUN (Value.IN function)))
     in
-      timeit "0cfa: " (fn () => loopEscape ctx queue LambdaVar.Set.empty);
+      timeit "\r\n0cfa: " (fn () => loopEscape ctx queue visited);
       Context.dump ctx;
       CallGraph.build {cps=function,
                        lookup=Option.map Value.objects o Context.find ctx,
