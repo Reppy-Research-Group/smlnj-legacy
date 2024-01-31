@@ -132,15 +132,17 @@ structure CallGraph :> CALL_GRAPH = struct
           of SOME obj => LV.Tbl.insert varTbl (name, obj)
            | NONE     => LV.Tbl.insert varTbl (name, NoBinding)
 
+      fun bindF (function as (_, name, _, _, _)) =
+        LV.Tbl.insert varTbl (name, FirstOrder function)
+
       fun walkF (function as (_, name, args, _, body)) =
         let
           val () = allFunctions := function :: (!allFunctions)
-          val () = LV.Tbl.insert varTbl (name, FirstOrder function)
           val () = app cacheObj args
           fun exp (LCPS.APP (_, CPS.VAR f, _)) = updateCall (function, f)
             | exp (LCPS.APP _) = raise Fail "app not var"
             | exp (LCPS.FIX (_, bindings, body)) =
-                (app walkF bindings; exp body)
+                (app bindF bindings; app walkF bindings; exp body)
             | exp (LCPS.SWITCH (_, _, _, es)) = app exp es
             | exp (LCPS.BRANCH (_, _, _, _, te, fe)) = (exp te; exp fe)
             | exp (LCPS.RECORD (_, _, _, name, e) |
