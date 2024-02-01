@@ -2,7 +2,8 @@ signature CALL_GRAPH = sig
   type t
 
   datatype object
-    = Value of LabelledCPS.cty
+    = Data of LabelledCPS.cty
+    | FirstOrder of LabelledCPS.function
     | Function of LabelledCPS.function list
     | Unknown
 

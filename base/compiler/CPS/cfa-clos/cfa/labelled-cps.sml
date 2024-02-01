@@ -43,6 +43,7 @@ structure LabelledCPS :> sig
 
   structure FunMap : ORD_MAP where type Key.ord_key = function
   structure FunSet : ORD_SET where type Key.ord_key = function
+  structure FunMonoSet : MONO_HASH_SET where type Key.hash_key = function
   structure FunTbl : MONO_HASH_TABLE where type Key.hash_key = function
 end = struct
   type label = LambdaVar.lvar
@@ -178,5 +179,6 @@ end = struct
 
   structure FunMap = RedBlackMapFn(FunOrdKey)
   structure FunSet = RedBlackSetFn(FunOrdKey)
+  structure FunMonoSet = HashSetFn(FunHashKey)
   structure FunTbl = HashTableFn(FunHashKey)
 end

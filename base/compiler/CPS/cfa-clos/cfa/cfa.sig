@@ -1,5 +1,5 @@
 signature CFA = sig
 
-  val analyze : LabelledCPS.function -> CallGraph.t
+  val analyze : SyntacticInformation.t * LabelledCPS.function -> CallGraph.t
 
 end
