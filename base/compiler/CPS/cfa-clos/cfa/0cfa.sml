@@ -369,11 +369,11 @@ structure ZeroCFA :> CFA = struct
        FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) todo;
        print "}\n")
 
-    (* fun dump {epochTable, store, escapeSet, escapingAddr, syn, todo} = *)
-    (*   (print ("Epoch: " ^ Int.toString (Store.epoch store)); *)
-    (*    print "\nEscaping: {"; *)
-    (*    FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) escapeSet; *)
-    (*    print "}\n") *)
+    fun dump {epochTable, store, escapeSet, escapingAddr, syn, todo} =
+      (print ("Epoch: " ^ Int.toString (Store.epoch store));
+       print "\nEscaping: {";
+       FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) escapeSet;
+       print "}\n")
 
     val lookup = Store.lookup o (fn (ctx: t) => #store ctx)
     val find = Store.find o (fn (ctx: t) => #store ctx)
@@ -585,7 +585,7 @@ structure ZeroCFA :> CFA = struct
                                        [dest, src], body)) =
         let val srcVal = evalValue ctx src
             fun assign (Value.REF addr) = Context.merge ctx (addr, srcVal)
-              | assign (Value.UNKNOWN (CPS.PTRt _)) =
+              | assign (Value.UNKNOWN _) =
                   (* when dest has unknown value, src escapes *)
                   (case src
                      of CPS.VAR var => Context.escape ctx var
@@ -596,7 +596,27 @@ structure ZeroCFA :> CFA = struct
     | loopExpCase ctx (LCPS.SETTER (_, (CPS.P.UNBOXEDASSIGN | CPS.P.ASSIGN),
                                        _, _)) =
         raise Impossible "ASSIGN takes wrong arguments"
+    | loopExpCase ctx (LCPS.SETTER (_, (CPS.P.UNBOXEDUPDATE | CPS.P.UPDATE),
+                                       [dest, _, src], body)) =
+        let val srcVal = evalValue ctx src
+            fun assign (Value.REF addr) = Context.merge ctx (addr, srcVal)
+              | assign (Value.RECORD addrs) =
+                  (* since offset is not tracked, this update could be applied
+                   * to any of the elements in a vector *)
+                  app (fn addr => Context.merge ctx (addr, srcVal)) addrs
+              | assign (Value.UNKNOWN _) =
+                  (* when dest has unknown value, src escapes *)
+                  (case src
+                     of CPS.VAR var => Context.escape ctx var
+                      | _ => ())
+              | assign _ = ()
+        in  Value.app assign (evalValue ctx dest); loopExp ctx body
+        end
+    | loopExpCase ctx (LCPS.SETTER (_, (CPS.P.UNBOXEDUPDATE | CPS.P.UPDATE),
+                                       _, _)) =
+        raise Impossible "UPDATE takes wrong arguments"
     | loopExpCase ctx (LCPS.SETTER (_, _, _, body)) =
+        (* IMPORTANT: No other setters make leak functions *)
         loopExp ctx body
     | loopExpCase ctx (LCPS.LOOKER (_, CPS.P.GETHDLR, [], dest, _, body)) =
         (Context.merge ctx (dest, Context.getHdlr ctx);
@@ -698,7 +718,7 @@ structure ZeroCFA :> CFA = struct
       (* val () = (print "Queue: "; Queue.app *)
       (*   (fn f => print (LambdaVar.lvarName (#2 f) ^ ", ")) q; *)
       (*   print "\n") *)
-      val () = print ("\rQueue length: " ^ Int.toString (Queue.length q))
+      (* val () = print ("\rQueue length: " ^ Int.toString (Queue.length q)) *)
     in
       case Queue.next q
         of SOME function =>
