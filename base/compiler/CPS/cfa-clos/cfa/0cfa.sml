@@ -369,7 +369,11 @@ structure ZeroCFA :> CFA = struct
        FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) todo;
        print "}\n")
 
-    (* fun dump _ = () *)
+    (* fun dump {epochTable, store, escapeSet, escapingAddr, syn, todo} = *)
+    (*   (print ("Epoch: " ^ Int.toString (Store.epoch store)); *)
+    (*    print "\nEscaping: {"; *)
+    (*    FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) escapeSet; *)
+    (*    print "}\n") *)
 
     val lookup = Store.lookup o (fn (ctx: t) => #store ctx)
     val find = Store.find o (fn (ctx: t) => #store ctx)
@@ -523,18 +527,20 @@ structure ZeroCFA :> CFA = struct
       ()
   fun dump ctx cexp =
     print ("\rcurrent epoch:          " ^ Int.toString (Context.epoch ctx))
+  fun dump _ _ = ()
 
   fun loopExp ctx cexp = (dump ctx cexp; Context.guard loopExpCase ctx cexp)
   and loopExpCase ctx (LCPS.APP (_, f, args)) =
         apply ctx (evalValue ctx f, args)
     | loopExpCase ctx (LCPS.RECORD (_, _, values, x, body)) =
         let
-          fun alloc (dest, src, path) =
-            let val concretes = access ctx
-                                       (Value.toList (evalValue ctx src), path)
-                val value = Value.from concretes
-            in  Context.merge ctx (dest, value); dest
-            end
+          fun alloc (dest, CPS.VAR src, CPS.OFFp 0) = src
+            | alloc (dest, src, path) =
+                let val concretes =
+                      access ctx (Value.toList (evalValue ctx src), path)
+                    val value = Value.from concretes
+                in  Context.merge ctx (dest, value); dest
+                end
           val record = Value.RECORD (map alloc values)
         in
           Context.add ctx (x, record);
@@ -719,7 +725,7 @@ structure ZeroCFA :> CFA = struct
       val () = Context.add ctx (#2 function, Value.FUN (Value.IN function))
     in
       timeit "\r\n0cfa: " (fn () => loopEscape ctx queue);
-      (* Context.dump ctx; *)
+      Context.dump ctx;
       CallGraph.build {cps=function,
                        lookup=Option.map Value.objects o Context.find ctx,
                        escapingLambdas=Vector.fromList
