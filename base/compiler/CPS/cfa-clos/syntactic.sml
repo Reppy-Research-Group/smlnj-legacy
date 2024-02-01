@@ -17,7 +17,8 @@ end = struct
 
   datatype t = T of {
     funTbl: fun_info LCPS.FunTbl.hash_table,
-    varTbl: var_info LV.Tbl.hash_table
+    varTbl: var_info LV.Tbl.hash_table,
+    lam0: LCPS.function
   }
 
   fun kindToCty (CPS.CONT | CPS.KNOWN_CONT) = CPS.CNTt
@@ -74,7 +75,9 @@ end = struct
                  addVs (LV.Set.empty, f :: args))
             | exp (LCPS.RECORD (_, _, values, v, cexp)) =
                 let val used = map #2 values
+                    val defd = map #1 values
                 in  newVar' (v, CPS.PTRt (CPS.RPT (List.length values)));
+                    app (fn v => newVar' (v, CPSUtil.BOGt)) defd;
                     app useVar' used;
                     addVs (subtract (exp cexp, v), used)
                 end
@@ -93,6 +96,11 @@ end = struct
                 end
             | exp (LCPS.SETTER (_, _, args, cexp)) =
                 (app useVar' args; addVs (exp cexp, args))
+            | exp (LCPS.PURE   (label, CPS.P.MAKEREF, values, x, ty, cexp)) =
+                (* GROSS HACK *)
+                (newVar' (label, CPSUtil.BOGt);
+                 app useVar' values; newVar' (x, ty);
+                 addVs (subtract (exp cexp, x), values))
             | exp (LCPS.LOOKER (_, _, values, x, ty, cexp) |
                    LCPS.ARITH  (_, _, values, x, ty, cexp) |
                    LCPS.PURE   (_, _, values, x, ty, cexp)) =
@@ -105,16 +113,31 @@ end = struct
           exp
         end
     in
-      walkF NONE cps; T { funTbl=funTbl, varTbl=varTbl }
+      walkF NONE cps; T { funTbl=funTbl, varTbl=varTbl, lam0=cps }
     end
 
-  fun typeof (T { varTbl, ... }) = #ty o LV.Tbl.lookup varTbl
-  fun definitionSite (T { varTbl, ... }) = #def o LV.Tbl.lookup varTbl
-  fun useSites (T { varTbl, ... }) = #uses o LV.Tbl.lookup varTbl
+  fun typeof (T { varTbl, lam0, ... }) v =
+    if LV.same (#2 lam0, v) then
+      CPS.FUNt
+    else
+      #ty (LV.Tbl.lookup varTbl v)
+  fun definitionSite (T { varTbl, lam0, ... }) v =
+    if LV.same (#2 lam0, v) then
+      raise Fail "TODO"
+    else
+      #def (LV.Tbl.lookup varTbl v)
+  fun useSites (T { varTbl, lam0, ... }) v =
+    if LV.same (#2 lam0, v) then
+      LCPS.FunSet.empty
+    else
+      #uses (LV.Tbl.lookup varTbl v)
+      handle SyntacticInfo => (print (LV.lvarName v ^ " missing\n");
+                               raise SyntacticInfo)
+
   fun binderOf (T { funTbl, ... }) = #binder o LCPS.FunTbl.lookup funTbl
   fun fv (T { funTbl, ... }) = #fv o LCPS.FunTbl.lookup funTbl
 
-  fun dump (T { funTbl, varTbl }) =
+  fun dump (T { funTbl, varTbl, ... }) =
     let val p = print
         fun lst xs = "[" ^ String.concatWith ", " xs ^ "]"
         val funName = LV.lvarName o (#2: LCPS.function -> LCPS.lvar)
