@@ -78,6 +78,12 @@ if [ $SMLBIN != "." ] ; then
   PATH=$PATH:$SMLBIN
 fi
 
-exec $SML $SIZE_OPT $ARGS $@ -DNO_PLUGINS '$smlnj/cmb.cm' <<XXXX
+logfile=$(mktemp cmb-make-log.XXX)
+
+$SML $SIZE_OPT $ARGS $@ -DNO_PLUGINS '$smlnj/cmb.cm' <<XXXX | tee "$logfile"
 CMB.make();
 XXXX
+status=$(grep -q "val it = true : bool" "$logfile"; echo $?)
+rm "$logfile"
+exit $status
+
