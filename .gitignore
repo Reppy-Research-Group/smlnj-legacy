@@ -209,3 +209,4 @@ win-dist/smlnj
 # Project specific
 base/system/unittests
 base/system/benchmarks
+Session.vim
