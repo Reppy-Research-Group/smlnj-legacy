@@ -1,6 +1,6 @@
 structure ZeroCFA :> CFA = struct
   structure LCPS = LabelledCPS
-  structure Syn  = SyntacticInformation
+  structure Syn  = SyntacticInfo
 
   structure Value :> sig
     datatype function
