@@ -1,4 +1,4 @@
-structure SyntacticInformation :> sig
+structure SyntacticInfo :> sig
   type t
 
   val calculate : LabelledCPS.function -> t
