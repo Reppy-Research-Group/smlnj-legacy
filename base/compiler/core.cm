@@ -269,6 +269,7 @@ CPS/clos/staticprof.sml
 CPS/clos/unrebind.sml
 CPS/cfa-clos/closure.sml
 CPS/cfa-clos/lifetime.sml
+CPS/cfa-clos/reference.sml
 CPS/cfa-clos/representation.sml
 CPS/cfa-clos/syntactic.sml
 CPS/cfa-clos/unchangedvar.sml

@@ -14,6 +14,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
   structure CG   = CallGraph
   structure LCPS = LabelledCPS
   structure LV   = LambdaVar
+  structure RefClosure = RefClosureFn(MachSpec)
 
   fun dumpSCC components =
     let
@@ -33,6 +34,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       val syntactic = SyntacticInfo.calculate lcps
       val () = SyntacticInfo.dump syntactic
       val callgraph = ZeroCFA.analyze (syntactic, lcps)
+      val f  = RefClosure.convert (lcps, callgraph, syntactic)
       (* val () = ClosureRep.analyze (lcps, callgraph, syntactic) *)
       (* val scc = CallGraph.scc callgraph *)
       (* val cg  = CallGraph.callGraphDot callgraph *)
