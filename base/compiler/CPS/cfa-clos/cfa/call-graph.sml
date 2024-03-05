@@ -35,6 +35,8 @@ signature CALL_GRAPH = sig
   val successors : t -> LabelledCPS.function -> LabelledCPS.function list
 
   val allFunctions : t -> LabelledCPS.function vector
+  val knownFunctions : t -> LabelledCPS.function vector
+  val escapingFunctions : t -> LabelledCPS.function vector
 
   (* val callGraphDot : t -> DotLanguage.t *)
   (* val callWebDot : t -> DotLanguage.t *)
@@ -68,6 +70,7 @@ structure CallGraph :> CALL_GRAPH = struct
     funTbl: info LCPS.FunTbl.hash_table,
     varTbl: object LV.Tbl.hash_table,
     allFunctions: LCPS.function vector,
+    knownFunctions: LCPS.function vector,
     escaping: LCPS.function vector
   }
 
@@ -79,6 +82,7 @@ structure CallGraph :> CALL_GRAPH = struct
       val funTbl = LCPS.FunTbl.mkTable (32, CallGraph)
       val varTbl = LV.Tbl.mkTable (1024, CallGraph)
       val allFunctions = ref ([] : LCPS.function list)
+      val knownFunctions = ref ([] : LCPS.function list)
 
       fun initF function =
         if Vector.exists (sameFun function) escapingLambdas then
@@ -138,6 +142,10 @@ structure CallGraph :> CALL_GRAPH = struct
       fun walkF (function as (_, name, args, _, body)) =
         let
           val () = allFunctions := function :: (!allFunctions)
+          val () = if Vector.exists (sameFun function) escapingLambdas then
+                     ()
+                   else
+                     knownFunctions := function :: (!knownFunctions)
           val () = app cacheObj args
           fun exp (LCPS.APP (_, CPS.VAR f, _)) = updateCall (function, f)
             | exp (LCPS.APP _) = raise Fail "app not var"
@@ -158,16 +166,28 @@ structure CallGraph :> CALL_GRAPH = struct
         in
           exp body
         end
+      val () = Vector.app (fn f => LCPS.FunTbl.insert funTbl (f, Escape))
+                          escapingLambdas
     in
       walkF cps;
       T { funTbl=funTbl,
           varTbl=varTbl,
           allFunctions=Vector.fromList (!allFunctions),
+          knownFunctions=Vector.fromList (!knownFunctions),
           escaping=escapingLambdas }
     end
 
-  fun whatis (T {varTbl, ...}) = LV.Tbl.lookup varTbl
-  fun info (T {funTbl, ...}) = LCPS.FunTbl.lookup funTbl
+  fun bug msg = (print (msg ^ "\n"); raise CallGraph)
+
+  fun whatis (T {varTbl, ...}) v =
+    case LV.Tbl.find varTbl v
+      of SOME obj => obj
+       | NONE => bug ("whatis " ^ LV.lvarName v ^ " failed")
+
+  fun info (T {funTbl, varTbl, ...}) f =
+    case LCPS.FunTbl.find funTbl f
+      of SOME data => data
+       | NONE => bug ("info " ^ LV.lvarName (#2 f) ^ " failed")
 
   fun knownFs fs =
     foldr (fn (In f, acc) => f :: acc | (Out, acc) => acc) [] fs
@@ -205,6 +225,8 @@ structure CallGraph :> CALL_GRAPH = struct
     end
 
   fun allFunctions (T {allFunctions, ...}) = allFunctions
+  fun knownFunctions (T {knownFunctions, ...}) = knownFunctions
+  fun escapingFunctions (T {escaping, ...}) = escaping
 
   structure SCCSolver = GraphSCCFn(struct
     type ord_key = LCPS.function
