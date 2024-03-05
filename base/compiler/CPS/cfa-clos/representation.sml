@@ -91,7 +91,7 @@ end = struct
       fun adjust functions =
         let
           fun initEnv f =
-            let val fvs = unchangedVars f
+            let val (fvs, _) = unchangedVars f
             in  LV.Set.filter (fn v => (case CG.whatis callgraph v
                                           of (CG.FirstOrder _) => false
                                            | _ => true)) fvs

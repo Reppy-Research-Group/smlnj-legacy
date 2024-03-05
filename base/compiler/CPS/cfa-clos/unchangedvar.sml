@@ -1,6 +1,6 @@
 structure UnchangedVariable :> sig
   val analyze : LabelledCPS.function * CallGraph.t * SyntacticInfo.t ->
-                LabelledCPS.function -> LambdaVar.Set.set
+                LabelledCPS.function -> (LambdaVar.Set.set * LambdaVar.Set.set)
 end = struct
   structure LV = LambdaVar
   structure CG = CallGraph
