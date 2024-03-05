@@ -5,6 +5,7 @@ structure SyntacticInfo :> sig
   val typeof         : t -> LabelledCPS.lvar -> LabelledCPS.cty
   val definitionSite : t -> LabelledCPS.lvar -> LabelledCPS.function
   val useSites       : t -> LabelledCPS.lvar -> LabelledCPS.FunSet.set
+  val usePoints      : t -> LabelledCPS.lvar -> LabelledCPS.Set.set
   val binderOf       : t -> LabelledCPS.function -> LabelledCPS.function option
   val fv             : t -> LabelledCPS.function -> LambdaVar.Set.set
   val dump : t -> unit
@@ -12,12 +13,14 @@ end = struct
   structure LCPS = LabelledCPS
   structure LV   = LambdaVar
 
-  type var_info = { ty: LCPS.cty, def: LCPS.function, uses: LCPS.FunSet.set }
+  type var_info = { ty: LCPS.cty, def: LCPS.cexp, uses: LCPS.Set.set }
   type fun_info = { binder: LCPS.function option, fv: LV.Set.set }
+  type exp_info = { enclosing: LCPS.function }
 
   datatype t = T of {
     funTbl: fun_info LCPS.FunTbl.hash_table,
     varTbl: var_info LV.Tbl.hash_table,
+    expTbl: exp_info LCPS.Tbl.hash_table,
     lam0: LCPS.function
   }
 
@@ -37,22 +40,22 @@ end = struct
       val funTbl = LCPS.FunTbl.mkTable (32, SyntacticInfo)
       val varTbl = LV.Tbl.mkTable (32, SyntacticInfo)
 
-      fun newVar function (var, ty) =
+      fun newVar exp (var, ty) =
             LV.Tbl.insert varTbl
-              (var, { ty=ty, def=function, uses=LCPS.FunSet.empty })
-      fun useVar function (CPS.VAR var) =
+              (var, { ty=ty, def=exp, uses=LCPS.Set.empty })
+      fun useVar exp (CPS.VAR var) =
             let val { ty, def, uses } = LV.Tbl.lookup varTbl var
                                         handle SyntacticInfo => (print
                                         (LV.lvarName var ^ " missing\n");
                                          raise SyntacticInfo)
-                val uses' = LCPS.FunSet.add (uses, function)
+                val uses' = LCPS.Set.add (uses, exp)
             in  LV.Tbl.insert varTbl (var, { ty=ty, def=def, uses=uses' })
             end
         | useVar function _ = ()
 
-      fun walkF parent (function as (kind, name, args, tys, body): LCPS.function) =
+      fun walkF (parent, recs) (function as (kind, name, args, tys, body)) =
         let val () = ListPair.appEq (newVar function) (args, tys)
-            val fv = subtracts (walkE function body, args)
+            val fv = subtracts (subtracts (walkE function body, args), recs)
         in  LCPS.FunTbl.insert funTbl (function, { binder=parent, fv=fv });
             fv
         end
@@ -65,7 +68,7 @@ end = struct
                     val () = app (fn (kind, name, _, _, _) =>
                                     newVar currF (name, kindToCty kind))
                                  bindings
-                    val fvs = map (walkF (SOME currF)) bindings
+                    val fvs = map (walkF (SOME currF, names)) bindings
                     val fv  = exp cexp
                     val fv' = foldr LV.Set.union fv fvs
                 in  subtracts (fv', names)
@@ -113,7 +116,7 @@ end = struct
           exp
         end
     in
-      walkF NONE cps; T { funTbl=funTbl, varTbl=varTbl, lam0=cps }
+      walkF (NONE, [#2 cps]) cps; T { funTbl=funTbl, varTbl=varTbl, lam0=cps }
     end
 
   fun typeof (T { varTbl, lam0, ... }) v =

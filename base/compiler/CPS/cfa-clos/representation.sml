@@ -1,17 +1,139 @@
 functor ClosureRepFn(MachSpec : MACH_SPEC) :> sig
   (* type lvar = LabelledCPS.lvar *)
   (* datatype rep = REP of { slots: lvar list, heap: lvar list } *)
-  val analyze : LabelledCPS.function * CallGraph.t * Lifetime.t
-             -> LabelledCPS.function -> int
+  val analyze : LabelledCPS.function * CallGraph.t * SyntacticInfo.t -> unit
 end = struct
   structure CG   = CallGraph
   structure LCPS = LabelledCPS
   structure LV   = LambdaVar
-
-  type lvar = LabelledCPS.lvar datatype rep = REP of { slots: lvar list, heap: lvar list }
+  structure Syn  = SyntacticInfo
 
   val nCalleeSaves = MachSpec.numCalleeSaves
-  val nRegs        = MachSpec.numRegs
+  val nGPArgRegs   = MachSpec.numArgRegs
+  val nFPArgRegs   = MachSpec.numFloatArgRegs
+  val nGPRegs      = MachSpec.numRegs
+  val nFPRegs      = MachSpec.numFloatRegs
+  val unboxedFloats = MachSpec.unboxedFloats
+
+  datatype object = Value of LCPS.lvar
+                  | Label
+                  | GpEnv of LCPS.lvar * int
+                  | FpEnv of LCPS.lvar * int
+                  | Closure of object list
+
+  datatype rep = Rep of {
+    gpslots: object list,
+    fpslots: object list
+  }
+
+  val isFloatTy =
+    if unboxedFloats then
+      (fn (CPS.FLTt _) => true | _ => false)
+    else
+      (fn _ => false)
+
+  fun isFloat info = isFloatTy o (Syn.typeof info)
+
+  fun visitF f =
+    let fun exp (LCPS.FIX (_, bindings, e)) =
+              (app f bindings; app (exp o #5) bindings; exp e)
+          | exp (LCPS.APP (_, f, args)) = ()
+          | exp (LCPS.SWITCH (_, _, _, es)) = app exp es
+          | exp (LCPS.BRANCH (_, _, _, _, te, fe)) = (exp te; exp fe)
+          | exp (LCPS.RECORD (_, _, _, _, e) |
+                 LCPS.SELECT (_, _, _, _, _, e) |
+                 LCPS.OFFSET (_, _, _, _, e) |
+                 LCPS.SETTER (_, _, _, e) |
+                 LCPS.LOOKER (_, _, _, _, _, e) |
+                 LCPS.ARITH  (_, _, _, _, _, e) |
+                 LCPS.PURE   (_, _, _, _, _, e) |
+                 LCPS.RCC    (_, _, _, _, _, _, e)) = exp e
+    in  exp
+    end
+
+  exception ClosureRep
+  fun bug msg = (print (msg ^ "\n"); raise ClosureRep)
+
+  fun analyze (function as (_, _, _, _, body), callgraph, info) =
+    let
+      val () = print ("nGPRegs: " ^ Int.toString nGPArgRegs
+                     ^"; nFPRegs: " ^ Int.toString nFPArgRegs ^ "\n")
+      val tbl = LCPS.FunTbl.mkTable (1024, ClosureRep)
+      val unchangedVars = UnchangedVariable.analyze (function, callgraph, info)
+      val fv = Syn.fv info
+      val isFloat = isFloat info
+      fun debugV v = LV.lvarName v ^ CPSUtil.ctyToString (Syn.typeof info v)
+      val debugVs = String.concatWithMap ", " debugV
+
+      val components = List.rev (CallGraph.scc callgraph)
+
+      fun lookupEnv f =
+        case LCPS.FunTbl.find tbl f
+          of SOME env => env
+           | NONE     => bug (LV.lvarName (#2 f) ^ " no data")
+
+      fun liftEnv fvs =
+        let fun lift (v, set) =
+              case CG.whatis callgraph v
+                of CG.Value => LV.Set.add (set, v)
+                 | CG.FirstOrder f => LV.Set.union (set, lookupEnv f)
+                 | CG.Function fs =>
+                     foldl (fn (CG.In f, acc) => LV.Set.union (acc, lookupEnv f)
+                             | (CG.Out, acc) => acc)
+                           (LV.Set.add (set, v)) fs
+                 | CG.NoBinding => set
+        in  LV.Set.foldl lift LV.Set.empty fvs
+        end
+
+      val () = Vector.app (fn f => LCPS.FunTbl.insert tbl (f, LV.Set.empty))
+                          (CG.escapingFunctions callgraph)
+
+      fun adjust functions =
+        let
+          fun initEnv f =
+            let val fvs = unchangedVars f
+            in  LV.Set.filter (fn v => (case CG.whatis callgraph v
+                                          of (CG.FirstOrder _) => false
+                                           | _ => true)) fvs
+            end
+          val () = Vector.app (fn f => LCPS.FunTbl.insert tbl (f, initEnv f)) functions
+          fun adjustOne (f, changed) =
+            let val initSlots = LCPS.FunTbl.lookup tbl f
+                val name = #2 f
+                val slots = liftEnv initSlots
+                            handle ClosureRep => bug ("In " ^ LV.lvarName name)
+                val len = LV.Set.numItems
+                val changed' = changed orelse (len slots <> len initSlots)
+            in
+              print ("function: " ^ LV.lvarName name ^ "\n");
+              print ("initSlots: " ^ debugVs (LV.Set.toList initSlots) ^ "\n");
+              print ("slots: " ^ debugVs (LV.Set.toList slots) ^ "\n\n");
+              changed'
+            end
+          fun adjustLoop () =
+            let val changed = Vector.foldl adjustOne false functions
+            in  if changed then adjustLoop () else ()
+            end
+        in
+          adjustLoop ()
+        end
+
+      (* fun adjust (function as (kind, name, args, tys, body)) = *)
+      (*   let val (floatArgs, gpArgs) = List.partition isFloat args *)
+      (*       val (floatFV, gpFV) = LV.Set.partition isFloat (fv function) *)
+      (*       val floatEnv = floatArgs @ (LV.Set.toList floatFV) *)
+      (*       val gpEnv = gpArgs @ (LV.Set.toList gpFV) *)
+      (*   in  print ("function: " ^ LV.lvarName name ^ "\n"); *)
+      (*       print ("gp: " ^ String.concatWithMap ", " debugV gpEnv ^ "\n"); *)
+      (*       print ("float: " ^ String.concatWithMap ", " debugV floatEnv ^ "\n"); *)
+      (*       () *)
+      (*   end *)
+
+      (* val () = visitF adjust body *)
+      val () = adjust (CallGraph.knownFunctions callgraph)
+    in
+      ()
+    end
 
   (* fun dumpSlots (callgraph, slots) = *)
   (*   Vector.app *)
@@ -148,7 +270,7 @@ end = struct
   (*                ncsg: LCPS.lvar list, *)
   (*                ncsf: LCPS.lvar list } *)
 
-  fun analyze (function, callgraph, lifetime) = raise Fail "unimp"
+  (* fun analyze (function, callgraph, lifetime) = raise Fail "unimp" *)
     (* let *)
     (*   val slots = calculateSlots (function, callgraph, lifetime) *)
     (* in *)

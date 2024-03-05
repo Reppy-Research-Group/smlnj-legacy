@@ -427,6 +427,8 @@ structure ZeroCFA :> CFA = struct
              * as escaping *)
              ()
           else
+            (* FIXME: all addresses reachable from an escaping address are
+             * also escaping. *)
             (LambdaVarSet.add (escapingAddr, name);
              addEscapingFun ctx name)
       end
