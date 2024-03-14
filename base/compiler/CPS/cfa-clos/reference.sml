@@ -18,6 +18,8 @@ end = struct
 
   val printCPS = PPCps.printcps0 o LCPS.unlabelF
 
+  fun plength ls = print (Int.toString (List.length ls))
+
   fun isFirstOrder (cg, info) function =
     let val name = LCPS.nameOfF function
         fun isF (CPS.VAR x) = LV.same (name, x)
@@ -161,11 +163,18 @@ end = struct
              (pv v; print "/callee(G): "; plist pv gpcs;
               pv v; print "/callee(F): "; plist pv fpcs)
           | pcallee _ = ()
+        fun pproto (v, StandardFunction) = (pv v; print "/std ")
+          | pproto (v, StandardContinuation _) = (pv v; print "/cont ")
+          | pproto (v, KnownFunction _) = (pv v; print "/known ")
+          | pproto (v, MutualRecursion _) = (pv v; print "/recur ")
     in  print "Values:"; plist pv immediates;
         print "Base callee saves:"; plist pv calleeSaves;
         print "Closures:\n"; pclosures ("", closures, LV.Set.empty);
         print "Callee-save registers:\n";
-        LV.Map.appi pcallee protocols
+        LV.Map.appi pcallee protocols;
+        print "Protocols:\n";
+        LV.Map.appi pproto protocols;
+        print "\n"
     end
 
   infix 3 withImms addImms withCSs withClosures withProto
@@ -429,10 +438,14 @@ end = struct
           | add (arg, ty, (args, tys, env)) =
              (arg::args, ty::tys, env addImms [arg])
     in  ListPair.foldrEq add ([], [], env) (args, tys)
+        handle ListPair.UnequalLengths =>
+        (print "args="; plength args; print ", tys="; plength tys;
+         raise ListPair.UnequalLengths)
     end
 
   fun makeEnv (env, bindings) : (LCPS.cexp -> LCPS.cexp) * env * fragment list =
-    let val () = printEnv env
+    let val () = print "STARTING makeEnv; Environment:\n"
+        val () = printEnv env
         val (fpfree, gpfree) = collectEnv (env, bindings)
         val () = (dumpLVSet "fpfree" fpfree; dumpLVSet "gpfree" gpfree)
         val (fpfree, gpfree) = (LV.Set.toList fpfree, LV.Set.toList gpfree)
@@ -444,7 +457,7 @@ end = struct
                let val gpfreeTys = map (tyOf env) gpfree
                    val fpfreeTys = map (tyOf env) fpfree
                    val args' = args @ gpfree @ fpfree
-                   val tys'  = tys  @ fpfreeTys @ fpfreeTys
+                   val tys'  = tys  @ gpfreeTys @ fpfreeTys
                    val (args', tys', env') = adjustArgs (env, args', tys')
                    val f' = (kind, name, args', tys', body)
                    val protocol =
@@ -505,16 +518,16 @@ end = struct
                    val fpbaseTy = map fpType fpfree
                    val args' = cont::(gpbase @ fpfree @ args)
                    val tys'  = CPSUtil.BOGt::(gpbaseTy @ fpbaseTy @ tys)
+                   val (args', tys', env') = adjustArgs (env, args', tys')
                    fun addClosure (NONE, cls) = cls
                      | addClosure (SOME (cr as ClosureRep { id, ... }), cls) =
                          (id, cr)::cls
                    val closures = foldl addClosure []
                                         [gprecord, fprecord, utrecord]
-                   val env'  = env withImms args'
-                                   withCSs []
-                                   withClosures closures
+                   val env'  = env' withCSs      []
+                                    withClosures closures
                    val f' = (kind, name, args', tys', body)
-                   val () = print ("Environment in known-cont "
+                   val () = print ("Environment in escape-cont "
                                    ^ LV.lvarName name ^ ":\n")
                    val () = printEnv env'
                    val protocol = StandardContinuation { gpcs=gpbase,
@@ -549,10 +562,10 @@ end = struct
                                 env recursives
                    fun convert (kind, name, args, tys, body) =
                      let val args' = args @ gpfree @ fpfree
-                         val tys'  = tys  @ fpfreeTys @ fpfreeTys
-                         val (args', tys', env') = adjustArgs (env, args', tys')
+                         val tys'  = tys  @ gpfreeTys @ fpfreeTys
+                         val (args', tys', env') = adjustArgs (env', args', tys')
                          val f' = (kind, name, args', tys', body)
-                         val () = print ("Environment in known-cont "
+                         val () = print ("Environment in known "
                                          ^ LV.lvarName name ^ ":\n")
                          val () = printEnv env'
                      in  (env', f')
@@ -645,6 +658,10 @@ end = struct
                    val () = print ("Continuing environment:\n")
                    val () = printEnv nenv
                in  (hdr, nenv, ListPair.mapEq convert (escapes, closures))
+                   handle ListPair.UnequalLengths =>
+                   (print "escapes="; plength escapes; print ", closures=";
+                    plength closures;
+                    raise ListPair.UnequalLengths)
                end
            | UserFix _ =>
                raise Fail "mixed"
@@ -658,6 +675,7 @@ end = struct
         case cexp
           of LCPS.FIX (label, bindings, e) =>
                let val (hdr, nenv, frags) = makeEnv (env, bindings)
+                   val () = print "END makeEnv\n"
                in  LCPS.FIX (label,
                              map (closeFix stagenum) frags,
                              hdr (close (nenv, stagenum, e)))
