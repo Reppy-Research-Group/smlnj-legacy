@@ -279,7 +279,8 @@ fun boxedKind (CONT | KNOWN_CONT) = RK_CONT
   | boxedKind KNOWN = RK_KNOWN
   | boxedKind _ = RK_ESCAPE
 
-fun COMMENT f = if !CGoptions.comment then (f(); ()) else ()
+(* fun COMMENT f = if !CGoptions.comment then (f(); ()) else () *)
+fun COMMENT f = (f (); ())
 
 (****************************************************************************
  *                    CLOSURE REPRESENTATIONS                               *
@@ -1342,13 +1343,11 @@ fun checkfree(v) =
 val _ = app checkfree (map #2 bindings)
 <***)
 
-(***>
 val _ = COMMENT(fn() => (pr "BEGINNING MAKENV.\nFunctions: ";
            ilist (map #2 bindings); pr "Initial environment:\n";
            printEnv initEnv; pr "\n"))
 val _ = COMMENT(fn() => (pr "BASE CALLEE SAVE REGISTERS: ";
            vallist bcsg; vallist bcsf; pr "\n"))
-<***)
 
 (* partition the function bindings into different fun_kinds *)
 val (escapeB,knownB,recB,calleeB,kcontB) = partBindings(bindings)
@@ -1381,10 +1380,8 @@ val (fixKind,nret) =
  * Initial processing of known functions                                    *
  ****************************************************************************)
 
-(***>
 val _ = COMMENT(fn() => (pr "Known functions:"; ilist (map #2 knownB);
                          pr "                "; iKlist (map #1 knownB)))
-<***)
 
 (*** Get the call graph of all known functions in this FIX. ***)
 val knownB =
@@ -1461,10 +1458,8 @@ val (knownB,recFlag) = foldr
         val (fpfree,gpfree) = partition isFlt3 free
         val (gpfree,fpfree) = freeAnalysis(gpfree,fpfree,initEnv)
 
-(***>
 val _ = COMMENT(fn() => (pr "*** Current Known Free Variables: ";
            iVlist gpfree; pr "\n"))
-<***)
 
         (* some free variables must stay in registers for KNOWN_TAIL *)
         val (rcsg,rcsf) = case defCont
@@ -1478,10 +1473,8 @@ val _ = COMMENT(fn() => (pr "*** Current Known Free Variables: ";
         fun deep1(_,_,n) = (n > sn)
         fun deep2(_,m,n) = (m > sn)
 
-(***>
 val _ = COMMENT(fn() => (pr "*** Current Stage number and fun kind: ";
-           ilist [sn]; ifkind kind; pr "\n"))
-<***)
+           pr (im sn ^ " "); ifkind kind; pr "\n"))
 
         (* for recursive functions, always spill deeper level free variables *)
         val ((gpspill,gpfree),(fpspill,fpfree),nflag) = case lpv
@@ -1500,10 +1493,8 @@ val _ = COMMENT(fn() => (pr "*** Current Stage number and fun kind: ";
            | NONE => if ekfuns v then ((gpfree,[]),(fpfree,[]),flag)
                      else (partition deep2 gpfree,partition deep2 fpfree,flag)
 
-(***>
 val _ = COMMENT(fn() => (pr "*** Current Spilled Known Free Variables: ";
            iVlist gpspill; pr "\n"))
-<***)
 
         (* find out the register limit for this known functions *)
         val (gpnmax,fpnmax) = (maxgpregs,maxfpregs) (* reglimit v *)
@@ -1549,9 +1540,7 @@ val (knownB,gpcollected,fpcollected) =
  * Initial processing of escaping functions                                 *
  ****************************************************************************)
 
-(***>
 val _ = COMMENT(fn() => (pr "Escaping functions:"; ilist (map #2 escapeB)))
-<***)
 
 (* get the set of free variables for escaping functions *)
 val (escapeB,escapeFree) =
@@ -1585,10 +1574,8 @@ val fpFree = mergeV(fpfree,fpcollected)
  * Initial processing of callee-save continuation functions                *
  ***************************************************************************)
 
-(***>
 val _ = COMMENT(fn() => (pr "CS continuations:"; ilist (map #2 calleeB);
                          pr "                 "; iKlist (map #1 calleeB)))
-<***)
 
 (* get the set of free variables for continuation functions *)
 val (calleeB,calleeFree,gpn,fpn,pF) =
@@ -1836,10 +1823,8 @@ val knownFrags : frags =
             val nargs = nargs @ ngpfree @ fpfree
             val ncl = ncl @ (map get_cty ngpfree) @ (map get_cty fpfree)
 
-(***>
             val _ = COMMENT(fn () => (pr "\nEnvironment in known ";
                             vp v; pr ":\n"; printEnv env))
-<***)
          in case nret
              of NONE => ((KNOWN,l,nargs,ncl,body,env,sn,bcsg,bcsf,bret)::z)
               | SOME _ => ((KNOWN,l,nargs,ncl,body,env,sn,ncsg,ncsf,nret)::z)
@@ -1865,10 +1850,8 @@ val escapeFrags : frags =
                   val nargs = mkLvar()::myCname::nargs
                   val ncl = U.BOGt::U.BOGt::ncl
                   val sn = snum v
-(***>
                   val _ = COMMENT(fn () => (pr "\nEnvironment in escaping ";
                               vp v; pr ":\n";printEnv env))
-<***)
                in inc CGoptions.escapeGen;  (* nret must not be NONE *)
                   case nret
                    of NONE => bug "no cont in escapefun in closure.sml"
@@ -1918,11 +1901,9 @@ val (nenv, calleeFrags : frags) =
                       | _ => bug "calleeFrags in closure.sml 748"
 
                   val env = faugValue(args,cl,env)
-(***>
                   val _ = COMMENT(fn () =>
                             (pr "\nEnvironment in callee-save continuation ";
                              vp v; pr ":\n"; printEnv env))
-<***)
                in inc CGoptions.calleeGen;
                   (nk,l,nargs,ncl,body,env,sn,csg,csf,bret)::z
               end
@@ -1931,10 +1912,8 @@ val (nenv, calleeFrags : frags) =
 
 val frags = escapeFrags@knownFrags@calleeFrags
 
-(***>
 val _ = COMMENT(fn () => (pr "\nEnvironment after FIX:\n";
                           printEnv nenv; pr "MAKENV DONE.\n\n"));
-<***)
 
 in  (* body of makenv *)
     (gphdr,frags,nenv,nret)
@@ -2050,6 +2029,7 @@ and close(ce,env,sn,csg,csf,ret) =
 val nfe =
   let val _ = if !CGoptions.staticprof then SProf.initfk() else ()
       val (nvl,ncl,csg,csf,ret,env) = adjustArgs(vl,cl,baseEnv)
+      val () = (print "Right before conversion:\n"; PPCps.printcps0 (fk, f, nvl, ncl, ce))
       val env = augValue(f,U.BOGt,env)
       val nce = close(ce,env,snum f,csg,csf,ret)
    in (fk,mkLvar(),mkLvar()::f::nvl,U.BOGt::U.BOGt::ncl,nce)

@@ -38,7 +38,7 @@ signature CALL_GRAPH = sig
   val knownFunctions : t -> LabelledCPS.function vector
   val escapingFunctions : t -> LabelledCPS.function vector
 
-  (* val callGraphDot : t -> DotLanguage.t *)
+  val callGraphDot : t -> DotLanguage.t
   (* val callWebDot : t -> DotLanguage.t *)
 end
 
@@ -242,6 +242,14 @@ structure CallGraph :> CALL_GRAPH = struct
         | convert (SCCSolver.RECURSIVE fs) = Group fs
     in
       map convert (SCCSolver.topOrder' (toGraph cg))
+    end
+
+  fun callGraphDot (cg as T {escaping, ...}) =
+    let fun escapes (f: LCPS.function) =
+          Vector.exists (fn f' => LV.same (#2 f, #2 f')) escaping
+        fun convert f = (LV.lvarName (#2 f),
+                         if escapes f then [("color", "red")] else [])
+    in  DotLanguage.fromGraph convert (toGraph cg)
     end
 
 end
