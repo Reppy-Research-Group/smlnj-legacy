@@ -34,20 +34,22 @@ end = struct
   fun assignFunKind (cps, cg, info) =
     let
       val isFO = isFirstOrder (cg, info)
-      fun fixF nrecs (f as (CPS.CONT, name, args, tys, body)) =
+      fun fixF recs (f as (CPS.CONT, name, args, tys, body)) =
             if isFO f then
               (CPS.KNOWN_CONT, name, args, tys, fixE body)
             else
               (CPS.CONT, name, args, tys, fixE body)
-        | fixF nrecs (f as (kind, name, args, tys as (CPS.CNTt::_), body)) =
+        | fixF recs (f as (kind, name, args, tys as (CPS.CNTt::_), body)) =
             if isFO f then
-              if nrecs = 1 then
-                (CPS.KNOWN, name, args, tys, fixE body)
-              else
-                (CPS.KNOWN_REC, name, args, tys, fixE body)
+              let val fv = Syn.fv info f
+              in  if List.exists (fn r => LV.Set.member (fv, r)) recs then
+                    (CPS.KNOWN_REC, name, args, tys, fixE body)
+                  else
+                    (CPS.KNOWN, name, args, tys, fixE body)
+              end
             else
               (CPS.ESCAPE, name, args, tys, fixE body)
-        | fixF nrecs (f as (kind, name, args, tys, body)) =
+        | fixF recs (f as (kind, name, args, tys, body)) =
             if isFO f then
               (CPS.KNOWN_TAIL, name, args, tys, fixE body)
             else
@@ -55,8 +57,8 @@ end = struct
       and fixE cexp =
         case cexp
           of LCPS.FIX (label, bindings, e) =>
-               let val nrecs = List.length bindings
-               in  LCPS.FIX (label, map (fixF nrecs) bindings, fixE e)
+               let val recs = map #2 bindings
+               in  LCPS.FIX (label, map (fixF recs) bindings, fixE e)
                end
            | LCPS.APP _ => cexp
            | LCPS.RECORD (label, rk, elems, name, e) =>
@@ -79,7 +81,7 @@ end = struct
            | LCPS.RCC (l, b, name, ty, args, res, e) =>
                LCPS.RCC (l, b, name, ty, args, res, fixE e)
     in
-      fixF 1 cps
+      fixF [#2 cps] cps
     end
 
   fun installStageNumbers (cps, cg, info) =
@@ -343,7 +345,7 @@ end = struct
   (*   end *)
 
   (* fun decideEnvEscape (env, fpfree, gpfree, bindings) : decision list = *)
-  (*   let *) 
+  (*   let *)
 
   datatype fix_kind = UserFix of { knowns: LCPS.function list,
                                    escapes: LCPS.function list }
@@ -391,7 +393,7 @@ end = struct
     | accessToRecordEl (v, Path (clo, path)) = (LV.mkLvar (), clo, path)
 
   fun accessToExp (v, ty, Direct)           exp = exp
-    | accessToExp (v, ty, Path (clo, path)) exp = 
+    | accessToExp (v, ty, Path (clo, path)) exp =
         let fun follow (CPS.OFFp 0, _)    exp = exp
               | follow (CPS.OFFp i, last) exp =
                   LCPS.SELECT (LV.mkLvar (), i, last, v, ty, exp)
@@ -542,7 +544,7 @@ end = struct
                    val recusives = map #2 knowns
                    fun protocol n =
                      MutualRecursion { label=n, gpfree=gpfree, fpfree=fpfree }
-                   val env' = foldr 
+                   val env' = foldr
                                 (fn (n, env) => addProtocol env (n, protocol n))
                                 env recursives
                    fun convert (kind, name, args, tys, body) =
