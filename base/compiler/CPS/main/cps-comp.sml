@@ -31,11 +31,11 @@ functor CPSCompFn (
 
     fun phase x = Stats.doPhase (Stats.makePhase x)
 
-    val closeCPS =
+    fun closeCPS cps =
       if !Control.CG.newClosureConverter then
-        CFAClosure.closeCPS
+        CFAClosure.closeCPS cps
       else
-        Closure.closeCPS
+        Closure.closeCPS cps
 
     val convert   = phase "CPS 060 convert" Convert.convert
     val cpstrans  = phase "CPS 065 cpstrans" CPStrans.cpstrans
