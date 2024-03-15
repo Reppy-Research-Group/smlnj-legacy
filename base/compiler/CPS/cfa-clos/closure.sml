@@ -44,7 +44,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       (* val () = DotLanguage.dump cg *)
       (* val () = dumpSCC scc *)
     in
-      ()
+      UnRebind.unrebind (LCPS.unlabelF f)
     end
 
   (* fun closeFix *)
@@ -55,7 +55,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       (* val callgraph = ZeroCFA.analyze lcps *)
       (* val lifetime = Lifetime.analyze (lcps, callgraph) *)
     in
-      test cps; cps
+      test cps
     end
 
 end
