@@ -103,6 +103,7 @@ structure Control_CG : CGCONTROL =
 	  end
 
     val closureStrategy = new (i, "closure-strategy", "?", 0)	(* see CPS/clos/closure.sml *)
+    val newClosureConverter = new (b, "new-closure-converter", "?", false)
     val cpsopt = new (sl, "cpsopt", "cps optimizer phases", [
 	    "first_contract", "eta", "zeroexpand", "last_contract"
 	  ])

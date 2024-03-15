@@ -22,6 +22,7 @@ signature MCCONTROL =
 (* general code-generation controls *)
 signature CGCONTROL =
   sig
+    val newClosureConverter : bool ref
     val closureStrategy : int ref
     val cpsopt : string list ref		(* list of cpsopt phases *)
     val rounds : int ref

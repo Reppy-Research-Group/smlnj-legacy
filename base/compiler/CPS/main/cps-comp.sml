@@ -31,12 +31,18 @@ functor CPSCompFn (
 
     fun phase x = Stats.doPhase (Stats.makePhase x)
 
+    val closeCPS =
+      if !Control.CG.newClosureConverter then
+        CFAClosure.closeCPS
+      else
+        Closure.closeCPS
+
     val convert   = phase "CPS 060 convert" Convert.convert
     val cpstrans  = phase "CPS 065 cpstrans" CPStrans.cpstrans
     val cpsopt    = phase "CPS 070 cpsopt" CPSopt.reduce
     val litsplit  = phase "CPS 075 litsplit" Literals.split
     val newlitsplit = phase "CPS 075 litsplit" NewLiterals.split
-    val closure   = phase "CPS 080 closure"  (fn x => (CFAClosure.closeCPS x; Closure.closeCPS x))
+    val closure   = phase "CPS 080 closure" closeCPS
     val globalfix = phase "CPS 090 globalfix" GlobalFix.globalfix
     val spill     = phase "CPS 100 spill" Spill.spill
     val limit     = phase "CPS 110 limit" Limit.nolimit
