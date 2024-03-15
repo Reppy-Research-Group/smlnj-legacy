@@ -45,7 +45,8 @@ end = struct
             if isFO f then
               let val fv = Syn.fv info f
               in  if List.exists (fn r => LV.Set.member (fv, r)) recs then
-                    (CPS.KNOWN_REC, name, args, tys, fixE body)
+                    (* (CPS.KNOWN_REC, name, args, tys, fixE body) *)
+                    (CPS.KNOWN, name, args, tys, fixE body)
                   else
                     (CPS.KNOWN, name, args, tys, fixE body)
               end
@@ -53,7 +54,8 @@ end = struct
               (CPS.ESCAPE, name, args, tys, fixE body)
         | fixF recs (f as (kind, name, args, tys, body)) =
             if isFO f then
-              (CPS.KNOWN_TAIL, name, args, tys, fixE body)
+              (* (CPS.KNOWN_TAIL, name, args, tys, fixE body) *)
+              (CPS.KNOWN, name, args, tys, fixE body)
             else
               raise Fail "escaping-fun has no continuations"
       and fixE cexp =
@@ -128,7 +130,8 @@ end = struct
                                            gpfree: CPS.lvar list,
                                            fpfree: CPS.lvar list }
                     | StandardFunction
-                    | StandardContinuation of { gpcs: CPS.lvar list,
+                    | StandardContinuation of { callee: CPS.value,
+                                                gpcs: CPS.lvar list,
                                                 fpcs: CPS.lvar list }
   datatype object = Closure | CalleeSave
   datatype env = Env of { immediates: CPS.lvar list,
@@ -159,9 +162,9 @@ end = struct
                     pclosures ("  " ^ indent, links, LV.Set.add (seen, id))))
           in  app pc l
           end
-        fun pcallee (v, StandardContinuation { gpcs, fpcs }) =
-             (pv v; print "/callee(G): "; plist pv gpcs;
-              pv v; print "/callee(F): "; plist pv fpcs)
+        fun pcallee (v, StandardContinuation { callee, gpcs, fpcs }) =
+             (pv v; print "/"; pval callee; print "(G): "; plist pv gpcs;
+              pv v; print "/"; pval callee; print "(F): "; plist pv fpcs)
           | pcallee _ = ()
         fun pproto (v, StandardFunction) = (pv v; print "/std ")
           | pproto (v, StandardContinuation _) = (pv v; print "/cont ")
@@ -264,7 +267,9 @@ end = struct
               of KnownFunction { gpfree, fpfree, ... } => gpfree @ fpfree
                | MutualRecursion { gpfree, fpfree, ... } => gpfree @ fpfree
                | StandardFunction => [v]
-               | StandardContinuation { gpcs, fpcs } => v::(fpcs @ gpcs))
+               | StandardContinuation { callee=CPS.VAR f, gpcs, fpcs } =>
+                   f::(fpcs @ gpcs)
+               | StandardContinuation { callee=_, gpcs, fpcs } => fpcs @ gpcs)
 
   val isFloatTy =
     if unboxedFloats then
@@ -312,41 +317,6 @@ end = struct
 
   fun gpType _ = CPSUtil.BOGt
   fun fpType _ = CPS.FLTt 64
-
-  fun fixArgs (env, (kind, name, args, tys, body)) =
-    case protocolOf env name
-      of StandardFunction =>
-           let val link = LV.mkLvar ()
-               val clos = LV.mkLvar ()
-               val (csgp, csgpTy) = extraLvar (nGPCalleeSaves, CPSUtil.BOGt)
-               val (csfp, csfpTy) = extraLvar (nFPCalleeSaves, CPS.FLTt 64)
-               val args' = link::clos::(csgp @ csfp @ args)
-               val tys'  = CPSUtil.BOGt::CPSUtil.BOGt::(csgpTy @ csfpTy @ tys)
-               val env'  = env withImms args
-                               withCSs  (csgp @ csfp)
-               (* todo: need to bind the closures *)
-           in  (env', (kind, name, args', tys', body))
-           end
-       | StandardContinuation { gpcs, fpcs } =>
-           let val cont = LV.mkLvar ()
-               (* val (csgp, csgpTy) = extraLvar (nGPCalleeSaves, CPSUtil.BOGt) *)
-               (* val (csfp, csfpTy) = extraLvar (nFPCalleeSaves, CPS.FLTt 64) *)
-               val gpcsTy = map (tyOf env) gpcs
-               val fpcsTy = map (tyOf env) fpcs
-               val args' = cont::(gpcs @ fpcs @ args)
-               val tys'  = CPSUtil.BOGt::(gpcsTy @ fpcsTy @ tys)
-               val env'  = env withImms (gpcs @ fpcs @ args)
-           in  (env', (kind, name, args', tys', body))
-           end
-       | KnownFunction { label, gpfree, fpfree } =>
-           let val gpfreeTys = map (tyOf env) gpfree
-               val fpfreeTys = map (tyOf env) fpfree
-               val args' = gpfree @ fpfree @ args
-               val tys'  = gpfreeTys @ fpfreeTys @ tys
-               val env'  = env withImms args'
-           in  (env', (kind, name, args', tys', body))
-           end
-       | MutualRecursion _ => raise Fail "fixing args of mutual recursion"
 
   type decision = LCPS.function * protocol * closure list
   type fragment = env * LCPS.function
@@ -428,24 +398,22 @@ end = struct
 
   fun fixAppliedArgs (env, xs) =
     let fun collect (CPS.VAR x, (res, hdr)) =
-              let val ty = tyOf env x
-              in  case protocolOf' env x
-                    of SOME (KnownFunction _) =>
-                         raise Fail "this is not a known function"
-                     | SOME (StandardContinuation { gpcs, fpcs }) =>
-                         let val args = map CPS.VAR (x :: gpcs @ fpcs)
-                             val hdr' = accessList (env, args)
-                         in  (args @ res, hdr' o hdr)
-                         end
-                     | SOME (MutualRecursion { label, gpfree, fpfree }) =>
-                         raise Fail "unimp: mutual recursion applied elsewhere"
-                     | _ =>
-                         let val arg = CPS.VAR x
-                             val hdr' = accessList (env, [arg])
-                         in  (arg :: res, hdr' o hdr)
-                         end
-              end
-          | collect (_, (args, hdr)) = (args, hdr)
+              (case protocolOf' env x
+                 of SOME (KnownFunction _) =>
+                      raise Fail "this is not a known function"
+                  | SOME (StandardContinuation { callee, gpcs, fpcs }) =>
+                      let val args = callee :: map CPS.VAR (gpcs @ fpcs)
+                          val hdr' = accessList (env, args)
+                      in  (args @ res, hdr' o hdr)
+                      end
+                  | SOME (MutualRecursion { label, gpfree, fpfree }) =>
+                      raise Fail "unimp: mutual recursion applied elsewhere"
+                  | _ =>
+                      let val arg = CPS.VAR x
+                          val hdr' = accessList (env, [arg])
+                      in  (arg :: res, hdr' o hdr)
+                      end)
+          | collect (x, (args, hdr)) = (x::args, hdr)
     in  foldr collect ([], fn x => x) xs
         handle ex => (print ("fixAppliedArgs [" ^ String.concatWithMap ", "
         PPCps.value2str xs ^ "]\n"); raise ex)
@@ -460,7 +428,7 @@ end = struct
                   val args' = arg :: (csgp @ csfp @ args)
                   val tys'  = CPS.CNTt :: (csgpTy @ csfpTy @ tys)
                   val protocol =
-                    StandardContinuation { gpcs=csgp, fpcs=csfp }
+                    StandardContinuation { callee=CPS.VAR arg, gpcs=csgp, fpcs=csfp }
                   val () = app (recordCalleeSave env) (csgp @ csfp)
                   val env' = addProtocol env (arg, protocol)
                   val env' = env' withCSs (csgp @ csfp)
@@ -515,6 +483,7 @@ end = struct
                        of [] => (gpfree, NONE)
                         | _  =>
                             let val utrecordvar = LV.mkLvar ()
+                                val () = recordClosure env utrecordvar
                                 val utrecord =
                                    ClosureRep { values=map CPS.VAR utgpfree,
                                                 links=[],
@@ -529,6 +498,7 @@ end = struct
                        of [] => (gpfree, NONE)
                         | _  =>
                             let val fprecordvar = LV.mkLvar ()
+                                val () = recordClosure env fprecordvar
                                 val fprecord =
                                   ClosureRep { values=map CPS.VAR fpfree,
                                                links=[],
@@ -542,6 +512,7 @@ end = struct
                        of [] => (gpfree, NONE)
                         | _  =>
                             let val gprecordvar = LV.mkLvar ()
+                                val () = recordClosure env gprecordvar
                                 val gprecord =
                                   ClosureRep { values=map CPS.VAR gpspill,
                                                (*FIXME: fp/utclosures in links*)
@@ -551,11 +522,12 @@ end = struct
                             in  (gprecordvar::gpfree, SOME gprecord)
                             end
                    val cont = LV.mkLvar ()
-                   val gpbaseTy = map gpType gpbase
-                   val fpbaseTy = map fpType fpfree
+                   val gpbaseTy = map (tyOf env) gpbase
+                   val fpbaseTy = map (tyOf env) fpfree
                    val args' = cont::(gpbase @ fpfree @ args)
                    val tys'  = CPSUtil.BOGt::(gpbaseTy @ fpbaseTy @ tys)
-                   val (args', tys', env') = adjustArgs (env withImms [], args', tys')
+                   (* val (args', tys', env') = adjustArgs (env withImms [], args', tys') *)
+                   val env' = env withImms args'
                    fun addClosure (NONE, cls) = cls
                      | addClosure (SOME (cr as ClosureRep { id, ... }), cls) =
                          (id, cr)::cls
@@ -567,8 +539,8 @@ end = struct
                    val () = print ("Environment in escape-cont "
                                    ^ LV.lvarName name ^ ":\n")
                    val () = printEnv env'
-                   val protocol = StandardContinuation { gpcs=gpbase,
-                                                         fpcs=fpfree }
+                   val protocol = StandardContinuation 
+                     { callee=CPS.LABEL name, gpcs=gpbase, fpcs=fpfree }
                    val nenv = addProtocol env (name, protocol)
                    val nenv = nenv addImms [name]
                    fun constructClosure (NONE, (hdr, env')) = (hdr, env')
@@ -742,8 +714,8 @@ end = struct
                                   LCPS.APP (LV.mkLvar(), CPS.VAR l,
                                     (CPS.VAR l)::f'::args')))
                        end
-                   | StandardContinuation { gpcs, fpcs } =>
-                       let val f' = CPS.VAR f
+                   | StandardContinuation { callee, gpcs, fpcs } =>
+                       let val f' = callee
                            val args = map CPS.VAR (gpcs @ fpcs) @ args
                            val hdr  = accessList (env, args)
                        in  hdr (LCPS.APP (LV.mkLvar(), f', f' :: args))
