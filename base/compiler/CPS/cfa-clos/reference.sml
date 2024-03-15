@@ -390,9 +390,9 @@ end = struct
         end
 
   fun accessList (env, args) =
-    let fun collect (x' as (CPS.VAR x), hdr) = 
+    let fun collect (x' as (CPS.VAR x), hdr) =
               hdr o accessToExp (x, tyOf env x, access env x')
-          | collect (_, hdr) = hdr 
+          | collect (_, hdr) = hdr
     in  foldl collect (fn x => x) args
     end
 
@@ -539,7 +539,7 @@ end = struct
                    val () = print ("Environment in escape-cont "
                                    ^ LV.lvarName name ^ ":\n")
                    val () = printEnv env'
-                   val protocol = StandardContinuation 
+                   val protocol = StandardContinuation
                      { callee=CPS.LABEL name, gpcs=gpbase, fpcs=fpfree }
                    val nenv = addProtocol env (name, protocol)
                    val nenv = nenv addImms [name]
@@ -741,7 +741,7 @@ end = struct
                end
            | LCPS.BRANCH (label, b, args, x, con, alt) =>
                let val hdr = accessList (env, args)
-               in  hdr (LCPS.BRANCH (label, b, args, x, 
+               in  hdr (LCPS.BRANCH (label, b, args, x,
                           close (env, stagenum, con),
                           close (env, stagenum, alt)))
                end
