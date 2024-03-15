@@ -27,18 +27,6 @@ structure ZeroCFA :> CFA = struct
     val dump: t -> unit
 
     val app: (concrete -> unit) -> t -> unit
-    (* val fold: (concrete * 'a -> 'a) -> 'a -> t -> unit *)
-
-    (* val unknownRecords: t -> bool *)
-    (* val unknownRefs: t -> bool *)
-
-    (* val records: t -> (addr list) list *)
-    (* val functions: t -> function list *)
-    (* val refs: t -> addr list *)
-
-    (* val recordsL: concrete list -> (addr list) list *)
-    (* val functionsL: concrete list -> function list *)
-    (* val refsL: concrete list -> addr list *)
   end = struct
     datatype function
       = IN of LCPS.function
@@ -168,10 +156,10 @@ structure ZeroCFA :> CFA = struct
 
             | collect (FUN _, SOME _) =
                 raise Fail "conflicting 1"
-            | collect (RECORD data,
+            | collect (RECORD _,
                        (NONE | SOME CallGraph.Value)) =
                 SOME CallGraph.Value
-            | collect (RECORD data, SOME _) =
+            | collect (RECORD _, SOME _) =
                 raise Fail "conflicting 2"
             | collect (REF _,
                        (NONE | SOME CallGraph.Value)) =
@@ -187,7 +175,7 @@ structure ZeroCFA :> CFA = struct
                   SOME (CallGraph.Function (CallGraph.Out :: fs))
             | collect (DATA, _) =
                 raise Fail "conflicting 4"
-            | collect (UNKNOWN cty, (NONE | SOME CallGraph.Value)) =
+            | collect (UNKNOWN _, (NONE | SOME CallGraph.Value)) =
                 SOME CallGraph.Value
             | collect (UNKNOWN _, SOME _) =
                 raise Fail "conflicting 5"
@@ -233,7 +221,7 @@ structure ZeroCFA :> CFA = struct
     fun epoch ({epoch, ...}: t) = !epoch
 
     fun updateEpoch epoch true  = (epoch := !epoch + 1; true)
-      | updateEpoch epoch false = false
+      | updateEpoch _     false = false
 
     fun update {epoch, table, hdlr=_} (lvar, v) =
       case LVarTbl.find table lvar
@@ -292,7 +280,7 @@ structure ZeroCFA :> CFA = struct
                              dump s;
                              raise StoreLookUp)
 
-    fun find (s as {table, ...}: t) lvar = LVarTbl.find table lvar
+    fun find ({table, ...}: t) lvar = LVarTbl.find table lvar
   end
 
   exception Unimp
@@ -361,7 +349,7 @@ structure ZeroCFA :> CFA = struct
            f ctx cexp)
       end
 
-    fun dump {epochTable, store, escapeSet, escapingAddr, syn, todo} =
+    fun dump {epochTable=_, store, escapeSet, escapingAddr=_, syn=_, todo} =
       (Store.dump store;
        print "\nEscaping: {";
        FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) escapeSet;
@@ -369,7 +357,7 @@ structure ZeroCFA :> CFA = struct
        FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) todo;
        print "}\n")
 
-    fun dump {epochTable, store, escapeSet, escapingAddr, syn, todo} =
+    fun dump {epochTable=_, store, escapeSet, escapingAddr=_, syn=_, todo=_} =
       (print ("Epoch: " ^ Int.toString (Store.epoch store));
        print "\nEscaping: {";
        FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) escapeSet;
@@ -386,14 +374,14 @@ structure ZeroCFA :> CFA = struct
 
     fun scanValue ctx (Value.FUN (Value.IN f), todo) =
           (addToEscapeSet (ctx, f); todo)
-      | scanValue ctx (Value.FUN Value.OUT, acc) = acc
-      | scanValue ctx (Value.RECORD addrs, todo) =
+      | scanValue _ (Value.FUN Value.OUT, acc) = acc
+      | scanValue _ (Value.RECORD addrs, todo) =
           (addrs @ todo)
-      | scanValue ctx (Value.REF addr, todo) =
+      | scanValue _ (Value.REF addr, todo) =
           (addr :: todo)
-      | scanValue ctx (Value.DATA, acc) = acc
-      | scanValue ctx (Value.UNKNOWN _, acc) = acc
-    and scanAddr ctx seen [] = ()
+      | scanValue _ (Value.DATA, acc) = acc
+      | scanValue _ (Value.UNKNOWN _, acc) = acc
+    and scanAddr _ _ [] = ()
       | scanAddr ctx seen (addr::todo) =
           if LambdaVar.Set.member (seen, addr) then
             scanAddr ctx seen todo
@@ -461,7 +449,7 @@ structure ZeroCFA :> CFA = struct
 
   fun evalValue ctx (CPS.VAR v) =
         Context.lookup ctx v
-    | evalValue ctx (CPS.LABEL _) =
+    | evalValue _ (CPS.LABEL _) =
         raise (Impossible "Label value before closure conversion")
     | evalValue _ CPS.VOID =
         (* Gross hack *)
@@ -520,14 +508,14 @@ structure ZeroCFA :> CFA = struct
      print "\nCurrent state:\n";
      Context.dump ctx;
      print "=================\n\n\n")
-  fun dump ctx cexp =
+  fun dump ctx _ =
     if Context.epoch ctx > 10000 then
       (print ("\ncurrent epoch:          " ^ Int.toString (Context.epoch ctx));
        Context.dump ctx;
        print "=================\n\n\n")
     else
       ()
-  fun dump ctx cexp =
+  fun dump ctx _ =
     print ("\rcurrent epoch:          " ^ Int.toString (Context.epoch ctx))
   fun dump _ _ = ()
 
@@ -536,7 +524,7 @@ structure ZeroCFA :> CFA = struct
         apply ctx (evalValue ctx f, args)
     | loopExpCase ctx (LCPS.RECORD (_, _, values, x, body)) =
         let
-          fun alloc (dest, CPS.VAR src, CPS.OFFp 0) = src
+          fun alloc (_, CPS.VAR src, CPS.OFFp 0) = src
             | alloc (dest, src, path) =
                 let val concretes =
                       access ctx (Value.toList (evalValue ctx src), path)
@@ -555,7 +543,7 @@ structure ZeroCFA :> CFA = struct
                | _ => (app (fn v => Context.merge ctx (dest, v)) values;
                        loopExp ctx body)
         end
-    | loopExpCase ctx (LCPS.OFFSET (_, i, value, dest, body)) =
+    | loopExpCase _ (LCPS.OFFSET _) =
         raise Fail "no OFFSET"
         (* let val v = *)
         (*       let val records = Value.records (evalValue ctx value) *)
@@ -581,7 +569,7 @@ structure ZeroCFA :> CFA = struct
         (loopExp ctx trueExp; loopExp ctx falseExp)
     | loopExpCase ctx (LCPS.SETTER (_, CPS.P.SETHDLR, [hdlr], body)) =
         (Context.addHdlr ctx (evalValue ctx hdlr); loopExp ctx body)
-    | loopExpCase ctx (LCPS.SETTER (_, CPS.P.SETHDLR, _, _)) =
+    | loopExpCase _ (LCPS.SETTER (_, CPS.P.SETHDLR, _, _)) =
         raise Impossible "SETHDLR cannot take more than one continuation"
     | loopExpCase ctx (LCPS.SETTER (_, (CPS.P.UNBOXEDASSIGN | CPS.P.ASSIGN),
                                        [dest, src], body)) =
@@ -595,7 +583,7 @@ structure ZeroCFA :> CFA = struct
               | assign _ = ()
         in  Value.app assign (evalValue ctx dest); loopExp ctx body
         end
-    | loopExpCase ctx (LCPS.SETTER (_, (CPS.P.UNBOXEDASSIGN | CPS.P.ASSIGN),
+    | loopExpCase _ (LCPS.SETTER (_, (CPS.P.UNBOXEDASSIGN | CPS.P.ASSIGN),
                                        _, _)) =
         raise Impossible "ASSIGN takes wrong arguments"
     | loopExpCase ctx (LCPS.SETTER (_, (CPS.P.UNBOXEDUPDATE | CPS.P.UPDATE),
@@ -614,7 +602,7 @@ structure ZeroCFA :> CFA = struct
               | assign _ = ()
         in  Value.app assign (evalValue ctx dest); loopExp ctx body
         end
-    | loopExpCase ctx (LCPS.SETTER (_, (CPS.P.UNBOXEDUPDATE | CPS.P.UPDATE),
+    | loopExpCase _ (LCPS.SETTER (_, (CPS.P.UNBOXEDUPDATE | CPS.P.UPDATE),
                                        _, _)) =
         raise Impossible "UPDATE takes wrong arguments"
     | loopExpCase ctx (LCPS.SETTER (_, _, _, body)) =
@@ -623,7 +611,7 @@ structure ZeroCFA :> CFA = struct
     | loopExpCase ctx (LCPS.LOOKER (_, CPS.P.GETHDLR, [], dest, _, body)) =
         (Context.merge ctx (dest, Context.getHdlr ctx);
          loopExp ctx body)
-    | loopExpCase ctx (LCPS.LOOKER (_, CPS.P.GETHDLR, _, dest, _, body)) =
+    | loopExpCase _ (LCPS.LOOKER (_, CPS.P.GETHDLR, _, _, _, _)) =
         raise Impossible "GETHDLR does not take arguments"
     | loopExpCase ctx (LCPS.LOOKER (_, CPS.P.DEREF, [cell], dest, ty, body)) =
         let fun deref (Value.REF addr) =
@@ -634,16 +622,16 @@ structure ZeroCFA :> CFA = struct
         in  Value.app deref (evalValue ctx cell);
             loopExp ctx body
         end
-    | loopExpCase ctx (LCPS.LOOKER (_, CPS.P.DEREF, _, _, _, _)) =
+    | loopExpCase _ (LCPS.LOOKER (_, CPS.P.DEREF, _, _, _, _)) =
         raise Impossible "DEREF with wrong number of arguments"
     | loopExpCase ctx (LCPS.LOOKER (_, _, _, dest, ty, body)) =
         (Context.add ctx (dest, unknown ty); loopExp ctx body)
-    | loopExpCase ctx (LCPS.ARITH (_, _, _, dest, ty, body)) =
+    | loopExpCase ctx (LCPS.ARITH (_, _, _, dest, _, body)) =
         (* FIXME: stop using VOID *)
         (apply ctx (Context.getHdlr ctx, [CPS.VOID, CPS.VOID]);
          Context.add ctx (dest, Value.DATA);
          loopExp ctx body)
-    | loopExpCase ctx (LCPS.PURE (label, CPS.P.MAKEREF, [v], dest, ty, body)) =
+    | loopExpCase ctx (LCPS.PURE (label, CPS.P.MAKEREF, [v], dest, _, body)) =
         (Context.add ctx (dest, Value.REF label);
          case v
            of CPS.VAR w => Context.merge ctx (label, Context.lookup ctx w)
@@ -654,12 +642,12 @@ structure ZeroCFA :> CFA = struct
          loopExp ctx body)
     | loopExpCase ctx (LCPS.PURE (_, _, _, dest, ty, body)) =
         (Context.add ctx (dest, unknown ty); loopExp ctx body)
-    | loopExpCase ctx (LCPS.RCC _) =
+    | loopExpCase _ (LCPS.RCC _) =
         raise Unimp
   and apply ctx (f: Value.t, args: LCPS.value list) =
         let
           val argVals = map (evalValue ctx) args
-          fun call (Value.FUN (Value.IN (_, name, formals, types, body))) =
+          fun call (Value.FUN (Value.IN (_, _, formals, _, body))) =
                 ((app (Context.merge ctx) (ListPair.zipEq (formals, argVals));
                   loopExp ctx body)
                  handle ListPair.UnequalLengths => ())
@@ -704,7 +692,7 @@ structure ZeroCFA :> CFA = struct
 
   fun loopEscape ctx q =
     let
-      fun doFunction (funkind, name, formals, tys, body) =
+      fun doFunction (_, _, formals, tys, body) =
         let fun addArg (arg, cty) = Context.add ctx (arg, unknown cty)
         in  ListPair.appEq addArg (formals, tys);
             loopExp ctx body
