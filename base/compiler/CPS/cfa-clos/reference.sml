@@ -246,6 +246,11 @@ end = struct
          of SOME _ => CG.Value
           | NONE   => CG.whatis cg v)
 
+  fun lookupClosure (Env { closures, ... }, v) : closure =
+    case List.find (fn (n, _) => LV.same (n, v)) closures
+      of SOME (_, clo) => clo
+       | NONE => raise Fail (LV.lvarName v ^ " is not in closure")
+
   fun protocolOf (Env {protocols, ...}) v =
     case LV.Map.find (protocols, v)
       of SOME p => p
@@ -354,72 +359,112 @@ end = struct
     else
       List.splitAt (free, n - 1)
 
-  datatype access = Direct | Path of CPS.value * CPS.accesspath
-  fun printAccess Direct = print "Direct\n"
-    | printAccess (Path (value, path)) =
-        let fun pp (CPS.OFFp i) = "." ^ Int.toString i
-              | pp (CPS.SELp (i, p)) = "." ^ Int.toString i ^ pp p
-        in  case value of CPS.VAR x => print (LV.lvarName x ^ pp path ^ "\n")
-               | _ => print "what?\n"
+  datatype access = Direct | Indirect of CPS.lvar * closure * path
+       and path   = Last of CPS.lvar | Select of CPS.lvar * path
+
+  fun printAccess Direct = print "direct\n"
+    | printAccess (Indirect (name, _, path)) =
+        let fun ppath (Last field) = print ("." ^ LV.lvarName field)
+              | ppath (Select (field, path)) =
+                  (print ("." ^ LV.lvarName field); ppath path)
+        in  print (LV.lvarName name); ppath path
         end
 
-  fun access (env as Env { immediates, calleeSaves, closures, ... }) (CPS.VAR v) =
-    let fun loopClosure [] =
+  fun access (env as Env { immediates, closures, ... }) v =
+    let fun next (path : path -> access, links) =
+          map (fn (name, clo) => (fn p => path (Select (name, p)), clo)) links
+        fun init (name, clo) = (fn p => Indirect (name, clo, p), clo)
+        fun sameValue (CPS.VAR w) = LV.same (v, w)
+          | sameValue _ = false
+        fun dfs ([], seen) = 
               (printEnv env; raise Fail ("Can't find " ^ LV.lvarName v))
-          | loopClosure ((clo, ClosureRep { values, ... })::closures) =
-              (* FIXME: linked closure *)
-              case List.findi (fn (_, CPS.VAR x) => LV.same (x, v) | _ => false)
-                              values
-                of SOME (i, _) => Path (CPS.VAR clo, CPS.SELp (i, CPS.OFFp 0))
-                 | NONE => loopClosure closures
+          | dfs ((path, ClosureRep { values, links, id, ... })::todo, seen) =
+              if LV.Set.member (seen, id) then
+                dfs (todo, seen)
+              else if LV.same (id, v) orelse List.exists sameValue values then
+                path (Last v)
+              else
+                dfs (todo @ next (path, links), LV.Set.add (seen, id))
     in  if List.exists (sameLV v) immediates then
           Direct
         else
-          loopClosure closures
+          dfs (map init closures, LV.Set.empty)
     end
-    | access _ _ = Direct
+
+  fun offsetOf (ClosureRep { values, links, ... }, v) : int * closure option =
+    case List.findi (fn (_, CPS.VAR x) => LV.same (x, v) | _ => false) values
+      of SOME (off, _) => (off, NONE)
+       | NONE =>
+           let val off = List.length values
+           in  case List.findi (fn (_, (n, _)) => LV.same (n, v)) links
+                 of SOME (i, (_, clo)) => (off + i, SOME clo)
+                  | NONE => raise Fail "offsetOf not in closure"
+           end
+
+  val offsetOfVal = #1 o offsetOf
+  fun offsetOfClo (clo, v) =
+    let val (off, closureOpt) = offsetOf (clo, v)
+    in  case closureOpt
+          of NONE => raise Fail (LV.lvarName v ^ " is not a closure")
+           | SOME closure => (off, closure)
+    end
+
+  fun ctyOfClo (ClosureRep { values, links, ... }): CPS.cty =
+    let val length = List.length values + List.length links
+    in  CPS.PTRt (CPS.RPT length)
+    end
 
   fun accessToRecordEl (v, Direct) = (LV.mkLvar (), v, CPS.OFFp 0)
-    | accessToRecordEl (v, Path (clo, path)) = (LV.mkLvar (), clo, path)
-
-  fun accessToExp (v, ty, Direct) = (fn x => x)
-    | accessToExp (v, ty, Path (clo, path)) =
-        let fun follow (CPS.OFFp _, last) exp =
-                  raise Fail "following OFFp 0"
-              | follow (CPS.SELp (i, CPS.OFFp 0), last) exp =
-                  let val this = LV.mkLvar ()
-                  in  LCPS.SELECT (LV.mkLvar (), i, last, v, ty, exp)
+    | accessToRecordEl (v, Indirect (n, clo, path)) =
+        let fun pathToAP (clo, Last v) : CPS.accesspath =
+                  CPS.SELp (offsetOfVal (clo, v), CPS.OFFp 0)
+              | pathToAP (clo, Select (field, path)) =
+                  let val (off, closure) = offsetOfClo (clo, field)
+                  in  CPS.SELp (off, pathToAP (closure, path))
                   end
-              | follow _ _ = raise Fail "not generated"
-              (* | follow (CPS.SELp (i, path), last) exp = *)
-              (*     let val this = LV.mkLvar () *)
-              (*     in  LCPS.SELECT (LV.mkLvar (), i, last, this, CPSUtil.BOGt, follow (path, last) exp) *)
-              (*     end *)
-        in  follow (path, clo)
+        in  (LV.mkLvar (), CPS.VAR n, pathToAP (clo, path))
         end
 
-  fun accessList (env, args) =
-    let fun collect (x' as (CPS.VAR x), hdr) =
-              hdr o accessToExp (x, tyOf env x, access env x')
-          | collect (_, hdr) = hdr
+  fun emitAccess _   (_,  _, Direct) = (fn exp => exp)
+    | emitAccess env (v, ty, Indirect (name, closure, path)) =
+        let fun follow (name, closure, Last n) exp =
+                  LCPS.SELECT (LV.mkLvar (),
+                    offsetOfVal (closure, n), CPS.VAR name, v, ty, exp)
+              | follow (name, closure, Select (field, path)) exp =
+                  let val (off, next) = offsetOfClo (closure, field)
+                      val nextName = LV.mkLvar ()
+                  in  LCPS.SELECT (LV.mkLvar (),
+                        off, CPS.VAR name, nextName, ctyOfClo next,
+                        follow (nextName, next, path) exp)
+                  end
+        in  follow (name, closure, path)
+        end
+
+  fun fixRecordEl (env, CPS.VAR v) = accessToRecordEl (CPS.VAR v, access env v)
+    | fixRecordEl (_, v) = (LV.mkLvar (), v, CPS.OFFp 0)
+
+  fun fixAccess (env, args) =
+    let fun collect (CPS.VAR x, hdr) exp =
+              hdr (emitAccess env (x, tyOf env x, access env x) exp)
+          | collect (_, hdr) exp = hdr exp
     in  foldl collect (fn x => x) args
     end
 
-  fun fixAppliedArgs (env, xs) =
+  fun fixActualArgs (env, xs) =
     let fun collect (CPS.VAR x, (res, hdr)) =
               (case protocolOf' env x
                  of SOME (KnownFunction _) =>
                       raise Fail "this is not a known function"
                   | SOME (StandardContinuation { callee, gpcs, fpcs }) =>
                       let val args = callee :: (gpcs @ fpcs)
-                          val hdr' = accessList (env, args)
+                          val hdr' = fixAccess (env, args)
                       in  (args @ res, hdr' o hdr)
                       end
                   | SOME (MutualRecursion { label, gpfree, fpfree }) =>
                       raise Fail "unimp: mutual recursion applied elsewhere"
                   | _ =>
                       let val arg = CPS.VAR x
-                          val hdr' = accessList (env, [arg])
+                          val hdr' = fixAccess (env, [arg])
                       in  (arg :: res, hdr' o hdr)
                       end)
           | collect (x, (args, hdr)) = (x::args, hdr)
@@ -428,7 +473,7 @@ end = struct
         PPCps.value2str xs ^ "]\n"); raise ex)
     end
 
-  fun adjustArgs (env, args, tys) =
+  fun adjustFormalArgs (env, args, tys) =
     let fun add (arg, CPS.CNTt, (args, tys, env)) =
               let val (csgp, csgpTy) =
                     extraLvar (nGPCalleeSaves, CPSUtil.BOGt)
@@ -459,13 +504,16 @@ end = struct
     end
 
   fun makeEnv (env, bindings) : (LCPS.cexp -> LCPS.cexp) * env * fragment list =
-    let val () = print "STARTING makeEnv; Environment:\n"
-        val () = printEnv env
-        val (fpfree, gpfree) = collectEnv (env, bindings)
+    let val (fpfree, gpfree) = collectEnv (env, bindings)
         val () = (dumpLVSet "fpfree" fpfree; dumpLVSet "gpfree" gpfree)
         val (fpfree, gpfree) = (LV.Set.toList fpfree, LV.Set.toList gpfree)
         val recursives = map #2 bindings
         val fixkind = partitionBindings bindings
+
+        val () = (print "STARTING makeEnv for [";
+                  print (String.concatWithMap ", " LV.lvarName recursives);
+                  print "; Environment:\n")
+        val () = printEnv env
         (* val frags = map transform bindings *)
     in  case fixkind
           of KnownContFix (_, name, args, tys, body) =>
@@ -473,7 +521,7 @@ end = struct
                    val fpfreeTys = map (tyOf env) fpfree
                    val args' = args @ gpfree @ fpfree
                    val tys'  = tys  @ gpfreeTys @ fpfreeTys
-                   val (args', tys', env') = adjustArgs (env withImms [], args', tys')
+                   val (args', tys', env') = adjustFormalArgs (env withImms [], args', tys')
                    val f' = (CPS.KNOWN, name, args', tys', body)
                    val protocol =
                      KnownFunction { label=name, gpfree=gpfree, fpfree=fpfree }
@@ -577,7 +625,7 @@ end = struct
                        (SOME (ClosureRep { values, links=_, kind, id }),
                         (hdr, env' as Env { allocated, ... })) =
                          let val recordEls =
-                               map (fn v => accessToRecordEl (v, access env' v)) values
+                               map (fn v => fixRecordEl (env', v)) values
                              fun hdr' exp = hdr (LCPS.RECORD (LV.mkLvar(), kind, recordEls, id, exp))
                              val () = LV.Tbl.insert allocated (id, Closure)
                              val env'' = env' addImms [id]
@@ -600,7 +648,7 @@ end = struct
                    fun convert (kind, name, args, tys, body) =
                      let val args' = args @ gpfree @ fpfree
                          val tys'  = tys  @ gpfreeTys @ fpfreeTys
-                         val (args', tys', env') = adjustArgs (env' withImms [], args', tys')
+                         val (args', tys', env') = adjustFormalArgs (env' withImms [], args', tys')
                          val f' = (kind, name, args', tys', body)
                          val () = print ("Environment in known "
                                          ^ LV.lvarName name ^ ":\n")
@@ -668,7 +716,7 @@ end = struct
                          val tys' = CPSUtil.BOGt::CPSUtil.BOGt::tys
                          val env' = env' withClosures [(clos, cr)]
                          val (args', tys', env') =
-                           adjustArgs (env' withImms [], args', tys')
+                           adjustFormalArgs (env' withImms [], args', tys')
                          val f' = (kind, name, args', tys', body)
                          val () = print ("Environment in escape-fun "
                                          ^ LV.lvarName name ^ ":\n")
@@ -684,7 +732,7 @@ end = struct
                        (ClosureRep { values, links=_, kind, id },
                         (hdr, env' as Env { allocated, ... })) =
                          let val recordEls =
-                               map (fn v => accessToRecordEl (v, access env' v)) values
+                               map (fn v => fixRecordEl (env', v)) values
                              fun hdr' exp = hdr (LCPS.RECORD (LV.mkLvar(), kind, recordEls, id, exp))
                              val () = LV.Tbl.insert allocated (id, Closure)
                              val env'' = env' addImms [id]
@@ -723,19 +771,19 @@ end = struct
                   of KnownFunction { label, gpfree, fpfree } =>
                        let val f' = CPS.LABEL label
                            val args' = args @ map CPS.VAR (gpfree @ fpfree)
-                           val (args', hdr) = fixAppliedArgs (env, args')
+                           val (args', hdr) = fixActualArgs (env, args')
                        in  hdr (LCPS.APP (label, f', args'))
                        end
                    | MutualRecursion { label, gpfree, fpfree } =>
                        let val f' = CPS.LABEL label
                            val args' = args @ map CPS.VAR (gpfree @ fpfree)
-                           val (args', hdr) = fixAppliedArgs (env, args')
+                           val (args', hdr) = fixActualArgs (env, args')
                        in  hdr (LCPS.APP (label, f', args'))
                        end
                    | StandardFunction =>
                        let val f' = CPS.VAR f
-                           val hdr1 = accessList (env, [f'])
-                           val (args', hdr2) = fixAppliedArgs (env, args)
+                           val hdr1 = fixAccess (env, [f'])
+                           val (args', hdr2) = fixActualArgs (env, args)
                            val hdr = hdr1 o hdr2
                            val l = LV.mkLvar ()
                        in  hdr (LCPS.SELECT (LV.mkLvar(), 0, f', l, CPS.FUNt,
@@ -745,58 +793,58 @@ end = struct
                    | StandardContinuation { callee, gpcs, fpcs } =>
                        let val f' = callee
                            val args = gpcs @ fpcs @ args
-                           val hdr  = accessList (env, f'::args)
+                           val hdr  = fixAccess (env, f'::args)
                        in  hdr (LCPS.APP (label, f', f' :: args))
                        end)
            | LCPS.APP (_, _, _) => raise Fail "call???"
            | LCPS.RECORD (label, rk, elems, name, e) =>
-               let val hdr = accessList (env, map #2 elems)
+               let val hdr = fixAccess (env, map #2 elems)
                    val env' = env addImms [name]
                in  hdr (LCPS.RECORD (label, rk, elems, name,
                                      close (env', stagenum, e)))
                end
            | LCPS.SELECT (label, n, v, x, ty, e) =>
-               let val hdr = accessList (env, [v])
+               let val hdr = fixAccess (env, [v])
                    val env' = env addImms [x]
                in  hdr (LCPS.SELECT (label, n, v, x, ty,
                                      close (env', stagenum, e)))
                end
            | LCPS.OFFSET _ => raise Fail "offset"
            | LCPS.SWITCH (label, v, x, branches) =>
-               let val hdr = accessList (env, [v])
+               let val hdr = fixAccess (env, [v])
                in  hdr (LCPS.SWITCH (label, v, x,
                           map (fn e => close (env, stagenum, e)) branches))
                end
            | LCPS.BRANCH (label, b, args, x, con, alt) =>
-               let val hdr = accessList (env, args)
+               let val hdr = fixAccess (env, args)
                in  hdr (LCPS.BRANCH (label, b, args, x,
                           close (env, stagenum, con),
                           close (env, stagenum, alt)))
                end
            | LCPS.SETTER (label, s, args, e) =>
-               let val hdr = accessList (env, args)
+               let val hdr = fixAccess (env, args)
                in  hdr (LCPS.SETTER (label, s, args, close (env, stagenum, e)))
                end
            | LCPS.LOOKER (label, l, args, x, ty, e) =>
-               let val hdr = accessList (env, args)
+               let val hdr = fixAccess (env, args)
                    val env' = env addImms [x]
                    val e' = close (env', stagenum, e)
                in  hdr (LCPS.LOOKER (label, l, args, x, ty, e'))
                end
            | LCPS.ARITH (label, a, args, x, ty, e) =>
-               let val hdr = accessList (env, args)
+               let val hdr = fixAccess (env, args)
                    val env' = env addImms [x]
                    val e' = close (env', stagenum, e)
                in  hdr (LCPS.ARITH (label, a, args, x, ty, e'))
                end
            | LCPS.PURE (label, p, args, x, ty, e) =>
-               let val hdr = accessList (env, args)
+               let val hdr = fixAccess (env, args)
                    val env' = env addImms [x]
                    val e' = close (env', stagenum, e)
                in  hdr (LCPS.PURE (label, p, args, x, ty, e'))
                end
            | LCPS.RCC (l, b, name, ty, args, res, e) =>
-               let val hdr = accessList (env, args)
+               let val hdr = fixAccess (env, args)
                    val env' = raise Fail "TODO"
                    val e' = close (env', stagenum, e)
                in  hdr (LCPS.RCC (l, b, name, ty, args, res, e'))
@@ -810,7 +858,7 @@ end = struct
         val (link, clos) = (LV.mkLvar (), LV.mkLvar ())
         val args' = link::clos::args
         val tys'  = CPSUtil.BOGt::CPSUtil.BOGt::tys
-        val (args', tys', env') = adjustArgs (initEnv, args', tys')
+        val (args', tys', env') = adjustFormalArgs (initEnv, args', tys')
     in  closeFix stagenum (env', (kind, name, args', tys', body))
     end
 
