@@ -33,8 +33,8 @@ end = struct
                                 false)
     end
 
-  fun tagInt i = CPS.NUM {ival = IntInf.fromInt i, ty = {sz=Target.defaultIntSz,
-  tag=true }}
+  fun tagInt i = CPS.NUM { ival = IntInf.fromInt i,
+                           ty = { sz=Target.defaultIntSz, tag=true }}
 
   fun assignFunKind (cps, cg, info) =
     let
@@ -46,13 +46,14 @@ end = struct
               (CPS.CONT, name, args, tys, fixE body)
         | fixF recs (f as (kind, name, args, tys as (CPS.CNTt::_), body)) =
             if isFO f then
-              let val fv = Syn.fv info f
-              in  if List.exists (fn r => LV.Set.member (fv, r)) recs then
-                    (* (CPS.KNOWN_REC, name, args, tys, fixE body) *)
-                    (CPS.KNOWN, name, args, tys, fixE body)
-                  else
-                    (CPS.KNOWN, name, args, tys, fixE body)
-              end
+              (CPS.KNOWN, name, args, tys, fixE body)
+              (* let val fv = Syn.fv info f *)
+              (* in  if List.exists (fn r => LV.Set.member (fv, r)) recs then *)
+              (*       (1* (CPS.KNOWN_REC, name, args, tys, fixE body) *1) *)
+              (*       (CPS.KNOWN, name, args, tys, fixE body) *)
+              (*     else *)
+              (*       (CPS.KNOWN, name, args, tys, fixE body) *)
+              (* end *)
             else
               (CPS.ESCAPE, name, args, tys, fixE body)
         | fixF recs (f as (kind, name, args, tys, body)) =
@@ -104,16 +105,28 @@ end = struct
         let val preds = CG.predecessors cg function
         in  maxMap (fn f => Option.getOpt (find f, ~1)) preds
         end
-      fun assign (CG.Single f) =
-            insert (f, maxSNOfPred f + 1)
-        | assign (CG.Group fs) =
-            let val maxSN = maxMap maxSNOfPred fs
-                val sn = maxSN + 1
-            in  app (fn f => insert (f, sn)) fs
-            end
+      (* fun assign (CG.Single f) = *)
+      (*       insert (f, maxSNOfPred f + 1) *)
+      (*   | assign (CG.Group fs) = *)
+      (*       let val maxSN = maxMap maxSNOfPred fs *)
+      (*           val sn = maxSN + 1 *)
+      (*       in  app (fn f => insert (f, sn)) fs *)
+      (*       end *)
+      fun assign (CG.Single f, i) =
+            (insert (f, i); i + 1)
+        | assign (CG.Group fs, i) =
+            (app (fn f => insert (f, i)) fs; i + 1)
     in
-      app assign components;
+      foldl assign 0 components;
       snTbl
+    end
+
+  fun calculateFreeInEscape (cg, info) =
+    let val isFO = isFirstOrder (cg, info)
+        val fv   = Syn.fv info
+        fun collect (f, set) = if isFO f then set else LV.Set.union (set, fv f)
+        val set = Vector.foldl collect LV.Set.empty (CG.allFunctions cg)
+    in  fn v => LV.Set.member (set, v)
     end
 
   fun dumpStageNumbers snTbl =
@@ -312,7 +325,7 @@ end = struct
                        LV.Set.empty
                        bindings
         val fv = subtractL (fv, map #2 bindings)
-    in  LV.Set.partition (isFloat env) (loop fv)
+    in  loop fv
     end
 
   fun dumpLVSet name set =
@@ -376,7 +389,7 @@ end = struct
         fun init (name, clo) = (fn p => Indirect (name, clo, p), clo)
         fun sameValue (CPS.VAR w) = LV.same (v, w)
           | sameValue _ = false
-        fun dfs ([], seen) = 
+        fun dfs ([], seen) =
               (printEnv env; raise Fail ("Can't find " ^ LV.lvarName v))
           | dfs ((path, ClosureRep { values, links, id, ... })::todo, seen) =
               if LV.Set.member (seen, id) then
@@ -503,22 +516,124 @@ end = struct
          raise ListPair.UnequalLengths)
     end
 
-  fun makeEnv (env, bindings) : (LCPS.cexp -> LCPS.cexp) * env * fragment list =
-    let val (fpfree, gpfree) = collectEnv (env, bindings)
-        val () = (dumpLVSet "fpfree" fpfree; dumpLVSet "gpfree" gpfree)
-        val (fpfree, gpfree) = (LV.Set.toList fpfree, LV.Set.toList gpfree)
+  fun fetchAllClosures (Env { closures, ... }) : closure list =
+    let fun collect ((v, clo as ClosureRep {id, links, ...}), (seen, clos)) =
+          if LV.Set.member (seen, id) then
+            (seen, clos)
+          else
+            foldl collect (LV.Set.add (seen, id), clo :: clos) links
+    in  #2 (foldl collect (LV.Set.empty, []) closures)
+    end
+
+  fun closureSharing (env, vars) : CPS.lvar list * closure list =
+    (* FIXME: Many O(n^2) iterations, consider using sets *)
+    let val closures = fetchAllClosures env
+        fun isShareable (ClosureRep {values, kind, ...}) =
+          let fun existsInVars (CPS.VAR v) = List.exists (sameLV v) vars
+                | existsInVars _ = true
+          in  case kind
+                of (CPS.RK_RAWBLOCK | CPS.RK_RAW64BLOCK) => true
+                 | _ => List.all existsInVars values
+          end
+        val shareableClosures = List.filter isShareable closures
+        fun cmpSize (ClosureRep {values=v1, ...}, ClosureRep {values=v2, ...}) =
+          List.length v1 < List.length v2
+        val shareableClosures = ListMergeSort.sort cmpSize shareableClosures
+        fun replace ([], _, clos) = ([], clos)
+          | replace (vars, [], clos) = (vars, clos)
+          | replace (vars, (clo as ClosureRep {values, ...})::todo, used) =
+              let fun inClosure v =
+                    List.exists (fn (CPS.VAR w) => LV.same (v, w) | _ => false)
+                                values
+                  val (replaced, remaining) = List.partition inClosure vars
+              in  case replaced
+                    of [] => replace (remaining, todo, used)
+                     | _  => replace (remaining, todo, clo :: used)
+              end
+    in  replace (vars, shareableClosures, [])
+    end
+
+  fun closureID (ClosureRep {id, ...}) = id
+
+  fun mkClosure (vars, links, kind) : closure =
+    let val var = LV.mkLvar ()
+    in  ClosureRep { values=map CPS.VAR vars, links=map (fn l => (closureID l, l)) links, kind=kind, id=var }
+    end
+
+  fun mkClosureOpt ([], [], _) = NONE
+    | mkClosureOpt (v, l, k) = SOME (mkClosure (v, l, k))
+
+  fun flattenOpt ls = List.mapPartial (fn x => x) ls
+  val _ = flattenOpt : 'a option list -> 'a list
+
+  fun spill (n, vars, links) =
+    if List.length vars + List.length links <= n then
+      (vars @ map closureID links, [], [])
+    else
+      let val id = closureID
+          fun fill (0, vs, ls, slots) = (slots, vs, ls)
+            | fill (n, vs, l::ls, slots) = fill (n - 1, vs, ls, id l :: slots)
+            | fill (n, v::vs, [], slots) = fill (n - 1, vs, [], v :: slots)
+            | fill (n, [], [], slots) = (slots, [], [])
+      in  fill (n - 1, vars, links, [])
+      end
+
+  fun layOut (env, vars, n, kind) : CPS.lvar list * closure list =
+    if List.length vars <= n then (vars, []) else
+      let val (vars, links) = closureSharing (env, vars)
+      in if List.length vars + List.length links <= n then
+           (vars @ map (fn ClosureRep {id, ...} => id) links, [])
+         else let
+           val (fpvars, vars)   = List.partition (isFloat env) vars
+           val (utvars, gpvars) = List.partition (isUntaggedInt env) vars
+           val fpclosure = mkClosureOpt (fpvars, [], CPS.RK_RAW64BLOCK)
+           val utclosure = mkClosureOpt (utvars, [], CPS.RK_RAWBLOCK)
+           val newlinks = flattenOpt [fpclosure, utclosure]
+           val (vars, spilledV, spilledL) = spill (n, gpvars, links @ newlinks)
+           val closure = mkClosureOpt (spilledV, spilledL, kind)
+         in case closure
+              of SOME clo => (closureID clo :: vars, clo :: newlinks)
+               | NONE => (vars, newlinks)
+         end
+      end
+
+  (* fun emitClosure (ClosureRep {kind, values, links, id}) cexp = *)
+  (*   let val linkVs = map (CPS.VAR o #1) links *)
+  (*       val fields = values @ linkVs *)
+  (*       val recordEls = map (fn v => fixRecordEl (env, v)) fields *)
+  (*   in  LCPS.RECORD (LV.mkLvar(), kind, recordEls, id, cexp) *)
+  (*   end *)
+
+  fun makeEnv (env, (sn, freeInEscape), bindings)
+      : (LCPS.cexp -> LCPS.cexp) * env * fragment list =
+    let val free = collectEnv (env, bindings)
+        val () = (dumpLVSet "free" fpfree
+        val free = LV.Set.toList free
         val recursives = map #2 bindings
         val fixkind = partitionBindings bindings
 
         val () = (print "STARTING makeEnv for [";
                   print (String.concatWithMap ", " LV.lvarName recursives);
-                  print "; Environment:\n")
+                  print "]; Environment:\n")
         val () = printEnv env
         (* val frags = map transform bindings *)
     in  case fixkind
-          of KnownContFix (_, name, args, tys, body) =>
+          of KnownContFix (f as (_, name, args, tys, body)) =>
                let val gpfreeTys = map (tyOf env) gpfree
                    val fpfreeTys = map (tyOf env) fpfree
+                   val (args', tys', env', hdr) =
+                     if freeInEscape f then
+                       let val (slots, closures) =
+                             layOut (env, free, 1, CPS.RK_KNOWN)
+                           val () = app (recordClosure env o closureID) closures
+                           val args' = args @ slots
+                           val tys'  = tys  @ map (tyOf env) slots
+                           val (args', tys', env') =
+                             adjustFormalArgs (env withImms [], args', tys')
+                           val env' = env' withClosures closures
+                       in  (args', tys', env', hdr)
+                       end
+                     else
                    val args' = args @ gpfree @ fpfree
                    val tys'  = tys  @ gpfreeTys @ fpfreeTys
                    val (args', tys', env') = adjustFormalArgs (env withImms [], args', tys')
@@ -661,8 +776,7 @@ end = struct
                                 (fn (n, env) => addProtocol env (n, protocol' n))
                                 env recursives
                    val nenv = nenv addImms recursives
-                   val () = print ("Continuing environment:\n")
-                   val () = printEnv nenv
+                   val () = (print ("Continuing environment:\n"); printEnv nenv)
                in  (fn x => x, nenv, map convert knowns)
                end
            | UserFix { knowns=[], escapes } =>
@@ -752,19 +866,19 @@ end = struct
                raise Fail "mixed"
     end
 
-  fun closeFix stagenum (env, f as (kind, name, args, tys, body)) =
+  fun closeFix prop (env, f as (kind, name, args, tys, body)) =
         (print ("converting fragment: " ^ LV.lvarName name ^ "\n");
          printCPS f;
-         (kind, name, args, tys, close (env, stagenum, body)))
+         (kind, name, args, tys, close (env, prop, body)))
          handle e => (print ("In function " ^ LV.lvarName name ^ "\n"); raise e)
-  and close (env, stagenum, cexp) =
+  and close (env, prop, cexp) =
         case cexp
           of LCPS.FIX (label, bindings, e) =>
-               let val (hdr, nenv, frags) = makeEnv (env, bindings)
+               let val (hdr, nenv, frags) = makeEnv (env, prop, bindings)
                    val () = print "END makeEnv\n"
                in  LCPS.FIX (label,
-                             map (closeFix stagenum) frags,
-                             hdr (close (nenv, stagenum, e)))
+                             map (closeFix prop) frags,
+                             hdr (close (nenv, prop, e)))
                end
            | LCPS.APP (label, CPS.VAR f, args) =>
                (case protocolOf env f
@@ -801,56 +915,56 @@ end = struct
                let val hdr = fixAccess (env, map #2 elems)
                    val env' = env addImms [name]
                in  hdr (LCPS.RECORD (label, rk, elems, name,
-                                     close (env', stagenum, e)))
+                                     close (env', prop, e)))
                end
            | LCPS.SELECT (label, n, v, x, ty, e) =>
                let val hdr = fixAccess (env, [v])
                    val env' = env addImms [x]
                in  hdr (LCPS.SELECT (label, n, v, x, ty,
-                                     close (env', stagenum, e)))
+                                     close (env', prop, e)))
                end
            | LCPS.OFFSET _ => raise Fail "offset"
            | LCPS.SWITCH (label, v, x, branches) =>
                let val hdr = fixAccess (env, [v])
                in  hdr (LCPS.SWITCH (label, v, x,
-                          map (fn e => close (env, stagenum, e)) branches))
+                          map (fn e => close (env, prop, e)) branches))
                end
            | LCPS.BRANCH (label, b, args, x, con, alt) =>
                let val hdr = fixAccess (env, args)
                in  hdr (LCPS.BRANCH (label, b, args, x,
-                          close (env, stagenum, con),
-                          close (env, stagenum, alt)))
+                          close (env, prop, con),
+                          close (env, prop, alt)))
                end
            | LCPS.SETTER (label, s, args, e) =>
                let val hdr = fixAccess (env, args)
-               in  hdr (LCPS.SETTER (label, s, args, close (env, stagenum, e)))
+               in  hdr (LCPS.SETTER (label, s, args, close (env, prop, e)))
                end
            | LCPS.LOOKER (label, l, args, x, ty, e) =>
                let val hdr = fixAccess (env, args)
                    val env' = env addImms [x]
-                   val e' = close (env', stagenum, e)
+                   val e' = close (env', prop, e)
                in  hdr (LCPS.LOOKER (label, l, args, x, ty, e'))
                end
            | LCPS.ARITH (label, a, args, x, ty, e) =>
                let val hdr = fixAccess (env, args)
                    val env' = env addImms [x]
-                   val e' = close (env', stagenum, e)
+                   val e' = close (env', prop, e)
                in  hdr (LCPS.ARITH (label, a, args, x, ty, e'))
                end
            | LCPS.PURE (label, p, args, x, ty, e) =>
                let val hdr = fixAccess (env, args)
                    val env' = env addImms [x]
-                   val e' = close (env', stagenum, e)
+                   val e' = close (env', prop, e)
                in  hdr (LCPS.PURE (label, p, args, x, ty, e'))
                end
            | LCPS.RCC (l, b, name, ty, args, res, e) =>
                let val hdr = fixAccess (env, args)
                    val env' = raise Fail "TODO"
-                   val e' = close (env', stagenum, e)
+                   val e' = close (env', prop, e)
                in  hdr (LCPS.RCC (l, b, name, ty, args, res, e'))
                end
 
-  fun closeCPS ((kind, name, args, tys, body), cg, info, stagenum) =
+  fun closeCPS ((kind, name, args, tys, body), cg, info, prop) =
     let val initEnv =
           Env { immediates=[], calleeSaves=[], closures=[],
                 protocols=LV.Map.singleton (name, StandardFunction),
@@ -859,7 +973,7 @@ end = struct
         val args' = link::clos::args
         val tys'  = CPSUtil.BOGt::CPSUtil.BOGt::tys
         val (args', tys', env') = adjustFormalArgs (initEnv, args', tys')
-    in  closeFix stagenum (env', (kind, name, args', tys', body))
+    in  closeFix prop (env', (kind, name, args', tys', body))
     end
 
   fun convert (cps, cg, info)  =
@@ -868,8 +982,9 @@ end = struct
       (* val () = (print ">>>after fk\n"; PPCps.printcps0 (LCPS.unlabelF cps); *)
       (*           print "<<<after fk\n") *)
       val sn = installStageNumbers (cps, cg, info)
+      val freeInEscape = calculateFreeInEscape (cg, info)
       val () = dumpStageNumbers sn
-      val cps = closeCPS (cps, cg, info, sn)
+      val cps = closeCPS (cps, cg, info, (sn, freeInEscape))
       val () = print ">>>>>>>>>>>>>>>>>> AFTER <<<<<<<<<<<<<<<<<<<<\n"
       val () = printCPS cps
       val () = print ">>>>>>>>>>>>>>>>>>  END  <<<<<<<<<<<<<<<<<<<<\n"
