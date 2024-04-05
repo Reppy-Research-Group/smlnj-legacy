@@ -201,11 +201,23 @@ structure CallGraph :> CALL_GRAPH = struct
 
   fun successors t (function as (_, _, _, _, body)) =
     let
-      fun fold (LCPS.APP (_, CPS.VAR f, _), acc) =
+      fun fold (LCPS.APP (_, CPS.VAR f, args), acc) =
             (case whatis t f
                of Value => raise Fail "not a function"
                 | FirstOrder f => f :: acc
-                | Function fs => knownFs fs @ acc
+                | Function fs =>
+                    let fun escapes (CPS.VAR f, acc) =
+                              (case whatis t f
+                                 of Function fs => knownFs fs @ acc
+                                  | FirstOrder f => f :: acc
+                                  | Value => acc
+                                  | NoBinding => raise Fail "??")
+                          | escapes (_, acc) = acc
+
+                        fun collect (In f, acc) = f :: acc
+                          | collect (Out, acc) = foldl escapes acc args
+                    in  foldl collect acc fs
+                    end
                 | _ => acc)
         | fold (LCPS.APP _, acc) = raise Fail "call not a var"
         | fold (LCPS.SWITCH  (_, _, _, es), acc) = foldr fold acc es
