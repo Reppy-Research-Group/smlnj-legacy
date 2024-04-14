@@ -1,5 +1,6 @@
 structure SyntacticInfo :> sig
   type t
+  exception SyntacticInfo
 
   val calculate : LabelledCPS.function -> t
   val typeof    : t -> LabelledCPS.lvar -> LabelledCPS.cty
@@ -164,7 +165,11 @@ end = struct
       NONE
     else
       SOME (#binder (LCPS.FunTbl.lookup funTbl f))
-  fun fv (T { funTbl, ... }) = #fv o LCPS.FunTbl.lookup funTbl
+  fun fv (T { funTbl, lam0, ... }) f = 
+    if LV.same (#2 lam0, #2 f) then
+      LV.Set.empty
+    else
+      #fv (LCPS.FunTbl.lookup funTbl f)
 
   fun dump (t as (T { funTbl, varTbl, ... })) =
     let val p = print
