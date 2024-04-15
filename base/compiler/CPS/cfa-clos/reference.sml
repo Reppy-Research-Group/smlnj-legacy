@@ -582,6 +582,7 @@ end = struct
 
   fun closureSharing (env, vars) : slot list =
     (* FIXME: Many O(n^2) iterations, consider using sets *)
+    (* FIXME: sharing a closure for one variable is not worth it *)
     let val closures = fetchAllClosures env
         fun isShareable (ClosureRep {values, kind, ...}) =
           let fun existsInVars (CPS.VAR v) = List.exists (sameLV v) vars
@@ -608,6 +609,22 @@ end = struct
                      | _  => replace (remaining, todo, INR clo :: slots)
               end
     in  replace (vars, shareableClosures, [])
+    end
+
+  fun printSlots slots =
+    print (concat ["[", String.concatWithMap ", "
+                          (fn INL v => "(V)" ^ LV.lvarName v
+                            | INR c => "(C)" ^ LV.lvarName (closureID c))
+                          slots, "]"])
+
+  val closureSharing = fn (env, vars) =>
+    let val res = closureSharing (env, vars)
+    in  print "CLOSURE SHARING:\n";
+        printEnv env;
+        print "\nvars: "; dumpLVList "" vars;
+        print "slots:"; printSlots res;
+        print "\n\n";
+        res
     end
 
   fun mkClosure (vars, links, kind) : closure =
@@ -691,11 +708,6 @@ end = struct
     in  foldl collect (args, tys, env) pvd
     end
   fun nameOfSlots pvd = map (fn INL v => v | INR c => closureID c) pvd
-  fun printSlots slots =
-    print (concat ["[", String.concatWithMap ", "
-                          (fn INL v => "(V)" ^ LV.lvarName v
-                            | INR c => "(C)" ^ LV.lvarName (closureID c))
-                          slots, "]"])
 
   fun fill (env, n, slots) : CPS.lvar list * CPS.cty list * CPS.value list =
     let fun go (0, [], vs, tys, vls) = (List.rev vs, List.rev tys, List.rev vls)
@@ -711,7 +723,7 @@ end = struct
     in  go (n, slots, [], [], [])
     end
 
-  fun mklinks closures = map (fn c => (closureID c, c)) closures
+  fun mklinks (env, closures) = map (fn c => (closureName (env, c), c)) closures
 
   fun makeEnv (env, (sn, freeInEscape), fs): header * env * fragment list =
     case partitionBindings fs
@@ -725,7 +737,7 @@ end = struct
                        val () = (print "slots: "; printSlots slots; print "\n")
                        val () = (print "spilled: "; printSlots spilled; print "\n")
                        fun emit (vals, links) =
-                         ClosureRep { values=vals, links=mklinks links,
+                         ClosureRep { values=vals, links=mklinks (env, links),
                                       kind=CPS.RK_KNOWN, id=LV.mkLvar() }
                    in  case layout emit (env, spilled)
                          of NONE => (slots, fn x => x, env)
@@ -756,7 +768,8 @@ end = struct
            let val fv = LV.Set.toList (collectEnv (env, [f]))
                val slots = closureSharing (env, fv)
                fun emit (vals, links) =
-                 ClosureRep { values=CPS.LABEL name::vals, links=mklinks links,
+                 ClosureRep { values=CPS.LABEL name::vals,
+                              links=mklinks (env, links),
                               kind=CPS.RK_ESCAPE, id=name }
                val nenv = env withImms [] withClosures []
                val env' = env addImms [name]
@@ -801,7 +814,7 @@ end = struct
                val () = (print ("\nspilled: "); printSlots spilled)
                val () = (print ("\nslots: "); printSlots slots)
                fun emit (vals, links) =
-                 ClosureRep { values=vals, links=mklinks links,
+                 ClosureRep { values=vals, links=mklinks (env, links),
                               kind=CPS.RK_CONT, id=LV.mkLvar () }
                val (cs, hdr, env) =
                  case layout emit (env, spilled)
