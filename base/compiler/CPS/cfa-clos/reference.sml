@@ -432,13 +432,13 @@ end = struct
           bfs (map init closures, LV.Set.empty)
     end
 
-  val access = fn env => fn v =>
-    let val res = access env v
-    in  print (concat ["Access ", LV.lvarName v, ": "]);
-        printAccess res;
-        print "\n";
-        res
-    end
+  (* val access = fn env => fn v => *)
+  (*   let val res = access env v *)
+  (*   in  print (concat ["Access ", LV.lvarName v, ": "]); *)
+  (*       printAccess res; *)
+  (*       print "\n"; *)
+  (*       res *)
+  (*   end *)
 
   fun offsetOf (ClosureRep { values, links, ... }, v) : int * closure option =
     case List.findi (fn (_, (CPS.VAR x | CPS.LABEL x)) => LV.same (x, v)
@@ -641,18 +641,26 @@ end = struct
   fun flattenOpt ls = List.mapPartial (fn x => x) ls
   val _ = flattenOpt : 'a option list -> 'a list
 
-  fun spill (n: int, slots: slot list) : slot list * slot list =
+  fun spill (n: int, raw: slot -> bool, slots: slot list)
+    : slot list * slot list =
     (* FIXME when lut and fut is figured out *)
-    if List.length slots <= n then
-      (slots, [])
-    else
-      let val (vars, links) = Either.partition slots
-          fun fill (0, vs, ls, slots) = (slots, map INL vs @ map INR ls)
-            | fill (n, vs, l::ls, slots) = fill (n - 1, vs, ls, INR l :: slots)
-            | fill (n, v::vs, [], slots) = fill (n - 1, vs, [], INL v :: slots)
-            | fill (n, [], [], slots) = (slots, [])
-      in  fill (n - 1, vars, links, [])
-      end
+    let val (raws, slots) = List.partition raw slots
+        val () = (print "raws: "; printSlots raws; print "\n")
+        val () = (print "slots: "; printSlots slots; print "\n")
+    in if List.length slots <= n andalso List.length raws = 0 then
+         (slots, [])
+       else
+         let val (vars, links) = Either.partition slots
+             fun fill (0, vs, ls, slots) = 
+                   (slots, map INL vs @ map INR ls @ raws)
+               | fill (n, vs, l::ls, slots) =
+                   fill (n - 1, vs, ls, INR l :: slots)
+               | fill (n, v::vs, [], slots) =
+                   fill (n - 1, vs, [], INL v :: slots)
+               | fill (n, [], [], slots) = (slots, raws)
+         in  fill (n - 1, vars, links, [])
+         end
+    end
 
   fun emitClosure (env, ClosureRep {kind, values, links, id}) =
     let val linkVs = map (CPS.VAR o #1) links
@@ -711,7 +719,8 @@ end = struct
 
   fun fill (env, n, slots) : CPS.lvar list * CPS.cty list * CPS.value list =
     let fun go (0, [], vs, tys, vls) = (List.rev vs, List.rev tys, List.rev vls)
-          | go (0, _ , _, _, _) = raise Fail "len(slots) >= n"
+          | go (0, _ , _, _, _) =
+              (printSlots slots; raise Fail "len(slots) >= n")
           | go (n, [], vs, tys, vls) =
               go (n - 1, [], LV.mkLvar ()::vs, gpType ()::tys, tagInt 0::vls)
           | go (n, (INL v)::slots, vs, tys, vls) =
@@ -724,6 +733,8 @@ end = struct
     end
 
   fun mklinks (env, closures) = map (fn c => (closureName (env, c), c)) closures
+  fun isRaw env (INL v) = isFloat env v orelse isUntaggedInt env v
+    | isRaw env (INR _) = false
 
   fun makeEnv (env, (sn, freeInEscape), fs): header * env * fragment list =
     case partitionBindings fs
@@ -733,7 +744,7 @@ end = struct
                val (pvd, hdr, env) =
                  if freeInEscape f then
                    let val slots = closureSharing (env, fv)
-                       val (slot, spilled) = spill (1, slots)
+                       val (slot, spilled) = spill (1, isRaw env, slots)
                        val () = (print "slots: "; printSlots slots; print "\n")
                        val () = (print "spilled: "; printSlots spilled; print "\n")
                        fun emit (vals, links) =
@@ -805,11 +816,9 @@ end = struct
                val () = (print (LV.lvarName name ^ ": "); dumpLVList "fv" fv)
                val slots = closureSharing (env, fv)
                val () = (print ("after sharing: "); printSlots slots)
-               (* fun isRaw (INL v) = isFloat env v orelse isUntaggedInt env v *)
-               (*   | isRaw (INR _) = false *)
                (* val (raw, slots) = List.partition isRaw slots *)
                (* FIXME: kick floats out of slots *)
-               val (slots, spilled) = spill (3, slots)
+               val (slots, spilled) = spill (nGPCalleeSaves, isRaw env, slots)
                (* val spilled = spilled @ raw *)
                val () = (print ("\nspilled: "); printSlots spilled)
                val () = (print ("\nslots: "); printSlots slots)
