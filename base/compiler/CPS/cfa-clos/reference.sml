@@ -307,8 +307,9 @@ end = struct
   fun requiredVars env v =
     case whatis env v
       of CG.Value => [v]
-       | CG.NoBinding => raise Fail "NoBinding requires what?"
-       | (CG.FirstOrder _ | CG.Function _) =>
+       (* | CG.NoBinding => (1* FIXME: what does NoBinding requre? *1) *)
+           (* raise Fail ("NoBinding " ^ LV.lvarName v ^ " requires what?") *)
+       | (CG.FirstOrder _ | CG.Function _ | CG.NoBinding) =>
            (case protocolOf env v
               of KnownFunction { pvd, ... } => pvd
                | Recursion { pvd, ... } => pvd
@@ -617,15 +618,15 @@ end = struct
                             | INR c => "(C)" ^ LV.lvarName (closureID c))
                           slots, "]"])
 
-  val closureSharing = fn (env, vars) =>
-    let val res = closureSharing (env, vars)
-    in  print "CLOSURE SHARING:\n";
-        printEnv env;
-        print "\nvars: "; dumpLVList "" vars;
-        print "slots:"; printSlots res;
-        print "\n\n";
-        res
-    end
+  (* val closureSharing = fn (env, vars) => *)
+  (*   let val res = closureSharing (env, vars) *)
+  (*   in  print "CLOSURE SHARING:\n"; *)
+  (*       printEnv env; *)
+  (*       print "\nvars: "; dumpLVList "" vars; *)
+  (*       print "slots:"; printSlots res; *)
+  (*       print "\n\n"; *)
+  (*       res *)
+  (*   end *)
 
   fun mkClosure (vars, links, kind) : closure =
     let val var = LV.mkLvar ()
@@ -645,13 +646,13 @@ end = struct
     : slot list * slot list =
     (* FIXME when lut and fut is figured out *)
     let val (raws, slots) = List.partition raw slots
-        val () = (print "raws: "; printSlots raws; print "\n")
-        val () = (print "slots: "; printSlots slots; print "\n")
+        (* val () = (print "raws: "; printSlots raws; print "\n") *)
+        (* val () = (print "slots: "; printSlots slots; print "\n") *)
     in if List.length slots <= n andalso List.length raws = 0 then
          (slots, [])
        else
          let val (vars, links) = Either.partition slots
-             fun fill (0, vs, ls, slots) = 
+             fun fill (0, vs, ls, slots) =
                    (slots, map INL vs @ map INR ls @ raws)
                | fill (n, vs, l::ls, slots) =
                    fill (n - 1, vs, ls, INR l :: slots)
@@ -740,13 +741,13 @@ end = struct
     case partitionBindings fs
       of SimpleKnownFix (f as (_, name, args, tys, body)) =>
            let val fv = LV.Set.toList (collectEnv (env, [f]))
-               val () = (dumpLVList "fv" fv)
+               (* val () = (dumpLVList "fv" fv) *)
                val (pvd, hdr, env) =
                  if freeInEscape f then
                    let val slots = closureSharing (env, fv)
                        val (slot, spilled) = spill (1, isRaw env, slots)
-                       val () = (print "slots: "; printSlots slots; print "\n")
-                       val () = (print "spilled: "; printSlots spilled; print "\n")
+                       (* val () = (print "slots: "; printSlots slots; print "\n") *)
+                       (* val () = (print "spilled: "; printSlots spilled; print "\n") *)
                        fun emit (vals, links) =
                          ClosureRep { values=vals, links=mklinks (env, links),
                                       kind=CPS.RK_KNOWN, id=LV.mkLvar() }
@@ -764,10 +765,10 @@ end = struct
                val pvdVars = nameOfSlots pvd
                val nenv = env withImms pvdVars withClosures []
                val (args', tys', nenv) = adjustFormalArgs (nenv, args, tys)
-               val () = (dumpLVList "args before" args')
+               (* val () = (dumpLVList "args before" args') *)
                val (args', tys', nenv) = addPvdToArgs (nenv, args', tys', pvd)
-               val () = (dumpLVList "args after" args')
-               val () = (dumpLVList "pvdVars" pvdVars)
+               (* val () = (dumpLVList "args after" args') *)
+               (* val () = (dumpLVList "pvdVars" pvdVars) *)
                val nenv = addProtocol nenv
                             (name, Recursion { label=name, pvd=pvdVars } )
                val env' = env addImms [name]
@@ -813,15 +814,15 @@ end = struct
            end
        | EscapeContFix (f as (kind, name, args, tys, body)) =>
            let val fv = LV.Set.toList (collectEnv (env, [f]))
-               val () = (print (LV.lvarName name ^ ": "); dumpLVList "fv" fv)
+               (* val () = (print (LV.lvarName name ^ ": "); dumpLVList "fv" fv) *)
                val slots = closureSharing (env, fv)
-               val () = (print ("after sharing: "); printSlots slots)
+               (* val () = (print ("after sharing: "); printSlots slots) *)
                (* val (raw, slots) = List.partition isRaw slots *)
                (* FIXME: kick floats out of slots *)
                val (slots, spilled) = spill (nGPCalleeSaves, isRaw env, slots)
                (* val spilled = spilled @ raw *)
-               val () = (print ("\nspilled: "); printSlots spilled)
-               val () = (print ("\nslots: "); printSlots slots)
+               (* val () = (print ("\nspilled: "); printSlots spilled) *)
+               (* val () = (print ("\nslots: "); printSlots slots) *)
                fun emit (vals, links) =
                  ClosureRep { values=vals, links=mklinks (env, links),
                               kind=CPS.RK_CONT, id=LV.mkLvar () }
@@ -916,33 +917,34 @@ end = struct
            (*       [] escape *)
            (*     (hdr, knownFrag @ escapeFrag) *)
 
-  val makeEnv = fn (env, prop, fs) =>
-    let fun strFs () =
-          concat ["[", String.concatWithMap ", " (LV.lvarName o #2) fs, "]"]
-        val () = (print ("BEFORE makeEnv for " ^ strFs () ^ " env:\n");
-                  printEnv env; print "\n")
-        val (res as (hdr, env', frags)) = makeEnv (env, prop, fs)
-          handle e => (print (strFs ()); raise e)
-        fun pf (nenv, f: LCPS.function) =
-          (print ("FRAGMENT " ^ LV.lvarName (#2 f) ^ "\n");
-           printEnv nenv; print "\n")
-        val () = app pf frags
-        val () = (print "AFTER makeEnv:\n"; printEnv env'; print "\n")
-    in  res
-    end
+  (* val makeEnv = fn (env, prop, fs) => *)
+  (*   let fun strFs () = *)
+  (*         concat ["[", String.concatWithMap ", " (LV.lvarName o #2) fs, "]"] *)
+  (*       val () = (print ("BEFORE makeEnv for " ^ strFs () ^ " env:\n"); *)
+  (*                 printEnv env; print "\n") *)
+  (*       val (res as (hdr, env', frags)) = makeEnv (env, prop, fs) *)
+  (*         handle e => (print (strFs ()); raise e) *)
+  (*       fun pf (nenv, f: LCPS.function) = *)
+  (*         (print ("FRAGMENT " ^ LV.lvarName (#2 f) ^ "\n"); *)
+  (*          printEnv nenv; print "\n") *)
+  (*       val () = app pf frags *)
+  (*       val () = (print "AFTER makeEnv:\n"; printEnv env'; print "\n") *)
+  (*   in  res *)
+  (*   end *)
 
   exception Skip
 
   fun closeFix prop (env, f as (kind, name, args, tys, body)) =
-        (print ("converting fragment: " ^ LV.lvarName name ^ "\n");
-         printCPS f;
+        (
+         (* print ("converting fragment: " ^ LV.lvarName name ^ "\n"); *)
+         (* printCPS f; *)
          (kind, name, args, tys, close (env, prop, body)))
          handle e => (print ("In function " ^ LV.lvarName name ^ "\n"); raise e)
   and close (env, prop, cexp) =
         (case cexp
           of LCPS.FIX (label, bindings, e) =>
                let val (hdr, nenv, frags) = makeEnv (env, prop, bindings)
-                   val () = print "END makeEnv\n"
+                   (* val () = print "END makeEnv\n" *)
                in  LCPS.FIX (label,
                              map (closeFix prop) frags,
                              hdr (close (nenv, prop, e)))
