@@ -214,7 +214,7 @@ structure CallGraph :> CALL_GRAPH = struct
                                  of Function fs => knownFs fs @ acc
                                   | FirstOrder f => f :: acc
                                   | Value => acc
-                                  | NoBinding => raise Fail "??")
+                                  | NoBinding => acc) (* raise Fail "??" *)
                           | escapes (_, acc) = acc
 
                         fun collect (In f, acc) = f :: acc
