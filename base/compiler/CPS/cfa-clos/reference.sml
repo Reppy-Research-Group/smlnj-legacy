@@ -182,10 +182,12 @@ end = struct
              (pv v; print "/"; pval callee; print "(G): "; plist pval gpcs;
               pv v; print "/"; pval callee; print "(F): "; plist pval fpcs)
           | pcallee _ = ()
-        fun pproto (v, StandardFunction) = (pv v; print "/std ")
-          | pproto (v, StandardContinuation _) = (pv v; print "/cont ")
-          | pproto (v, KnownFunction _) = (pv v; print "/known ")
-          | pproto (v, Recursion _) = (pv v; print "/recur ")
+        fun pproto (v, StandardFunction) = (pv v; print "/std "; print "\n")
+          | pproto (v, StandardContinuation _) = (pv v; print "/cont\n")
+          | pproto (v, KnownFunction {label, pvd}) =
+             (pv v; print "/known/"; pv label; print ": "; plist pv pvd)
+          | pproto (v, Recursion {label, pvd}) = 
+             (pv v; print "/recur/"; pv label; print ": "; plist pv pvd)
     in  print "Values:"; plist pv immediates;
         print "Base callee saves:"; plist pv calleeSaves;
         print "Closures:\n"; pclosures ("", closures, LV.Set.empty);
@@ -515,6 +517,15 @@ end = struct
         PPCps.value2str args ^ "]\n"); raise ex)
     end
 
+  fun emitClosure (env, ClosureRep {kind, values, links, id}) =
+    let val linkVs = map (CPS.VAR o #1) links
+        val fields = values @ linkVs
+        val recordEls = map (fn v => fixRecordEl (env, v)) fields
+    in  fn cexp => LCPS.RECORD (LV.mkLvar(), kind, recordEls, id, cexp)
+    end
+
+  type header = LCPS.cexp -> LCPS.cexp
+
   fun fixActualArgs (env, xs) =
     let fun collect (CPS.VAR x, (res, hdr)) =
               (case protocolOf' env x
@@ -526,6 +537,13 @@ end = struct
                       in  (args @ res, hdr' o hdr)
                       end
                   | SOME (Recursion { label, pvd }) =>
+                      (* let val hdr' = emitClosure (env, ClosureRep { *)
+                      (*                   kind=CPS.RK_ESCAPE, *)
+                      (*                   values=CPS.LABEL label::map CPS.VAR pvd, *)
+                      (*                   links=[], *)
+                      (*                   id=x}) *)
+                      (* in  (CPS.VAR x :: res, hdr' o hdr) *)
+                      (* end *)
                       raise Fail "unimp: mutual recursion applied elsewhere"
                   | _ =>
                       let val arg = CPS.VAR x
@@ -663,15 +681,6 @@ end = struct
          end
     end
 
-  fun emitClosure (env, ClosureRep {kind, values, links, id}) =
-    let val linkVs = map (CPS.VAR o #1) links
-        val fields = values @ linkVs
-        val recordEls = map (fn v => fixRecordEl (env, v)) fields
-    in  fn cexp => LCPS.RECORD (LV.mkLvar(), kind, recordEls, id, cexp)
-    end
-
-  type header = LCPS.cexp -> LCPS.cexp
-
   fun closureName (Env {closures, ...}, ClosureRep {id, ...}) =
     let fun alias (name, ClosureRep {id=id2, ...}) = LV.same (id, id2)
     in  case List.find alias closures
@@ -785,13 +794,14 @@ end = struct
                               kind=CPS.RK_ESCAPE, id=name }
                val nenv = env withImms [] withClosures []
                val env' = env addImms [name]
-               val nenv = addProtocol nenv (name, Recursion { label=name, pvd=[] })
                val env' = addProtocol env' (name, StandardFunction)
                val (link, clos) = (LV.mkLvar (), LV.mkLvar ())
            in  case layout emit (env, slots)
                  of NONE => (* f doesn't need an environment *)
                       let val args' = link::clos::args
                           val tys'  = CPSUtil.BOGt::CPSUtil.BOGt::tys
+                          val nenv = addProtocol nenv (name,
+                                       Recursion { label=name, pvd=[] })
                           val (args', tys', nenv) =
                             adjustFormalArgs (nenv, args', tys')
                           val hdr = emitClosure
@@ -804,6 +814,9 @@ end = struct
                       let val (link, clos) = (LV.mkLvar (), LV.mkLvar ())
                           val args' = link::clos::args
                           val tys'  = CPSUtil.BOGt::ctyOfClo closure::tys
+                          val nenv = addProtocol nenv (name,
+                                       Recursion { label=name, pvd=nameOfSlots
+                                       slots })
                           val (args', tys', nenv) =
                             adjustFormalArgs (nenv, args', tys')
                           val nenv = nenv addClosure (clos, closure)

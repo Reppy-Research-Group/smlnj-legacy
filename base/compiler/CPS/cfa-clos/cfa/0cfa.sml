@@ -533,8 +533,7 @@ structure ZeroCFA :> CFA = struct
 
   fun loopExp ctx cexp = (dump ctx cexp; Context.guard loopExpCase ctx cexp)
   and loopExpCase ctx (LCPS.APP (_, f, args)) =
-        (print ("calling " ^ PPCps.value2str f ^ "\n");
-        apply ctx (evalValue ctx f, args))
+        apply ctx (evalValue ctx f, args)
     | loopExpCase ctx (LCPS.RECORD (_, _, values, x, body)) =
         let
           fun alloc (_, CPS.VAR src, CPS.OFFp 0) = src
