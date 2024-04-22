@@ -413,19 +413,23 @@ end = struct
 
   fun access (env as Env { immediates, closures, ... }) v =
     let fun next (path : path -> access, links) =
-          map (fn (name, clo) => (fn p => path (Select (name, p)), clo)) links
+          map (fn (_, clo) => (fn p => path (Select (closureID clo, p)), clo)) links
         fun init (name, clo) = (fn p => Indirect (name, clo, p), clo)
         fun sameValue (CPS.VAR w)   = LV.same (v, w)
           | sameValue (CPS.LABEL w) = LV.same (v, w)
+              andalso (print ("looking for label? " ^ LV.lvarName w ^ "\n");
+                       printEnv env;
+                       true)
           | sameValue _ = false
-        fun sameClosure (w, _) = LV.same (v, w)
+        fun sameClosure (_, cl) = LV.same (v, closureID cl)
         fun bfs ([], seen) =
               (printEnv env; raise Fail ("Can't find " ^ LV.lvarName v))
           | bfs ((path, ClosureRep { values, links, id, ... })::todo, seen) =
               if LV.Set.member (seen, id) then
                 bfs (todo, seen)
-              else if List.exists sameValue values
-                      orelse List.exists sameClosure links then
+              else if List.exists sameValue values then
+                path (Last v)
+              else if List.exists sameClosure links then
                 path (Last v)
               else
                 bfs (todo @ next (path, links), LV.Set.add (seen, id))
@@ -449,7 +453,7 @@ end = struct
       of SOME (off, _) => (off, NONE)
        | NONE =>
            let val off = List.length values
-           in  case List.findi (fn (_, (n, _)) => LV.same (n, v)) links
+           in  case List.findi (fn (_, (_, cl)) => LV.same (closureID cl, v)) links
                  of SOME (i, (_, clo)) => (off + i, SOME clo)
                   | NONE => raise Fail ("offsetOf: " ^ LV.lvarName v
                                                      ^ " not in closure")
@@ -483,6 +487,7 @@ end = struct
                   (LCPS.SELECT (LV.mkLvar (),
                     offsetOfVal (closure, n), CPS.VAR name, v, ty, exp)
     handle e => (print ("access " ^ LV.lvarName v ^ ": ");
+                 printEnv env;
                  printAccess (Indirect (name, closure, path)); raise e))
               | follow (name, closure, Select (field, path)) exp =
                   let val (off, next) = offsetOfClo (closure, field)
@@ -503,9 +508,10 @@ end = struct
   val emitAccess = fn env => fn (v, ty, access) =>
     (emitAccess env (v, ty, access)
     handle e => (print ("access " ^ LV.lvarName v ^ ": ");
-                 printAccess access; raise e))
+                 printAccess access; printEnv env; raise e))
 
-  fun fixRecordEl (env, CPS.VAR v) = accessToRecordEl (CPS.VAR v, access env v)
+  fun fixRecordEl (env, CPS.VAR v) = (accessToRecordEl (CPS.VAR v, access env v)
+                                      handle e => (printEnv env; raise e))
     | fixRecordEl (_, v) = (LV.mkLvar (), v, CPS.OFFp 0)
 
   fun fixAccess (env, args) =
