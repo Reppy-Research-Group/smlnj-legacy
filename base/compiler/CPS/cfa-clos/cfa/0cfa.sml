@@ -357,11 +357,11 @@ structure ZeroCFA :> CFA = struct
        FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) todo;
        print "}\n")
 
-    (* fun dump {epochTable=_, store, escapeSet, escapingAddr=_, syn=_, todo=_} = *)
-    (*   (print ("Epoch: " ^ Int.toString (Store.epoch store)); *)
-    (*    print "\nEscaping: {"; *)
-    (*    FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) escapeSet; *)
-    (*    print "}\n") *)
+    fun dump {epochTable=_, store, escapeSet, escapingAddr=_, syn=_, todo=_} =
+      (print ("Epoch: " ^ Int.toString (Store.epoch store));
+       print "\nEscaping: {";
+       FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) escapeSet;
+       print "}\n")
 
     val lookup = Store.lookup o (fn (ctx: t) => #store ctx)
     val find = Store.find o (fn (ctx: t) => #store ctx)
@@ -462,17 +462,13 @@ structure ZeroCFA :> CFA = struct
     | unknown cty = Value.UNKNOWN cty
 
   fun select ctx (values, off, cty) =
-    let fun collect (Value.RECORD addrs, (acc, hasUnknown)) =
-              ((Context.lookup ctx (List.nth (addrs, off)) :: acc, hasUnknown)
-               handle Subscript => (acc, hasUnknown))
-          | collect ((Value.UNKNOWN _ | Value.DATA), (acc, hasUnknown)) =
-              (* CPS is not a strongly typed IR *)
-              if hasUnknown then
-                (acc, hasUnknown)
-              else
-                (Value.mk (unknown cty) :: acc, true)
+    let fun collect (Value.RECORD addrs, acc) =
+              ((Context.lookup ctx (List.nth (addrs, off)) :: acc)
+               handle Subscript => acc)
+          | collect (Value.UNKNOWN (CPS.PTRt _), acc) =
+              (Value.mk (unknown cty) :: acc)
           | collect (_, acc) = acc
-    in  #1 (foldr collect ([], false) values)
+    in  foldr collect [] values
     end
 
   fun access ctx =
@@ -480,18 +476,14 @@ structure ZeroCFA :> CFA = struct
           | go (concretes, CPS.OFFp i) =
               let fun offset addrs = SOME (Value.RECORD (List.drop (addrs, i)))
                                      handle Subscript => NONE
-                  fun collect (Value.RECORD addrs, (acc, hasUnknown)) =
+                  fun collect (Value.RECORD addrs, acc) =
                         (case offset addrs
-                           of SOME c => (c :: acc, hasUnknown)
-                            | NONE   => (acc, hasUnknown))
-                    | collect ((Value.UNKNOWN _ | Value.DATA),
-                               (acc, hasUnknown)) =
-                        if hasUnknown then
-                          (acc, hasUnknown)
-                        else
-                          (Value.UNKNOWN (CPS.PTRt CPS.VPT) :: acc, true)
+                           of SOME c => c :: acc
+                            | NONE   => acc)
+                    | collect (Value.UNKNOWN (CPS.PTRt _), acc) =
+                        (Value.UNKNOWN (CPS.PTRt CPS.VPT) :: acc)
                     | collect (_, acc) = acc
-              in  #1 (foldr collect ([], false) concretes)
+              in  foldr collect [] concretes
               end
           | go (concretes, CPS.SELp (i, p)) =
               let fun get addrs =
@@ -500,16 +492,12 @@ structure ZeroCFA :> CFA = struct
                      in  go (values, p)
                      end)
                     handle Subscript => []
-                  fun collect (Value.RECORD addrs, (acc, hasUnknown)) =
-                        (get addrs @ acc, hasUnknown)
-                    | collect ((Value.UNKNOWN _ | Value.DATA),
-                               (acc, hasUnknown)) =
-                        if hasUnknown then
-                          (acc, hasUnknown)
-                        else
-                          (Value.UNKNOWN (CPS.PTRt CPS.VPT) :: acc, true)
+                  fun collect (Value.RECORD addrs, acc) =
+                        get addrs @ acc
+                    | collect (Value.UNKNOWN (CPS.PTRt _), acc) =
+                        (Value.UNKNOWN (CPS.PTRt CPS.VPT) :: acc)
                     | collect (_, acc) = acc
-              in  #1 (foldr collect ([], false) concretes)
+              in  foldr collect [] concretes
               end
     in  go
     end
@@ -551,8 +539,7 @@ structure ZeroCFA :> CFA = struct
     | loopExpCase ctx (LCPS.SELECT (_, i, value, dest, ty, body)) =
         let val values = select ctx (Value.toList (evalValue ctx value), i, ty)
         in  case values
-              of [] => raise Impossible "type error selecting none"
-                      (* FIXME: Is there bona fide type error in there *)
+              of [] => () (* no record value is accessible here; type error *)
                | _ => (app (fn v => Context.merge ctx (dest, v)) values;
                        loopExp ctx body)
         end
@@ -705,7 +692,7 @@ structure ZeroCFA :> CFA = struct
 
   fun loopEscape ctx q =
     let
-      fun doFunction (_, name, formals, tys, body) =
+      fun doFunction (_, _, formals, tys, body) =
         let fun addArg (arg, cty) = Context.add ctx (arg, unknown cty)
         in  ListPair.appEq addArg (formals, tys);
             loopExp ctx body
