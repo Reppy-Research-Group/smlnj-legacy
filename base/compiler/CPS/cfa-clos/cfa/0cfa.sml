@@ -747,7 +747,7 @@ structure ZeroCFA :> CFA = struct
       val () = Queue.enqueue (queue, function)
       val () = Context.add ctx (#2 function, Value.FUN (Value.IN function))
     in
-      timeit "\r\n0cfa: " (fn () => loopEscape ctx queue);
+      timeit "\r\n>> 0cfa: " (fn () => loopEscape ctx queue);
       Context.dump ctx;
       CallGraph.build {cps=function,
                        lookup=Option.map Value.objects o Context.find ctx,

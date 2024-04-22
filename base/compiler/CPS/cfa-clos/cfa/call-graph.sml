@@ -40,6 +40,8 @@ signature CALL_GRAPH = sig
 
   val callGraphDot : t -> DotLanguage.t
   (* val callWebDot : t -> DotLanguage.t *)
+
+  val dumpStats : t -> unit
 end
 
 structure CallGraph :> CALL_GRAPH = struct
@@ -265,6 +267,52 @@ structure CallGraph :> CALL_GRAPH = struct
         fun convert f = (LV.lvarName (#2 f),
                          if escapes f then [("color", "red")] else [])
     in  DotLanguage.fromGraph convert (toGraph cg)
+    end
+
+  fun dumpStats (t as T {allFunctions, ...}) =
+    let
+      val nFirstOrder = ref 0
+      val distr = IntHashTable.mkTable (32, Fail "distr")
+      fun incr n =
+        (case IntHashTable.find distr n
+           of NONE   => IntHashTable.insert distr (n, 1)
+            | SOME c => IntHashTable.insert distr (n, c + 1))
+      val incr = fn n => (if n >= 10 then incr 10 else incr n)
+      val polluted = ref 0
+      val hasOut = List.exists (fn Out => true | _ => false)
+      val total = ref 0
+      fun fold (LCPS.APP (_, CPS.VAR f, args), acc) =
+            (total := !total + 1;
+             case whatis t f
+               of Value => ()
+                | FirstOrder f => (nFirstOrder := !nFirstOrder + 1)
+                | Function fs =>
+                    ((if hasOut fs then (polluted := !polluted + 1) else ());
+                     incr (List.length (knownFs fs)))
+                | NoBinding => ())
+        | fold (LCPS.APP _, acc) = raise Fail "call not a var"
+        | fold (LCPS.SWITCH  (_, _, _, es), acc) = foldr fold acc es
+        | fold (LCPS.BRANCH  (_, _, _, _, te, fe), acc) =
+            fold (fe, fold (te, acc))
+        | fold ((LCPS.FIX    (_, _, e) |
+                 LCPS.RECORD (_, _, _, _, e) |
+                 LCPS.SELECT (_, _, _, _, _, e) |
+                 LCPS.OFFSET (_, _, _, _, e) |
+                 LCPS.SETTER (_, _, _, e) |
+                 LCPS.LOOKER (_, _, _, _, _, e) |
+                 LCPS.ARITH  (_, _, _, _, _, e) |
+                 LCPS.PURE   (_, _, _, _, _, e) |
+                 LCPS.RCC    (_, _, _, _, _, _, e)), acc) = fold (e, acc)
+      val () = Vector.app (fn (f as (_, _, _, _, body)) => fold (body, ()))
+                          allFunctions
+    in
+      print (">> total: " ^ Int.toString (!total) ^ "\n");
+      print (">> nFirstOrder: " ^ Int.toString (!nFirstOrder) ^ "\n");
+      print (">> polluted: " ^ Int.toString (!polluted) ^ "\n");
+      print (">> distr:\n>>\t" ^ String.concatWithMap "\n>>\t"
+      (fn (n, c) => Int.toString n ^ " --> " ^ Int.toString c)
+      (IntHashTable.listItemsi distr) ^ "\n");
+      ()
     end
 
 end
