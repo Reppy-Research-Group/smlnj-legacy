@@ -2,6 +2,9 @@ structure ZeroCFA :> CFA = struct
   structure LCPS = LabelledCPS
   structure Syn  = SyntacticInfo
 
+  exception Unimp
+  exception Impossible of string
+
   structure Value :> sig
     datatype function
       = IN of LCPS.function
@@ -25,6 +28,8 @@ structure ZeroCFA :> CFA = struct
     val toList: t -> concrete list
     val objects: t -> CallGraph.object
     val dump: t -> unit
+
+    val isBoxed: t -> bool option
 
     val app: (concrete -> unit) -> t -> unit
   end = struct
@@ -104,6 +109,22 @@ structure ZeroCFA :> CFA = struct
 
     fun merge (set1, set2) =
       Set.fold (fn (v, changed) => add (set1, v) orelse changed) false set2
+
+    fun isBoxed set =
+      let datatype b_lattice = Top | One of bool | Bot
+          fun boxed (FUN _ | RECORD _ | REF _) = One true
+            | boxed DATA = One false
+            | boxed (UNKNOWN _) = Top
+          fun merge (Top, _) = Top
+            | merge (_, Top) = Top
+            | merge (One b1, One b2) = if b1 = b2 then One b1 else Top
+            | merge (Bot, x) = x
+            | merge (x, Bot) = x
+      in  case Set.fold (fn (v, acc) => merge (acc, boxed v)) Bot set
+            of Top => NONE
+             | Bot => raise Impossible "set is empty"
+             | One b => SOME b
+      end
 
     fun collect sieve fold set =
       fold (fn (v, result) => case sieve v
@@ -283,8 +304,6 @@ structure ZeroCFA :> CFA = struct
     fun find ({table, ...}: t) lvar = LVarTbl.find table lvar
   end
 
-  exception Unimp
-  exception Impossible of string
   structure Context :> sig
     type t
 
@@ -301,7 +320,7 @@ structure ZeroCFA :> CFA = struct
     val clearTodo: t -> unit
     val epoch: t -> int
     val getHdlr: t -> Value.t
-    val addHdlr: t -> Value.t -> unit
+    val addHdlr: t -> LCPS.lvar -> unit
   end = struct
     structure LambdaVarSet = HashSetFn(struct
       type hash_key = LambdaVar.lvar
@@ -329,9 +348,6 @@ structure ZeroCFA :> CFA = struct
       , todo = FunSet.mkEmpty 32
       }
 
-    fun getHdlr ({store, ...}: t) = Store.getHdlr store
-    fun addHdlr ({store, ...}: t) v = ignore (Store.addHdlr store v)
-
     fun fetchEpoch epochTable cexp =
       case LCPS.Tbl.find epochTable cexp
         of SOME epoch => epoch
@@ -357,11 +373,11 @@ structure ZeroCFA :> CFA = struct
        FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) todo;
        print "}\n")
 
-    fun dump {epochTable=_, store, escapeSet, escapingAddr=_, syn=_, todo=_} =
-      (print ("Epoch: " ^ Int.toString (Store.epoch store));
-       print "\nEscaping: {";
-       FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) escapeSet;
-       print "}\n")
+    (* fun dump {epochTable=_, store, escapeSet, escapingAddr=_, syn=_, todo=_} = *)
+    (*   (print ("Epoch: " ^ Int.toString (Store.epoch store)); *)
+    (*    print "\nEscaping: {"; *)
+    (*    FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) escapeSet; *)
+    (*    print "}\n") *)
 
     val lookup = Store.lookup o (fn (ctx: t) => #store ctx)
     val find = Store.find o (fn (ctx: t) => #store ctx)
@@ -421,6 +437,11 @@ structure ZeroCFA :> CFA = struct
              addEscapingFun ctx name)
       end
 
+    fun getHdlr ({store, ...}: t) = Store.getHdlr store
+    fun addHdlr (ctx as {store, ...}: t) v =
+      (escape ctx v; ignore (Store.addHdlr store (lookup ctx v)))
+
+
     fun add (ctx: t) (addr, c) =
       (if LambdaVarSet.member (#escapingAddr ctx, addr) then
         let val addrs = scanValue ctx (c, [])
@@ -458,7 +479,8 @@ structure ZeroCFA :> CFA = struct
         Value.mk Value.DATA
 
   fun unknown (CPS.FUNt | CPS.CNTt) = Value.FUN Value.OUT
-    | unknown (CPS.NUMt _ | CPS.FLTt _) = Value.DATA
+    | unknown (CPS.NUMt _ | CPS.FLTt _) = Value.DATA 
+        (* tagged and untagged are both unboxed values *)
     | unknown cty = Value.UNKNOWN cty
 
   fun select ctx (values, off, cty) =
@@ -508,18 +530,18 @@ structure ZeroCFA :> CFA = struct
      print "\nCurrent state:\n";
      Context.dump ctx;
      print "=================\n\n\n")
-  fun dump ctx _ =
-    if Context.epoch ctx > 10000 then
-      (print ("\ncurrent epoch:          " ^ Int.toString (Context.epoch ctx));
-       Context.dump ctx;
-       print "=================\n\n\n")
-    else
-      ()
-  fun dump ctx _ =
-    print ("\rcurrent epoch:          " ^ Int.toString (Context.epoch ctx))
-  fun dump _ _ = ()
+  (* fun dump ctx _ = *)
+  (*   if Context.epoch ctx > 10000 then *)
+  (*     (print ("\ncurrent epoch:          " ^ Int.toString (Context.epoch ctx)); *)
+  (*      Context.dump ctx; *)
+  (*      print "=================\n\n\n") *)
+  (*   else *)
+  (*     () *)
+  (* fun dump ctx _ = *)
+  (*   print ("\rcurrent epoch:          " ^ Int.toString (Context.epoch ctx)) *)
+  (* fun dump _ _ = () *)
 
-  fun loopExp ctx cexp = (dump ctx cexp; Context.guard loopExpCase ctx cexp)
+  fun loopExp ctx cexp = ( (* dump ctx cexp; *) Context.guard loopExpCase ctx cexp)
   and loopExpCase ctx (LCPS.APP (_, f, args)) =
         apply ctx (evalValue ctx f, args)
     | loopExpCase ctx (LCPS.RECORD (_, _, values, x, body)) =
@@ -536,7 +558,7 @@ structure ZeroCFA :> CFA = struct
           Context.add ctx (x, record);
           loopExp ctx body
         end
-    | loopExpCase ctx (LCPS.SELECT (_, i, value, dest, ty, body)) =
+    | loopExpCase ctx (exp as LCPS.SELECT (_, i, value, dest, ty, body)) =
         let val values = select ctx (Value.toList (evalValue ctx value), i, ty)
         in  case values
               of [] => () (* no record value is accessible here; type error *)
@@ -565,10 +587,22 @@ structure ZeroCFA :> CFA = struct
     | loopExpCase ctx (LCPS.SWITCH (_, _, _, arms)) =
         (* Since we are not tracking integers, visit all arms *)
         app (loopExp ctx) arms
+    | loopExpCase ctx (LCPS.BRANCH (_, CPS.P.BOXED, [x], _, trueExp, falseExp))=
+        (case Value.isBoxed (evalValue ctx x)
+           of NONE => (loopExp ctx trueExp; loopExp ctx falseExp)
+            | SOME true  => loopExp ctx trueExp
+            | SOME false => loopExp ctx falseExp)
+    | loopExpCase ctx (LCPS.BRANCH (_, CPS.P.UNBOXED, [x], _, trueExp, falseExp))=
+        (case Value.isBoxed (evalValue ctx x)
+           of NONE => (loopExp ctx trueExp; loopExp ctx falseExp)
+            | SOME true  => loopExp ctx falseExp
+            | SOME false => loopExp ctx trueExp)
+    | loopExpCase ctx (LCPS.BRANCH (_, (CPS.P.UNBOXED | CPS.P.BOXED), _, _, _, _))=
+        (raise Impossible "boxed or unboxed applied to more than one arg")
     | loopExpCase ctx (LCPS.BRANCH (_, _, _, _, trueExp, falseExp)) =
         (loopExp ctx trueExp; loopExp ctx falseExp)
-    | loopExpCase ctx (LCPS.SETTER (_, CPS.P.SETHDLR, [hdlr], body)) =
-        (Context.addHdlr ctx (evalValue ctx hdlr); loopExp ctx body)
+    | loopExpCase ctx (LCPS.SETTER (_, CPS.P.SETHDLR, [CPS.VAR hdlr], body)) =
+        (Context.addHdlr ctx hdlr; loopExp ctx body)
     | loopExpCase _ (LCPS.SETTER (_, CPS.P.SETHDLR, _, _)) =
         raise Impossible "SETHDLR cannot take more than one continuation"
     | loopExpCase ctx (LCPS.SETTER (_, (CPS.P.UNBOXEDASSIGN | CPS.P.ASSIGN),
@@ -615,11 +649,17 @@ structure ZeroCFA :> CFA = struct
         raise Impossible "GETHDLR does not take arguments"
     | loopExpCase ctx (LCPS.LOOKER (_, CPS.P.DEREF, [cell], dest, ty, body)) =
         let fun deref (Value.REF addr) =
-                  Context.merge ctx (dest, Context.lookup ctx addr)
+                 (print "merging : "; Value.dump (Context.lookup ctx addr); print "\n";
+                  Context.merge ctx (dest, Context.lookup ctx addr);
+                  print ("after " ^ LambdaVar.lvarName dest ^ " "); Value.dump (Context.lookup ctx dest); print "\n")
               | deref (Value.UNKNOWN (CPS.PTRt _)) =
                   Context.add ctx (dest, unknown ty)
               | deref _ = ()
+            val cell' = evalValue ctx cell
+            val () = (print ("deref " ^ PPCps.value2str cell ^ " ");
+                      Value.dump cell'; print "\n")
         in  Value.app deref (evalValue ctx cell);
+            (print "after "; Value.dump (Context.lookup ctx dest); print "\n");
             loopExp ctx body
         end
     | loopExpCase _ (LCPS.LOOKER (_, CPS.P.DEREF, _, _, _, _)) =
