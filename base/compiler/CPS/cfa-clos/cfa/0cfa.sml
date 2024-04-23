@@ -722,7 +722,8 @@ structure ZeroCFA :> CFA = struct
         let
           val argVals = map (evalValue ctx) args
           fun call (Value.FUN (Value.IN (_, name, formals, _, body))) =
-                ((print ("Calling " ^ LambdaVar.lvarName name ^ "\n");
+                ((
+                (* print ("Calling " ^ LambdaVar.lvarName name ^ "\n"); *)
                   app (Context.merge ctx) (ListPair.zipEq (formals, argVals));
                   loopExp ctx body)
                  handle ListPair.UnequalLengths => ())

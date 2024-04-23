@@ -427,9 +427,9 @@ end = struct
           | bfs ((path, ClosureRep { values, links, id, ... })::todo, seen) =
               if LV.Set.member (seen, id) then
                 bfs (todo, seen)
-              else if List.exists sameValue values then
-                path (Last v)
               else if List.exists sameClosure links then
+                path (Last v)
+              else if List.exists sameValue values then
                 path (Last v)
               else
                 bfs (todo @ next (path, links), LV.Set.add (seen, id))
@@ -801,7 +801,8 @@ end = struct
                val nenv = env withImms [] withClosures []
                val env' = env addImms [name]
                val env' = addProtocol env' (name, StandardFunction)
-               val (link, clos) = (LV.mkLvar (), LV.mkLvar ())
+               (* val (link, clos) = (LV.mkLvar (), LV.mkLvar ()) *)
+               val (link, clos) = (LV.mkLvar (), name)
            in  case layout emit (env, slots)
                  of NONE => (* f doesn't need an environment *)
                       let val args' = link::clos::args
@@ -817,8 +818,7 @@ end = struct
                       in  (hdr, env', [(nenv, (kind, name, args', tys', body))])
                       end
                   | SOME (closure, hdr) =>
-                      let val (link, clos) = (LV.mkLvar (), LV.mkLvar ())
-                          val args' = link::clos::args
+                      let val args' = link::clos::args
                           val tys'  = CPSUtil.BOGt::ctyOfClo closure::tys
                           val nenv = addProtocol nenv (name,
                                        Recursion { label=name, pvd=nameOfSlots
