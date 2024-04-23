@@ -76,21 +76,39 @@ structure CallGraph :> CALL_GRAPH = struct
     escaping: LCPS.function vector
   }
 
+  val funstr = LV.lvarName o LCPS.nameOfF
+
+  fun objToString Value = "(Value)"
+    | objToString (FirstOrder f) = "(FO)" ^ funstr f
+    | objToString (Function fs) =
+        let fun fToS Out = "Out" | fToS (In f) = funstr f
+        in  concat ["(F) [", String.concatWithMap ", " fToS fs, "]"]
+        end
+    | objToString NoBinding = "(NoBind)"
+
+  fun infoToString Escape = "(Escape)"
+    | infoToString Unreachable = "(Unreachable)"
+    | infoToString (Known {callers}) =
+        concat ["(Known) [", String.concatWithMap ", " funstr callers, "]"]
+    | infoToString (Family family) =
+       let fun pf {caller, colleagues=NONE} =
+                 concat [funstr caller, "-->{}"]
+             | pf {caller, colleagues=SOME fs} =
+                 concat [funstr caller, "-->{",
+                         String.concatWithMap "," funstr (Vector.toList fs),
+                         "}"]
+       in  concat ["(Family) [", String.concatWithMap ", " pf family, "]"]
+       end
+
   fun sameFun f1 f2 = LV.same (LCPS.nameOfF f1, LCPS.nameOfF f2)
 
   exception CallGraph
   fun build {cps, lookup, escapingLambdas} =
     let
-      val funTbl = LCPS.FunTbl.mkTable (32, CallGraph)
+      val funTbl = LCPS.FunTbl.mkTable (64, CallGraph)
       val varTbl = LV.Tbl.mkTable (1024, CallGraph)
       val allFunctions = ref ([] : LCPS.function list)
       val knownFunctions = ref ([] : LCPS.function list)
-
-      fun initF function =
-        if Vector.exists (sameFun function) escapingLambdas then
-          LCPS.FunTbl.insert funTbl (function, Escape)
-        else
-          LCPS.FunTbl.insert funTbl (function, Unreachable)
 
       fun merge _ (Escape, _) = Escape
         | merge _ (_, Escape) = Escape
@@ -137,6 +155,12 @@ structure CallGraph :> CALL_GRAPH = struct
         case lookup name
           of SOME obj => LV.Tbl.insert varTbl (name, obj)
            | NONE     => LV.Tbl.insert varTbl (name, NoBinding)
+
+      fun initF function =
+        if Vector.exists (sameFun function) escapingLambdas then
+          updateInfo (function, Escape)
+        else
+          updateInfo (function, Unreachable)
 
       fun bindF (function as (_, name, _, _, _)) =
         LV.Tbl.insert varTbl (name, FirstOrder function)
