@@ -30,7 +30,7 @@ end = struct
     in  case CG.info cg function
           of CG.Known _ => LCPS.Set.all isCallee (Syn.usePoints info name)
            | (CG.Family _ | CG.Escape) => false
-           | CG.Unreachable => (print ("warning: " ^ LV.lvarName name ^ "\n");
+           | CG.Unreachable => (print ("unreachable: " ^ LV.lvarName name ^ "\n");
                                 false)
     end
 

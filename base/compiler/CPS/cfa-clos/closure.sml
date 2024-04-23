@@ -29,7 +29,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
   fun test cps =
     let
       (* val cps = #1 (FreeClose.freemapClose cps) *)
-      (* val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n") *)
+      val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n")
       val lcps = LabelledCPS.labelF cps
       val syntactic = SyntacticInfo.calculate lcps
       (* val () = SyntacticInfo.dump syntactic *)
