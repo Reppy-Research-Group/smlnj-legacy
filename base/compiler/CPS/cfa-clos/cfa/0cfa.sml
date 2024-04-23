@@ -32,6 +32,7 @@ structure ZeroCFA :> CFA = struct
     val isBoxed: t -> bool option
 
     val app: (concrete -> unit) -> t -> unit
+    val fold: (concrete * 'a -> 'a) -> 'a -> t -> 'a
   end = struct
     datatype function
       = IN of LCPS.function
@@ -100,6 +101,7 @@ structure ZeroCFA :> CFA = struct
     val copy = Set.copy
     val app = Set.app
     val toList = Set.toList
+    val fold = Set.fold
 
     fun add (set, v) =
       if Set.member (set, v) then
@@ -311,6 +313,8 @@ structure ZeroCFA :> CFA = struct
     val guard: (t -> LCPS.cexp -> unit) -> t -> LCPS.cexp -> unit
     val lookup: t -> LCPS.lvar -> Value.t
     val find: t -> LCPS.lvar -> Value.t option
+    val add': t -> (LCPS.lvar * Value.concrete) -> bool
+    val merge': t -> (LCPS.lvar * Value.t) -> bool
     val add: t -> (LCPS.lvar * Value.concrete) -> unit
     val merge: t -> (LCPS.lvar * Value.t) -> unit
     val dump: t -> unit
@@ -319,6 +323,7 @@ structure ZeroCFA :> CFA = struct
     val retrieveTodo: t -> LCPS.FunMonoSet.set
     val clearTodo: t -> unit
     val epoch: t -> int
+    val propagateChange: t -> LCPS.lvar -> unit
     val getHdlr: t -> Value.t
     val addHdlr: t -> LCPS.lvar -> unit
   end = struct
@@ -413,7 +418,21 @@ structure ZeroCFA :> CFA = struct
     fun addEscapingFun (ctx: t) name =
       scanAddr ctx LambdaVar.Set.empty [name]
 
-    fun markValueChange (ctx: t) name =
+    fun propagateChange (ctx as {epochTable, ...}: t) (name: LCPS.lvar) =
+      let val syn = #syn ctx
+          val useSites = Syn.useSites syn name
+          fun inFV f = LambdaVar.Set.member (Syn.fv syn f, name)
+          fun hasEvaluated (_, _, _, _, body) =
+            LCPS.Tbl.inDomain epochTable body
+          fun addToTodo f =
+            if inFV f andalso hasEvaluated f then
+              FunSet.add (#todo ctx, f)
+            else
+              ()
+      in  LCPS.FunSet.app addToTodo useSites
+      end
+
+    fun markValueChange' (ctx: t) name =
       let val useSites = Syn.useSites (#syn ctx) name
           fun addToTodo f =
             if FunSet.member (#escapeSet ctx, f) then
@@ -441,26 +460,27 @@ structure ZeroCFA :> CFA = struct
     fun addHdlr (ctx as {store, ...}: t) v =
       (escape ctx v; ignore (Store.addHdlr store (lookup ctx v)))
 
-
-    fun add (ctx: t) (addr, c) =
+    fun add' (ctx: t) (addr, c) =
       (if LambdaVarSet.member (#escapingAddr ctx, addr) then
         let val addrs = scanValue ctx (c, [])
         in  app (escape ctx) addrs
         end
        else ();
        if Store.update (#store ctx) (addr, c) then
-         markValueChange ctx addr
-       else ())
+         (markValueChange' ctx addr; true)
+       else false)
+    fun add ctx (addr, c) = ignore (add' ctx (addr, c))
 
-    fun merge (ctx: t) (addr, v) =
+    fun merge' (ctx: t) (addr, v) =
       (if LambdaVarSet.member (#escapingAddr ctx, addr) then
         let val addrs = foldl (scanValue ctx) [] (Value.toList v)
         in  app (escape ctx) addrs
         end
        else ();
        if Store.merge (#store ctx) (addr, v) then
-         markValueChange ctx addr
-       else ())
+         (markValueChange' ctx addr; true)
+       else false)
+    fun merge ctx (addr, v) = ignore (merge' ctx (addr, v))
 
     fun epoch ({store, ...}: t) = Store.epoch store
     fun escapeSet ({escapeSet, ...}: t) = escapeSet
@@ -479,7 +499,7 @@ structure ZeroCFA :> CFA = struct
         Value.mk Value.DATA
 
   fun unknown (CPS.FUNt | CPS.CNTt) = Value.FUN Value.OUT
-    | unknown (CPS.NUMt _ | CPS.FLTt _) = Value.DATA 
+    | unknown (CPS.NUMt _ | CPS.FLTt _) = Value.DATA
         (* tagged and untagged are both unboxed values *)
     | unknown cty = Value.UNKNOWN cty
 
@@ -488,7 +508,19 @@ structure ZeroCFA :> CFA = struct
               ((Context.lookup ctx (List.nth (addrs, off)) :: acc)
                handle Subscript => acc)
           | collect (Value.UNKNOWN (CPS.PTRt _), acc) =
-              (Value.mk (unknown cty) :: acc)
+              (* Unknown has to propagate unknown; I hate this.
+               * e.g.
+               *   (Unknown Ptr).0 -> v100 [I]
+               *   if boxed(v100) then ... else ...
+               * In this case, I can't say that v100 is a DATA. *)
+              let val v =
+                    (case cty
+                       of (CPS.FUNt | CPS.CNTt) => Value.FUN Value.OUT
+                        | (CPS.NUMt {tag=false, ...} | CPS.FLTt _) =>
+                            Value.DATA
+                        | _ => Value.UNKNOWN (CPS.PTRt CPS.VPT))
+              in  Value.mk v :: acc
+              end
           | collect (_, acc) = acc
     in  foldr collect [] values
     end
@@ -606,35 +638,43 @@ structure ZeroCFA :> CFA = struct
     | loopExpCase _ (LCPS.SETTER (_, CPS.P.SETHDLR, _, _)) =
         raise Impossible "SETHDLR cannot take more than one continuation"
     | loopExpCase ctx (LCPS.SETTER (_, (CPS.P.UNBOXEDASSIGN | CPS.P.ASSIGN),
-                                       [dest, src], body)) =
+                                       [CPS.VAR dest, src], body)) =
         let val srcVal = evalValue ctx src
-            fun assign (Value.REF addr) = Context.merge ctx (addr, srcVal)
-              | assign (Value.UNKNOWN _) =
+            fun assign (Value.REF addr, changed) =
+                  Context.merge' ctx (addr, srcVal) orelse changed
+              | assign (Value.UNKNOWN _, changed) =
                   (* when dest has unknown value, src escapes *)
                   (case src
-                     of CPS.VAR var => Context.escape ctx var
-                      | _ => ())
-              | assign _ = ()
-        in  Value.app assign (evalValue ctx dest); loopExp ctx body
+                     of CPS.VAR var => (Context.escape ctx var; changed)
+                      | _ => changed)
+              | assign (_, changed) = changed
+            val changed = Value.fold assign false (Context.lookup ctx dest)
+        in  if changed then Context.propagateChange ctx dest else ();
+            loopExp ctx body
         end
     | loopExpCase _ (LCPS.SETTER (_, (CPS.P.UNBOXEDASSIGN | CPS.P.ASSIGN),
                                        _, _)) =
         raise Impossible "ASSIGN takes wrong arguments"
     | loopExpCase ctx (LCPS.SETTER (_, (CPS.P.UNBOXEDUPDATE | CPS.P.UPDATE),
-                                       [dest, _, src], body)) =
+                                       [CPS.VAR dest, _, src], body)) =
         let val srcVal = evalValue ctx src
-            fun assign (Value.REF addr) = Context.merge ctx (addr, srcVal)
-              | assign (Value.RECORD addrs) =
+            fun assign (Value.REF addr, changed) =
+                  Context.merge' ctx (addr, srcVal) orelse changed
+              | assign (Value.RECORD addrs, changed) =
                   (* since offset is not tracked, this update could be applied
                    * to any of the elements in a vector *)
-                  app (fn addr => Context.merge ctx (addr, srcVal)) addrs
-              | assign (Value.UNKNOWN _) =
+                  foldl (fn (addr, changed') =>
+                          Context.merge' ctx (addr, srcVal) orelse changed')
+                        changed addrs
+              | assign (Value.UNKNOWN _, changed) =
                   (* when dest has unknown value, src escapes *)
                   (case src
-                     of CPS.VAR var => Context.escape ctx var
-                      | _ => ())
-              | assign _ = ()
-        in  Value.app assign (evalValue ctx dest); loopExp ctx body
+                     of CPS.VAR var => (Context.escape ctx var; changed)
+                      | _ => changed)
+              | assign (_, changed) = changed
+            val changed = Value.fold assign false (Context.lookup ctx dest)
+        in  if changed then Context.propagateChange ctx dest else ();
+            loopExp ctx body
         end
     | loopExpCase _ (LCPS.SETTER (_, (CPS.P.UNBOXEDUPDATE | CPS.P.UPDATE),
                                        _, _)) =
@@ -649,17 +689,11 @@ structure ZeroCFA :> CFA = struct
         raise Impossible "GETHDLR does not take arguments"
     | loopExpCase ctx (LCPS.LOOKER (_, CPS.P.DEREF, [cell], dest, ty, body)) =
         let fun deref (Value.REF addr) =
-                 (print "merging : "; Value.dump (Context.lookup ctx addr); print "\n";
-                  Context.merge ctx (dest, Context.lookup ctx addr);
-                  print ("after " ^ LambdaVar.lvarName dest ^ " "); Value.dump (Context.lookup ctx dest); print "\n")
+                  Context.merge ctx (dest, Context.lookup ctx addr)
               | deref (Value.UNKNOWN (CPS.PTRt _)) =
                   Context.add ctx (dest, unknown ty)
               | deref _ = ()
-            val cell' = evalValue ctx cell
-            val () = (print ("deref " ^ PPCps.value2str cell ^ " ");
-                      Value.dump cell'; print "\n")
         in  Value.app deref (evalValue ctx cell);
-            (print "after "; Value.dump (Context.lookup ctx dest); print "\n");
             loopExp ctx body
         end
     | loopExpCase _ (LCPS.LOOKER (_, CPS.P.DEREF, _, _, _, _)) =
@@ -687,8 +721,9 @@ structure ZeroCFA :> CFA = struct
   and apply ctx (f: Value.t, args: LCPS.value list) =
         let
           val argVals = map (evalValue ctx) args
-          fun call (Value.FUN (Value.IN (_, _, formals, _, body))) =
-                ((app (Context.merge ctx) (ListPair.zipEq (formals, argVals));
+          fun call (Value.FUN (Value.IN (_, name, formals, _, body))) =
+                ((print ("Calling " ^ LambdaVar.lvarName name ^ "\n");
+                  app (Context.merge ctx) (ListPair.zipEq (formals, argVals));
                   loopExp ctx body)
                  handle ListPair.UnequalLengths => ())
                 (* if the function is applied with incorrect number
