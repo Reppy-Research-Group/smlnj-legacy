@@ -186,7 +186,7 @@ end = struct
           | pproto (v, StandardContinuation _) = (pv v; print "/cont\n")
           | pproto (v, KnownFunction {label, pvd}) =
              (pv v; print "/known/"; pv label; print ": "; plist pv pvd)
-          | pproto (v, Recursion {label, pvd}) = 
+          | pproto (v, Recursion {label, pvd}) =
              (pv v; print "/recur/"; pv label; print ": "; plist pv pvd)
     in  print "Values:"; plist pv immediates;
         print "Base callee saves:"; plist pv calleeSaves;
