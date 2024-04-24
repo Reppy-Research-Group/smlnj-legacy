@@ -157,10 +157,13 @@ structure CallGraph :> CALL_GRAPH = struct
            | NONE     => LV.Tbl.insert varTbl (name, NoBinding)
 
       fun initF function =
+        (case lookup (#2 function)
+           of SOME _ => ()
+            | NONE   => print ("not bound " ^ LV.lvarName (#2 function) ^ "\n");
         if Vector.exists (sameFun function) escapingLambdas then
           updateInfo (function, Escape)
         else
-          updateInfo (function, Unreachable)
+          updateInfo (function, Unreachable))
 
       fun bindF (function as (_, name, _, _, _)) =
         LV.Tbl.insert varTbl (name, FirstOrder function)

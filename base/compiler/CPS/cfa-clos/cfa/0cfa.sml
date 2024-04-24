@@ -200,6 +200,11 @@ structure ZeroCFA :> CFA = struct
                 raise Fail "conflicting 4"
             | collect (UNKNOWN _, (NONE | SOME CallGraph.Value)) =
                 SOME CallGraph.Value
+            | collect (UNKNOWN (CPS.PTRt _), SOME (CallGraph.Function fs)) =
+                if List.exists (fn CallGraph.Out => true | _ => false) fs then
+                  SOME (CallGraph.Function fs)
+                else
+                  SOME (CallGraph.Function (CallGraph.Out :: fs))
             | collect (UNKNOWN _, SOME _) =
                 raise Fail "conflicting 5"
       in  fn v => (Option.valOf o (Set.fold collect NONE)) v
@@ -433,13 +438,39 @@ structure ZeroCFA :> CFA = struct
       end
 
     fun markValueChange' (ctx: t) name =
-      let val useSites = Syn.useSites (#syn ctx) name
+      (* *)
+      let val {syn, escapeSet, todo, ...} = ctx
+          fun useIndirectly f =
+            let
+              fun functionsOf v =
+                let fun collect (Value.FUN (Value.IN f), acc) = f :: acc
+                      | collect (_, acc) = acc
+                in  Value.fold collect [] (lookup ctx v)
+                end
+              fun loop ([], seen) = false
+                | loop (f::fs, seen) =
+                    if LCPS.FunSet.member (seen, f) then
+                      loop (fs, seen)
+                    else
+                      let val fv = LambdaVar.Set.subtract (Syn.fv syn f, #2 f)
+                      in  if LambdaVar.Set.member (fv, name) then
+                            true
+                          else
+                            let val next = LambdaVar.Set.foldl
+                                  (fn (v, acc) => functionsOf v @ acc) [] fv
+                            in  loop (fs @ next, LCPS.FunSet.add (seen, f))
+                            end
+                      end
+            in loop ([f], LCPS.FunSet.empty)
+            end
           fun addToTodo f =
             if FunSet.member (#escapeSet ctx, f) then
               FunSet.add (#todo ctx, f)
             else
               ()
-      in  LCPS.FunSet.app addToTodo useSites
+      in  FunSet.app
+            (fn f => if useIndirectly f then addToTodo f else ())
+            escapeSet
       end
 
     fun escape (ctx: t) name =
@@ -557,11 +588,12 @@ structure ZeroCFA :> CFA = struct
     end
 
   fun dump ctx cexp =
-    (print "Current expression:\n";
-     PPCps.prcps (LCPS.unlabel cexp);
-     print "\nCurrent state:\n";
-     Context.dump ctx;
-     print "=================\n\n\n")
+    (print (concat ["Current expression: ", LambdaVar.lvarName (LCPS.labelOf
+    cexp), "\n"]);
+     (* print "\nCurrent state:\n"; *)
+     (* Context.dump ctx; *)
+     (* print "=================\n") *)
+     ())
   (* fun dump ctx _ = *)
   (*   if Context.epoch ctx > 10000 then *)
   (*     (print ("\ncurrent epoch:          " ^ Int.toString (Context.epoch ctx)); *)
@@ -721,20 +753,20 @@ structure ZeroCFA :> CFA = struct
   and apply ctx (f: Value.t, args: LCPS.value list) =
         let
           val argVals = map (evalValue ctx) args
+          (* val () = (Value.dump f; print "\n") *)
           fun call (Value.FUN (Value.IN (_, name, formals, _, body))) =
                 ((
-                (* print ("Calling " ^ LambdaVar.lvarName name ^ "\n"); *)
+                  (* print ("calling " ^ LambdaVar.lvarName name ^ "\n"); *)
                   app (Context.merge ctx) (ListPair.zipEq (formals, argVals));
                   loopExp ctx body)
                  handle ListPair.UnequalLengths => ())
                 (* if the function is applied with incorrect number
                  * of arguments, this path is aborted *)
-             | call (Value.FUN Value.OUT) =
+             | call (Value.FUN Value.OUT | Value.UNKNOWN _) =
                  app (fn (CPS.VAR v) => Context.escape ctx v | _ => ()) args
              (* | call Value.UNCAUGHTEXN = *)
              (*     app (fn (CPS.VAR v) => Context.escape ctx v | _ => ()) args *)
-             | call (Value.RECORD _ | Value.REF _ | Value.DATA |
-                     Value.UNKNOWN _) =
+             | call (Value.RECORD _ | Value.REF _ | Value.DATA) =
                  raise Fail "does this happen?"
                 (* if applying a non-function, nothing to be done *)
         in
@@ -768,9 +800,10 @@ structure ZeroCFA :> CFA = struct
 
   fun loopEscape ctx q =
     let
-      fun doFunction (_, _, formals, tys, body) =
+      fun doFunction (_, name, formals, tys, body) =
         let fun addArg (arg, cty) = Context.add ctx (arg, unknown cty)
-        in  ListPair.appEq addArg (formals, tys);
+        in  
+            ListPair.appEq addArg (formals, tys);
             loopExp ctx body
         end
       fun enqueueChanges () =
@@ -784,7 +817,7 @@ structure ZeroCFA :> CFA = struct
       (* val () = (print "Queue: "; Queue.app *)
       (*   (fn f => print (LambdaVar.lvarName (#2 f) ^ ", ")) q; *)
       (*   print "\n") *)
-      (* val () = print ("\rQueue length: " ^ Int.toString (Queue.length q)) *)
+      val () = print ("\rQueue length: " ^ Int.toString (Queue.length q) ^ "    ")
     in
       case Queue.next q
         of SOME function =>
