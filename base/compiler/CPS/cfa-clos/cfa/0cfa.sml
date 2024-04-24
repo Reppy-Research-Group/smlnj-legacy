@@ -165,7 +165,6 @@ structure ZeroCFA :> CFA = struct
                   SOME (CallGraph.Function (CallGraph.Out :: fs))
             | collect (FUN OUT, NONE) =
                 SOME (CallGraph.Function [CallGraph.Out])
-
             | collect (FUN (IN f), SOME CallGraph.Value) =
                 (* FIXME GROSS HACK: Some values in CPS may be bound to both an
                  * integer and a function pointer. For example, a value of
@@ -325,10 +324,10 @@ structure ZeroCFA :> CFA = struct
     val dump: t -> unit
     val escape: t -> LCPS.lvar -> unit
     val escapeSet: t -> LCPS.FunMonoSet.set
-    val retrieveTodo: t -> LCPS.FunMonoSet.set
-    val clearTodo: t -> unit
+    (* val retrieveTodo: t -> LCPS.FunMonoSet.set *)
+    (* val clearTodo: t -> unit *)
     val epoch: t -> int
-    val propagateChange: t -> LCPS.lvar -> unit
+    (* val propagateChange: t -> LCPS.lvar -> unit *)
     val getHdlr: t -> Value.t
     val addHdlr: t -> LCPS.lvar -> unit
   end = struct
@@ -345,7 +344,6 @@ structure ZeroCFA :> CFA = struct
              , escapeSet: FunSet.set
              , escapingAddr: LambdaVarSet.set
              , syn: Syn.t
-             , todo: FunSet.set
              }
 
     exception EpochLookUp
@@ -355,7 +353,6 @@ structure ZeroCFA :> CFA = struct
       , escapeSet = FunSet.mkEmpty 32
       , escapingAddr = LambdaVarSet.mkEmpty 2048
       , syn = syn
-      , todo = FunSet.mkEmpty 32
       }
 
     fun fetchEpoch epochTable cexp =
@@ -375,12 +372,10 @@ structure ZeroCFA :> CFA = struct
            f ctx cexp)
       end
 
-    fun dump {epochTable=_, store, escapeSet, escapingAddr=_, syn=_, todo} =
+    fun dump {epochTable=_, store, escapeSet, escapingAddr=_, syn=_} =
       (Store.dump store;
        print "\nEscaping: {";
        FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) escapeSet;
-       print "}\nTodo: {";
-       FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) todo;
        print "}\n")
 
     (* fun dump {epochTable=_, store, escapeSet, escapingAddr=_, syn=_, todo=_} = *)
@@ -392,11 +387,7 @@ structure ZeroCFA :> CFA = struct
     val lookup = Store.lookup o (fn (ctx: t) => #store ctx)
     val find = Store.find o (fn (ctx: t) => #store ctx)
 
-    fun addToEscapeSet (ctx: t, f) =
-      if FunSet.member (#escapeSet ctx, f) then
-        ()
-      else
-        (FunSet.add (#escapeSet ctx, f); FunSet.add (#todo ctx, f))
+    fun addToEscapeSet (ctx: t, f) = FunSet.add (#escapeSet ctx, f)
 
     fun scanValue ctx (Value.FUN (Value.IN f), todo) =
           (addToEscapeSet (ctx, f); todo)
@@ -423,55 +414,54 @@ structure ZeroCFA :> CFA = struct
     fun addEscapingFun (ctx: t) name =
       scanAddr ctx LambdaVar.Set.empty [name]
 
-    fun propagateChange (ctx as {epochTable, ...}: t) (name: LCPS.lvar) =
-      let val syn = #syn ctx
-          val useSites = Syn.useSites syn name
-          fun inFV f = LambdaVar.Set.member (Syn.fv syn f, name)
-          fun hasEvaluated (_, _, _, _, body) =
-            LCPS.Tbl.inDomain epochTable body
-          fun addToTodo f =
-            if inFV f andalso hasEvaluated f then
-              FunSet.add (#todo ctx, f)
-            else
-              ()
-      in  LCPS.FunSet.app addToTodo useSites
-      end
+    (* fun propagateChange (ctx as {epochTable, ...}: t) (name: LCPS.lvar) = *)
+    (*   let val syn = #syn ctx *)
+    (*       val useSites = Syn.useSites syn name *)
+    (*       fun inFV f = LambdaVar.Set.member (Syn.fv syn f, name) *)
+    (*       fun hasEvaluated (_, _, _, _, body) = *)
+    (*         LCPS.Tbl.inDomain epochTable body *)
+    (*       fun addToTodo f = *)
+    (*         if inFV f andalso hasEvaluated f then *)
+    (*           FunSet.add (#todo ctx, f) *)
+    (*         else *)
+    (*           () *)
+    (*   in  LCPS.FunSet.app addToTodo useSites *)
+    (*   end *)
 
-    fun markValueChange' (ctx: t) name =
-      (* *)
-      let val {syn, escapeSet, todo, ...} = ctx
-          fun useIndirectly f =
-            let
-              fun functionsOf v =
-                let fun collect (Value.FUN (Value.IN f), acc) = f :: acc
-                      | collect (_, acc) = acc
-                in  Value.fold collect [] (lookup ctx v)
-                end
-              fun loop ([], seen) = false
-                | loop (f::fs, seen) =
-                    if LCPS.FunSet.member (seen, f) then
-                      loop (fs, seen)
-                    else
-                      let val fv = LambdaVar.Set.subtract (Syn.fv syn f, #2 f)
-                      in  if LambdaVar.Set.member (fv, name) then
-                            true
-                          else
-                            let val next = LambdaVar.Set.foldl
-                                  (fn (v, acc) => functionsOf v @ acc) [] fv
-                            in  loop (fs @ next, LCPS.FunSet.add (seen, f))
-                            end
-                      end
-            in loop ([f], LCPS.FunSet.empty)
-            end
-          fun addToTodo f =
-            if FunSet.member (#escapeSet ctx, f) then
-              FunSet.add (#todo ctx, f)
-            else
-              ()
-      in  FunSet.app
-            (fn f => if useIndirectly f then addToTodo f else ())
-            escapeSet
-      end
+    (* fun markValueChange' (ctx: t) name = *)
+    (*   let val {syn, escapeSet, todo, ...} = ctx *)
+    (*       fun useIndirectly f = *)
+    (*         let *)
+    (*           fun functionsOf v = *)
+    (*             let fun collect (Value.FUN (Value.IN f), acc) = f :: acc *)
+    (*                   | collect (_, acc) = acc *)
+    (*             in  Value.fold collect [] (lookup ctx v) *)
+    (*             end *)
+    (*           fun loop ([], seen) = false *)
+    (*             | loop (f::fs, seen) = *)
+    (*                 if LCPS.FunSet.member (seen, f) then *)
+    (*                   loop (fs, seen) *)
+    (*                 else *)
+    (*                   let val fv = LambdaVar.Set.subtract (Syn.fv syn f, #2 f) *)
+    (*                   in  if LambdaVar.Set.member (fv, name) then *)
+    (*                         true *)
+    (*                       else *)
+    (*                         let val next = LambdaVar.Set.foldl *)
+    (*                               (fn (v, acc) => functionsOf v @ acc) [] fv *)
+    (*                         in  loop (fs @ next, LCPS.FunSet.add (seen, f)) *)
+    (*                         end *)
+    (*                   end *)
+    (*         in loop ([f], LCPS.FunSet.empty) *)
+    (*         end *)
+    (*       fun addToTodo f = *)
+    (*         if FunSet.member (#escapeSet ctx, f) then *)
+    (*           FunSet.add (#todo ctx, f) *)
+    (*         else *)
+    (*           () *)
+    (*   in  FunSet.app *)
+    (*         (fn f => if useIndirectly f then addToTodo f else ()) *)
+    (*         escapeSet *)
+    (*   end *)
 
     fun escape (ctx: t) name =
       let val escapingAddr = #escapingAddr ctx
@@ -497,9 +487,10 @@ structure ZeroCFA :> CFA = struct
         in  app (escape ctx) addrs
         end
        else ();
-       if Store.update (#store ctx) (addr, c) then
-         (markValueChange' ctx addr; true)
-       else false)
+       (* if Store.update (#store ctx) (addr, c) then *)
+       (*   (markValueChange' ctx addr; true) *)
+       (* else false) *)
+       Store.update (#store ctx) (addr, c))
     fun add ctx (addr, c) = ignore (add' ctx (addr, c))
 
     fun merge' (ctx: t) (addr, v) =
@@ -508,15 +499,16 @@ structure ZeroCFA :> CFA = struct
         in  app (escape ctx) addrs
         end
        else ();
-       if Store.merge (#store ctx) (addr, v) then
-         (markValueChange' ctx addr; true)
-       else false)
+       (* if Store.merge (#store ctx) (addr, v) then *)
+       (*   (markValueChange' ctx addr; true) *)
+       (* else false) *)
+       Store.merge (#store ctx) (addr, v))
     fun merge ctx (addr, v) = ignore (merge' ctx (addr, v))
 
     fun epoch ({store, ...}: t) = Store.epoch store
     fun escapeSet ({escapeSet, ...}: t) = escapeSet
-    fun retrieveTodo ({todo, ...}: t) = todo
-    fun clearTodo ({todo, ...}: t) = FunSet.filter (fn _ => false) todo
+    (* fun retrieveTodo ({todo, ...}: t) = todo *)
+    (* fun clearTodo ({todo, ...}: t) = FunSet.filter (fn _ => false) todo *)
   end
 
   fun evalValue ctx (CPS.VAR v) =
@@ -594,18 +586,18 @@ structure ZeroCFA :> CFA = struct
      (* Context.dump ctx; *)
      (* print "=================\n") *)
      ())
+  fun dump ctx _ =
+    if Context.epoch ctx > 20000 then
+      (print ("\ncurrent epoch:          " ^ Int.toString (Context.epoch ctx));
+       Context.dump ctx;
+       print "=================\n\n\n")
+    else
+      ()
   (* fun dump ctx _ = *)
-  (*   if Context.epoch ctx > 10000 then *)
-  (*     (print ("\ncurrent epoch:          " ^ Int.toString (Context.epoch ctx)); *)
-  (*      Context.dump ctx; *)
-  (*      print "=================\n\n\n") *)
-  (*   else *)
-  (*     () *)
-  (* fun dump ctx _ = *)
-  (*   print ("\rcurrent epoch:          " ^ Int.toString (Context.epoch ctx)) *)
+  (*   print ("\rCurrent epoch:          " ^ Int.toString (Context.epoch ctx)) *)
   (* fun dump _ _ = () *)
 
-  fun loopExp ctx cexp = ( (* dump ctx cexp; *) Context.guard loopExpCase ctx cexp)
+  fun loopExp ctx cexp = ( dump ctx cexp; Context.guard loopExpCase ctx cexp)
   and loopExpCase ctx (LCPS.APP (_, f, args)) =
         apply ctx (evalValue ctx f, args)
     | loopExpCase ctx (LCPS.RECORD (_, _, values, x, body)) =
@@ -681,7 +673,8 @@ structure ZeroCFA :> CFA = struct
                       | _ => changed)
               | assign (_, changed) = changed
             val changed = Value.fold assign false (Context.lookup ctx dest)
-        in  if changed then Context.propagateChange ctx dest else ();
+        in
+            (* if changed then Context.propagateChange ctx dest else (); *)
             loopExp ctx body
         end
     | loopExpCase _ (LCPS.SETTER (_, (CPS.P.UNBOXEDASSIGN | CPS.P.ASSIGN),
@@ -705,7 +698,8 @@ structure ZeroCFA :> CFA = struct
                       | _ => changed)
               | assign (_, changed) = changed
             val changed = Value.fold assign false (Context.lookup ctx dest)
-        in  if changed then Context.propagateChange ctx dest else ();
+        in
+            (* if changed then Context.propagateChange ctx dest else (); *)
             loopExp ctx body
         end
     | loopExpCase _ (LCPS.SETTER (_, (CPS.P.UNBOXEDUPDATE | CPS.P.UPDATE),
@@ -798,32 +792,54 @@ structure ZeroCFA :> CFA = struct
   (*        | NONE => () *)
   (*   end *)
 
-  fun loopEscape ctx q =
-    let
-      fun doFunction (_, name, formals, tys, body) =
-        let fun addArg (arg, cty) = Context.add ctx (arg, unknown cty)
-        in  
-            ListPair.appEq addArg (formals, tys);
-            loopExp ctx body
-        end
-      fun enqueueChanges () =
-        let val todo = Context.retrieveTodo ctx
-            fun addFun function =
-              (Queue.delete (q, fn f' => LambdaVar.same (#2 f', #2 function));
-               Queue.enqueue (q, function))
-        in  LCPS.FunMonoSet.app addFun todo;
-            Context.clearTodo ctx
-        end
+  (* fun loopEscape ctx q = *)
+  (*   let *)
+  (*     fun doFunction (_, name, formals, tys, body) = *)
+  (*       let fun addArg (arg, cty) = Context.add ctx (arg, unknown cty) *)
+  (*       in *)
+  (*           ListPair.appEq addArg (formals, tys); *)
+  (*           loopExp ctx body *)
+  (*       end *)
+      (* fun enqueueChanges () = *)
+      (*   let val todo = Context.retrieveTodo ctx *)
+      (*       fun addFun function = *)
+      (*         (Queue.delete (q, fn f' => LambdaVar.same (#2 f', #2 function)); *)
+      (*          Queue.enqueue (q, function)) *)
+      (*   in  LCPS.FunMonoSet.app addFun todo; *)
+      (*       Context.clearTodo ctx *)
+      (*   end *)
       (* val () = (print "Queue: "; Queue.app *)
       (*   (fn f => print (LambdaVar.lvarName (#2 f) ^ ", ")) q; *)
       (*   print "\n") *)
-      val () = print ("\rQueue length: " ^ Int.toString (Queue.length q) ^ "    ")
-    in
-      case Queue.next q
-        of SOME function =>
-             (doFunction function; enqueueChanges (); loopEscape ctx q)
-         | NONE => ()
-    end
+      (* val () = print ("\rQueue length: " ^ Int.toString (Queue.length q) ^ "    ") *)
+    (* in *)
+      (* case Queue.next q *)
+      (*   of SOME function => *)
+      (*        (doFunction function; enqueueChanges (); loopEscape ctx q) *)
+      (*    | NONE => () *)
+    (* end *)
+    fun loopEscape ctx n =
+      let
+        val () = print ("\nIteration: " ^ Int.toString n ^ "      \n")
+        fun doFunction (_, name, formals, tys, body) =
+          let fun addArg (arg, cty) = Context.add ctx (arg, unknown cty)
+          in  print (LambdaVar.lvarName name ^ "\n");
+              ListPair.appEq addArg (formals, tys);
+              loopExp ctx body
+          end
+        val escapeSet = Context.escapeSet ctx
+        val epoch = Context.epoch ctx
+        val size  = LCPS.FunMonoSet.numItems escapeSet
+        val () = LCPS.FunMonoSet.app doFunction escapeSet
+        val epoch' = Context.epoch ctx
+        val size'  = LCPS.FunMonoSet.numItems escapeSet
+      in
+        if size = size' andalso epoch = epoch' then
+          ()
+        else
+          loopEscape ctx (n + 1)
+      end
+
 
   fun timeit str thunk =
     let
@@ -836,19 +852,23 @@ structure ZeroCFA :> CFA = struct
       result
     end
 
-  fun analyze (syntaxInfo, function) =
+  fun analyze (syntaxInfo, function as (_, name, formals, tys, body)) =
     let
       val ctx = Context.new syntaxInfo
-      val queue = Queue.mkQueue ()
-      val () = Queue.enqueue (queue, function)
-      val () = Context.add ctx (#2 function, Value.FUN (Value.IN function))
+      val () = Context.add ctx (name, Value.FUN (Value.IN function))
+      fun run () =
+        (ListPair.appEq (fn (arg, cty) => Context.add ctx (arg, unknown cty))
+                        (formals, tys);
+         loopExp ctx body;
+         loopEscape ctx 1)
     in
-      timeit "\r\n>> 0cfa: " (fn () => loopEscape ctx queue);
+      timeit "\n>> 0cfa: " run;
       Context.dump ctx;
-      CallGraph.build {cps=function,
-                       lookup=Option.map Value.objects o Context.find ctx,
-                       escapingLambdas=Vector.fromList
-                       (function ::
-                        LCPS.FunMonoSet.toList (Context.escapeSet ctx))}
+      CallGraph.build {
+        cps=function,
+        lookup=Option.map Value.objects o Context.find ctx,
+        escapingLambdas=Vector.fromList
+         (function :: LCPS.FunMonoSet.toList (Context.escapeSet ctx))
+      }
     end
 end
