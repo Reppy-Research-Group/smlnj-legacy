@@ -280,7 +280,8 @@ fun boxedKind (CONT | KNOWN_CONT) = RK_CONT
   | boxedKind _ = RK_ESCAPE
 
 (* fun COMMENT f = if !CGoptions.comment then (f(); ()) else () *)
-fun COMMENT f = (f (); ())
+(* fun COMMENT f = (f (); ()) *)
+fun COMMENT f = ()
 
 (****************************************************************************
  *                    CLOSURE REPRESENTATIONS                               *
@@ -2029,7 +2030,7 @@ and close(ce,env,sn,csg,csf,ret) =
 val nfe =
   let val _ = if !CGoptions.staticprof then SProf.initfk() else ()
       val (nvl,ncl,csg,csf,ret,env) = adjustArgs(vl,cl,baseEnv)
-      val () = (print "Right before conversion:\n"; PPCps.printcps0 (fk, f, nvl, ncl, ce))
+      (* val () = (print "Right before conversion:\n"; PPCps.printcps0 (fk, f, nvl, ncl, ce)) *)
       val env = augValue(f,U.BOGt,env)
       val nce = close(ce,env,snum f,csg,csf,ret)
    in (fk,mkLvar(),mkLvar()::f::nvl,U.BOGt::U.BOGt::ncl,nce)
