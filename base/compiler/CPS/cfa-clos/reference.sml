@@ -256,14 +256,17 @@ end = struct
 
   fun sameLV x y = LV.same (x, y)
 
+  fun look v m =
+    if LV.lvarName v = "normalise39748" then print ("HIT: " ^ m ^ "\n") else ()
+
   fun whatis (Env {calleeSaves, closures, allocated, cg, ...}) v =
     if List.exists (sameLV v) calleeSaves then
-      CG.Value
+      (look v "1"; CG.Value)
     else if List.exists (fn (w, _) => LV.same (v, w)) closures then
-      CG.Value
+      (look v "2"; CG.Value)
     else
       (case LV.Tbl.find allocated v
-         of SOME _ => CG.Value
+         of SOME _ => (look v "3"; CG.Value)
           | NONE   => CG.whatis cg v)
 
   fun lookupClosure (Env { closures, ... }, v) : closure =
@@ -309,6 +312,7 @@ end = struct
   fun requiredVars env v =
     case whatis env v
       of CG.Value => [v]
+      
        (* | CG.NoBinding => (1* FIXME: what does NoBinding requre? *1) *)
            (* raise Fail ("NoBinding " ^ LV.lvarName v ^ " requires what?") *)
        | (CG.FirstOrder _ | CG.Function _ | CG.NoBinding) =>
@@ -339,8 +343,8 @@ end = struct
         fun loop fv =
           let fun collect (v, fv) = unionL (fv, requiredVars env v)
               val fv' = LV.Set.foldl collect LV.Set.empty fv
-              val changed = LV.Set.numItems fv <> LV.Set.numItems fv'
-          in  if changed then loop fv' else fv'
+              (* val changed = LV.Set.numItems fv <> LV.Set.numItems fv' *)
+          in  if LV.Set.equal (fv, fv') then fv' else loop fv'
           end
         val fv = foldl (fn (f, acc) => LV.Set.union (freevars env f, acc))
                        LV.Set.empty
@@ -400,6 +404,7 @@ end = struct
     else
       List.splitAt (free, n - 1)
 
+  (* FIXME: Recursion is another kind of access *)
   datatype access = Direct | Indirect of CPS.lvar * closure * path
        and path   = Last of CPS.lvar | Select of CPS.lvar * path
 
@@ -543,14 +548,16 @@ end = struct
                       in  (args @ res, hdr' o hdr)
                       end
                   | SOME (Recursion { label, pvd }) =>
-                      (* let val hdr' = emitClosure (env, ClosureRep { *)
-                      (*                   kind=CPS.RK_ESCAPE, *)
-                      (*                   values=CPS.LABEL label::map CPS.VAR pvd, *)
-                      (*                   links=[], *)
-                      (*                   id=x}) *)
-                      (* in  (CPS.VAR x :: res, hdr' o hdr) *)
-                      (* end *)
-                      raise Fail "unimp: mutual recursion applied elsewhere"
+                      let 
+                          (* val hdr' = emitClosure (env, ClosureRep { *)
+                          (*               kind=CPS.RK_ESCAPE, *)
+                          (*               values=CPS.LABEL label::map CPS.VAR pvd, *)
+                          (*               links=[], *)
+                          (*               id=x}) *)
+                          (* FIXME: can reuse current closure *)
+                      in  (CPS.VAR x :: res, hdr)
+                      end
+                      (* raise Fail "unimp: mutual recursion applied elsewhere" *)
                   | _ =>
                       let val arg = CPS.VAR x
                           val hdr' = fixAccess (env, [arg])
@@ -756,7 +763,7 @@ end = struct
     case partitionBindings fs
       of SimpleKnownFix (f as (_, name, args, tys, body)) =>
            let val fv = LV.Set.toList (collectEnv (env, [f]))
-               (* val () = (dumpLVList "fv" fv) *)
+               val () = if LV.lvarName name = "normalise39826" then (dumpLVList "fv" fv) else ()
                val (pvd, hdr, env) =
                  if freeInEscape f then
                    let val slots = closureSharing (env, fv)
@@ -778,7 +785,7 @@ end = struct
                  else
                    (map INL fv, fn x => x, env)
                val pvdVars = nameOfSlots pvd
-               val nenv = env withImms pvdVars withClosures []
+               val nenv = env withImms [] withClosures [] withCSs []
                val (args', tys', nenv) = adjustFormalArgs (nenv, args, tys)
                (* val () = (dumpLVList "args before" args') *)
                val (args', tys', nenv) = addPvdToArgs (nenv, args', tys', pvd)
@@ -798,7 +805,7 @@ end = struct
                  ClosureRep { values=CPS.LABEL name::vals,
                               links=mklinks (env, links),
                               kind=CPS.RK_ESCAPE, id=name }
-               val nenv = env withImms [] withClosures []
+               val nenv = env withImms [] withClosures [] withCSs []
                val env' = env addImms [name]
                val env' = addProtocol env' (name, StandardFunction)
                (* val (link, clos) = (LV.mkLvar (), LV.mkLvar ()) *)
@@ -808,7 +815,7 @@ end = struct
                       let val args' = link::clos::args
                           val tys'  = CPSUtil.BOGt::CPSUtil.BOGt::tys
                           val nenv = addProtocol nenv (name,
-                                       Recursion { label=name, pvd=[] })
+                                       Recursion { label=name, pvd=[name] })
                           val (args', tys', nenv) =
                             adjustFormalArgs (nenv, args', tys')
                           val hdr = emitClosure
@@ -821,14 +828,12 @@ end = struct
                       let val args' = link::clos::args
                           val tys'  = CPSUtil.BOGt::ctyOfClo closure::tys
                           val nenv = addProtocol nenv (name,
-                                       Recursion { label=name, pvd=nameOfSlots
-                                       slots })
+                                       Recursion { label=name, pvd=[name] })
                           val (args', tys', nenv) =
                             adjustFormalArgs (nenv, args', tys')
                           val nenv = nenv addClosure (clos, closure)
                           val env' = env' addClosure (name, closure)
-                      in  recordClosure env' name;
-                          (hdr, env', [(nenv, (kind, name, args', tys', body))])
+                      in  (hdr, env', [(nenv, (kind, name, args', tys', body))])
                       end
            end
        | EscapeContFix (f as (kind, name, args, tys, body)) =>
