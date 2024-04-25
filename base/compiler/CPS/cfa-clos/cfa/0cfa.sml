@@ -5,6 +5,8 @@ structure ZeroCFA :> CFA = struct
   exception Unimp
   exception Impossible of string
 
+  datatype either = datatype Either.either
+
   structure Value :> sig
     datatype function
       = IN of LCPS.function
@@ -141,23 +143,6 @@ structure ZeroCFA :> CFA = struct
         false
       else
         (Set.app (Set.addc set1) set2; true)
-
-    (* fun isBoxed set = *)
-    (*   let datatype b_lattice = Top | One of bool | Bot *)
-    (*       fun boxed (FUN _ | RECORD _ | REF _) = One true *)
-    (*         | boxed DATA = One false *)
-    (*         | boxed (UNKNOWN _ | DATARECORD) = Top *)
-    (*       fun merge (Top, _) = Top *)
-    (*         | merge (_, Top) = Top *)
-    (*         | merge (One b1, One b2) = if b1 = b2 then One b1 else Top *)
-    (*         | merge (Bot, x) = x *)
-    (*         | merge (x, Bot) = x *)
-    (*   in  case Set.fold (fn (v, acc) => merge (acc, boxed v)) Bot set *)
-    (*         of Top => NONE *)
-    (*          | Bot => raise Impossible "set is empty" *)
-    (*          | One b => SOME b *)
-    (*   end *)
-    (* fun isBoxed _ = NONE *)
 
     fun isFirstOrder set =
       let fun chk (FUN _ | RECORD _ | REF _) = false
@@ -433,19 +418,18 @@ structure ZeroCFA :> CFA = struct
     fun escapeSet ({escapeSet, ...}: t) = escapeSet
   end
 
-  fun evalValue ctx (CPS.VAR v) =
-        Context.lookup ctx v
-    | evalValue _ (CPS.LABEL _) =
-        raise (Impossible "Label value before closure conversion")
-    | evalValue _ CPS.VOID =
-        (* Gross hack *)
-        Value.mk Value.DATA
-    | evalValue _ (CPS.NUM _ | CPS.REAL _ | CPS.STRING _) =
-        Value.mk Value.DATA
+  local
+    val data = Value.mk Value.DATA
+  in
+    fun evalValue ctx (CPS.VAR v) = Context.lookup ctx v
+      | evalValue _ (CPS.LABEL _) =
+          raise (Impossible "Label value before closure conversion")
+      | evalValue _ CPS.VOID = (* Gross hack *) data
+      | evalValue _ (CPS.NUM _ | CPS.REAL _ | CPS.STRING _) = data
+  end
 
   fun unknown (CPS.FUNt | CPS.CNTt) = Value.FUN Value.OUT
     | unknown (CPS.NUMt _ | CPS.FLTt _) = Value.DATA
-        (* tagged and untagged are both unboxed values *)
     | unknown cty = Value.UNKNOWN cty
 
   fun select ctx (values, off, cty) =
@@ -619,19 +603,20 @@ structure ZeroCFA :> CFA = struct
         raise Impossible "GETHDLR does not take arguments"
     | loopExpCase ctx (LCPS.LOOKER (_, CPS.P.DEREF, [cell], dest, ty, body)) =
         let fun deref (Value.REF addr, values) =
-                  Context.lookup ctx addr :: values
+                  INL (Context.lookup ctx addr) :: values
               | deref (Value.UNKNOWN (CPS.PTRt _), values) =
-                  Value.mk (unknown ty) :: values
+                  INR (unknown ty) :: values
               | deref (Value.DATARECORD, values) =
                   (case ty
                      of (CPS.FUNt | CPS.CNTt) =>
                           raise Impossible "DATA RECORD contains functions"
                       | _ =>
-                          Value.mk (unknown ty) :: values)
+                          INR (unknown ty) :: values)
               | deref (_, values) = values
         in  case Value.fold deref [] (evalValue ctx cell)
               of [] => ()
-               | vs => (app (fn v => Context.merge ctx (dest, v)) vs;
+               | vs => (app (fn (INL v) => Context.merge ctx (dest, v)
+                              | (INR c) => Context.add ctx (dest, c)) vs;
                         loopExp ctx body)
         end
     | loopExpCase _ (LCPS.LOOKER (_, CPS.P.DEREF, _, _, _, _)) =
