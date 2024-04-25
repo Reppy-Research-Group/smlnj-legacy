@@ -36,6 +36,7 @@ functor ArgPassing (
 	    | to (k, r::rs) = if k > j then [] else r::to(k+1, rs)
 	  in
 	    to (i, List.drop(regs, i))
+            handle Subscript => (print "here0"; raise Subscript)
 	  end
 
     fun gprfromto (i, j, vfp) = fromto(i, j, gpregs vfp)
@@ -58,6 +59,9 @@ functor ArgPassing (
 
     fun standardEscape (vfp, args) = let
 	  val rest = List.drop(args, k+kf+3)
+          handle Subscript => (print "here: "; print ("has " ^ Int.toString
+          (List.length args) ^ " wants " ^ Int.toString (k + kf + 3));
+          raise Subscript)
 	  val len = length args
 	  val gpr = stdarg vfp :: gprfromto(k+4, len, vfp)
 	  val fpr = fprfromto(kf, len, vfp)
@@ -67,7 +71,11 @@ functor ArgPassing (
 	  end
 
     fun standardCont (vfp, args) = let
-	  val rest = if k > 0 then List.drop(args, k+kf+1) else List.drop(args, 2)
+	  val rest = (if k > 0 then List.drop(args, k+kf+1) else List.drop(args,
+   2))
+          (* DEBUG *)
+          handle Subscript => (print (concat ["args=[", String.concatWithMap ", "
+          CPSUtil.ctyToString args, "]\n"]); raise Subscript)
 	  val len = length args
 	  val gpr = stdarg vfp :: gprfromto(k+4, 1+len, vfp)
 	  val fpr = fprfromto(kf, len, vfp)
