@@ -33,8 +33,13 @@ int Flip (heap_t *heap, int min_gc_level)
 #ifdef VERBOSE
 SayDebug ("Flip: min_gc_level = %d\n", min_gc_level);
 #endif
-    for (i = 0;  i < NUM_ARENAS;  i++)
+
+    /* for the first generation, we make a worst-case assumption that all of the
+     * data could be forwarded to any arena.
+     */
+    for (i = 0;  i < NUM_ARENAS;  i++) {
 	prevOldSz[i] = heap->allocSzB;
+    }
 
     prevGC = heap->numMinorGCs;
     for (i = 0;  i < heap->numGens;  i++) {
@@ -48,7 +53,7 @@ SayDebug ("checking generation %d\n", i+1);
 	    for (j = 0;  j < NUM_ARENAS; j++) {
 		arena_t	*ap = g->arena[j];
 #ifdef VERBOSE
-SayDebug ("  %s: avail = %d, prev = %d\n",
+SayDebug ("  %s: avail = %u, prev = %u\n",
 ArenaName[j+1], (isACTIVE(ap) ? AVAIL_SPACE(ap) : 0), prevOldSz[j]);
 #endif
 		if ((isACTIVE(ap) ? AVAIL_SPACE(ap) : 0) < prevOldSz[j])
@@ -72,25 +77,34 @@ SayDebug ("Flip generation %d: (%d GCs)\n", i+1, numGCs);
 	    if (isACTIVE(ap)) {
 		FLIP_ARENA(ap);
 		HeapMon_MarkFromSp (heap, ap->frspBase, ap->frspSizeB);
+                ASSERT((Addr_t)(ap->oldTop) <= (Addr_t)(ap->frspTop));
 		thisMinSz = ((Addr_t)(ap->frspTop) - (Addr_t)(ap->oldTop));
 	    }
 	    else {
 		ap->frspSizeB = 0;  /* to ensure accurate stats */
-		if ((ap->reqSizeB == 0) && (prevOldSz[j] == 0))
+		if ((ap->reqSizeB == 0) && (prevOldSz[j] == 0)) {
+                    /* there will be no data copied into this arena, so skip it */
+                    minSize[j] = 0;
 		    continue;
-		else
+                }
+		else {
 		    thisMinSz = 0;
+                }
 	    }
 	    minSz = prevOldSz[j] + thisMinSz + ap->reqSizeB;
-            if (j == STRING_INDX)
-              /* Strings can require aligment fixups, which in the worst
+            if (j == STRING_INDX) {
+#ifdef SIZE_32
+              /* Doubles can require aligment fixups, which in the worst
                * case are 1/3 the size of the object. Round up the minimum
                * size to avoid an overrun on the end of TO space.
                */
                 minSz *= 1.33;
-	    else if (j == PAIR_INDX)
-	      /* first slot isn't used, but may need the space for poly = */
+#endif
+            }
+	    else if (j == PAIR_INDX) {
+	      /* the first slot isn't used, but may need the space for poly = */
 		minSz += 2*WORD_SZB;
+            }
 	    minSize[j] = minSz;
 
 #ifdef OLD_POLICY
@@ -113,19 +127,21 @@ SayDebug ("Flip generation %d: (%d GCs)\n", i+1, numGCs);
 	   * (unless minSz > maxSizeB).
 	   */
 	    newSz = prevOldSz[j] + ap->reqSizeB + (g->ratio * (thisMinSz / numGCs));
-	    if (newSz < minSz)
+	    if (newSz < minSz) {
 		newSz = minSz;
+            }
 #ifdef VERBOSE
-SayDebug ("  %s: min = %d, prev = %d, thisMin = %d, req = %d, new = %d, max = %d\n",
+SayDebug ("  %s: min = %u, prev = %u, thisMin = %u, req = %u, new = %u, max = %u\n",
 ArenaName[j+1], minSz, prevOldSz[j], thisMinSz, ap->reqSizeB, newSz, ap->maxSizeB);
 #endif
-	    if (newSz > ap->maxSizeB)
+	    if (newSz > ap->maxSizeB) {
 		newSz = (minSz > ap->maxSizeB) ? minSz : ap->maxSizeB;
+            }
 
 	    if (newSz > 0) {
 		ap->tospSizeB = RND_MEMOBJ_SZB(newSz);
 #ifdef VERBOSE
-SayDebug ("    alloc %d\n", ap->tospSizeB);
+SayDebug ("    alloc %u\n", ap->tospSizeB);
 #endif
 	    }
 	    else {

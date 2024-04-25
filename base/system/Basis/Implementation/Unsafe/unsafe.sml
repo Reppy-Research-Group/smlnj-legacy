@@ -14,6 +14,16 @@ structure Unsafe :> UNSAFE =
     structure Pointer = UnsafePointer
     structure Poll = Poll
 
+    structure Real64 =
+      struct
+        val castToWord = InlineT.Real64.toBits
+        fun castFromWord (b : Word64.word) : real = let
+              val r : real ref = InlineT.cast(ref b)
+              in
+                !r
+              end
+      end
+
     structure Vector =
       struct
 	val sub = InlineT.PolyVector.sub
@@ -95,7 +105,11 @@ structure Unsafe :> UNSAFE =
 	val baseBits = WordImp.toIntX CoreIntInf.baseBits
       end
 
-  (* convert real to bits (experimental) *)
+    (* machine properties *)
+    val isBigEndian : unit -> bool = InlineT.isBigEndian
+    val wordSize : unit -> int = InlineT.wordSize
+
+  (* convert default real to bits *)
     val realToBits = InlineT.Real64.toBits
   (* assembly-code function for scaling reals *)
     val scalb = Core.Assembly.A.scalb

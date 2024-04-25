@@ -5,7 +5,7 @@
 :dist-dir: https://smlnj.org/dist/working/{version}/
 :history: {dist-dir}HISTORY.html
 :issue-base: https://github.com/smlnj/legacy/issues/
-:pull-base: https://github.com/smlnj/pull/issues/
+:pull-base: https://github.com/smlnj/legacy/pull/
 :stem: latexmath
 :source-highlighter: pygments
 :stylesheet: release-notes.css
@@ -59,30 +59,6 @@ FILES::
 
 === Installation
 
-=== 32-bit macOS issues
-
-While the {dist-dir}smlnj-x86-{version}.pkg[x86 installer]
-for {version} works on **macOs** 10.14 Mojave, building from source
-requires some extra steps because the version of **Xcode**
-distributed for Mojave does not include a 32-bit SDK.
-
-Another issue that you may encounter
-when building on **macOs** 10.14 Mojave is an error message for a shell
-script of the form
-
-.....
-  /bin/sh: bad interpreter: Operation not permitted
-.....
-
-This error arises because the `com.apple.quarantine` attribute is set on the
-shell script.  To fix the problem, remove the attribute using the command
-
-[source,shell]
------
-  xattr -d com.apple.quarantine shell-script
------
-and resume the build.
-
 == Bugs
 
 Here is a list of the issues that are fixed (or closed) with this release.
@@ -110,12 +86,14 @@ tested some of them:
 |=======
 | Architecture | Operating System | Status
 | AMD64 | FreeBSD 12.0 |
-| | macOS 10.14 (Mojave) | Tested
-| | macOS 10.15 (Catalina) | Tested
-| | macOS 11 (Big Sur) | Tested
+| | macOS 10.14 (Mojave) |
+| | macOS 10.15 (Catalina) |
+| | macOS 11 (Big Sur) |
 | | macOS 12 (Monterey) | Tested
-| | Ubuntu 16.04.3 LTS |
-| | Ubuntu 18.04.3 LTS | Tested
+| | macOS 13 (Ventura) | Tested
+| | macOS 14 (Sonoma) | Tested
+| | Ubuntu 22.04.4 LTS | Tested
+| | Ubuntu 20.04.6 LTS | Tested
 | {nbsp} | |
 | Power PC | Mac OS X 10.5 (Leopard) |
 | | AIX |
@@ -130,7 +108,7 @@ tested some of them:
 | | Mac OS X 10.10 (Yosemite) |
 | | Mac OS X 10.11 (El Capitan) |
 | | macOS 10.12 (Sierra) |
-| | macOS 10.13 (High Sierra) |
+| | macOS 10.13 (High Sierra) | Tested
 | | macOS 10.14 (Mojave) |
 | | Ubuntu 16.04.3 LTS |
 | | Other Linux variants |
@@ -141,3 +119,27 @@ tested some of them:
 | | Cygwin (32-bit) |
 | {nbsp} | |
 |=======
+
+=== 32-bit macOS issues
+
+While the {dist-dir}smlnj-x86-{version}.pkg[x86 installer]
+for {version} works on **macOs** 10.14 Mojave, building from source
+requires some extra steps because the version of **Xcode**
+distributed for Mojave does not include a 32-bit SDK.
+
+Another issue that you may encounter
+when building on **macOs** 10.14 Mojave is an error message for a shell
+script of the form
+
+.....
+  /bin/sh: bad interpreter: Operation not permitted
+.....
+
+This error arises because the `com.apple.quarantine` attribute is set on the
+shell script.  To fix the problem, remove the attribute using the command
+
+[source,shell]
+-----
+  xattr -d com.apple.quarantine shell-script
+-----
+and resume the build.

@@ -40,5 +40,6 @@ val mk : hash_key -> obj
 
 == See Also
 
+xref:../Util/str-Atom.adoc[`Atom`],
 xref:str-HashCons.adoc[`HashCons`],
 xref:hash-cons-lib.adoc[__The HashCons Library__]

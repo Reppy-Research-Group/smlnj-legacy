@@ -1,0 +1,43 @@
+= The `HashConsInt` structure
+:Author: John Reppy
+:Date: {release-date}
+:stem: latexmath
+:source-highlighter: pygments
+:VERSION: {smlnj-version}
+
+The `HashConsInt` structure embeds the `int` type as a hash-consed object.
+It is implemented by directly using the value as the tag and hash key
+(_i.e._, no hash table).
+
+== Synopsis
+
+[source,sml]
+------------
+structure HashConsInt
+------------
+
+== Interface
+
+[source,sml]
+------------
+type hash_key = int
+type obj = hash_key HashCons.obj
+
+val mk : hash_key -> obj
+------------
+
+== Description
+
+`[.kw]#type# hash_key = int`::
+  The ground type being hashed.
+
+`[.kw]#type# obj = hash_key HashCons.obj`::
+  The type of hash-consed integers.
+
+`[.kw]#val# mk : hash_key \-> obj`::
+  `mk n` converts the integer `n` to a hash-consed object.
+
+== See Also
+
+xref:str-HashCons.adoc[`HashCons`],
+xref:hash-cons-lib.adoc[__The HashCons Library__]

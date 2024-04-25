@@ -104,7 +104,17 @@ functor JSONStreamOutputFn (Out : TEXT_OUTPUT_STREAM) : JSON_STREAM_OUTPUT
       | boolean (p, true) = prVal (p, "true")
     fun int (p, n) = prVal (p, F.format "%d" [F.INT n])
     fun integer (p, n) = prVal (p, F.format "%d" [F.LINT n])
-    fun float (p, f) = prVal (p, F.format "%g" [F.REAL f])
+    fun float (p, f) = let
+          (* print with 17 digits of precision, which is sufficient for any
+           * double-precision IEEE float.  We first convert to a string using
+           * SML syntax and then replace any "~" characters with "-".
+           *)
+          val s = Real.fmt (StringCvt.GEN(SOME 17)) f
+          in
+            if CharVector.exists (fn #"~" => true | _ => false) s
+              then prVal (p, String.map (fn  #"~" => #"-" | c => c) s)
+              else prVal (p, s)
+          end
     fun string (p, s) = let
 	  fun getChar i = if (i < size s) then SOME(String.sub(s, i), i+1) else NONE
 	  val getWChar = UTF8.getu getChar
@@ -114,7 +124,6 @@ functor JSONStreamOutputFn (Out : TEXT_OUTPUT_STREAM) : JSON_STREAM_OUTPUT
 			val c = (case UTF8.toAscii wchr
 			       of #"\"" => "\\\""
 				| #"\\" => "\\\\"
-				| #"/" => "\\/"
 				| #"\b" => "\\b"
 				| #"\f" => "\\f"
 				| #"\n" => "\\n"

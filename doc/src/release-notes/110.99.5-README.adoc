@@ -1,0 +1,252 @@
+:version: 110.99.5
+:date: March 14, 2024
+:dist-dir: https://smlnj.org/dist/working/{version}/
+:history: {dist-dir}HISTORY.html
+:issue-base: https://github.com/smlnj/legacy/issues
+:smlnj-issue-base: https://github.com/smlnj/smlnj/issues
+:pull-base: https://github.com/smlnj/legacy/pull
+:smlnj-pull-base: https://github.com/smlnj/smlnj/pull
+:stem: latexmath
+:source-highlighter: pygments
+:stylesheet: release-notes.css
+:notitle:
+
+= Standard ML of New Jersey Release Notes
+
+[subs=attributes]
+++++
+<div class="smlnj-banner">
+  <span class="title"> Standard ML of New Jersey <br/> Release Notes </span>
+  <br/> <br/>
+  <span class="subtitle"> Version {version} <br/> {date} </span>
+</div>
+++++
+
+''''''''
+--
+SML/NJ HOME::
+  https://www.smlnj.org/index.html[[.tt]#https://smlnj.org#]
+FILES::
+  {dist-dir}index.html[[.tt]#{dist-dir}#]
+--
+''''''''
+
+== Summary
+
+This patch release fixes a large number of bugs in the "legacy" version
+of *SML/NJ*; implements some missing features from the
+https://smlfamily.github.io/Basis/[*Standard ML Basis Library*], and
+includes some improvements to the *SML/NJ Library*.
+
+== Details
+
+=== Compiler
+
+* Some minor improvements in the REPL's pretty printing.
+
+=== CM
+
+* The *system/cmb-make* script now runs with the `CM_VERBOSE` environment variable
+  set to `false` by default (use the `-verbose` option for the old behavior).  It
+  also now sets the `PATH` environment variable to include the directory where the
+  *sml* command lives when it is given as an argument to *cmb-make*.
+
+=== Basis Library
+
+* Complete rewrite of the mechanisms used to implement conversions
+  between strings and reals.  As part of this rewrite, we implemented the
+  support for the `StringCvt.EXACT` formatting mode and implemented the
+  missing `Real.toDecimal`/`fromDecimal` functions.  The real-string
+  conversions is based on the https://github.com/ulfjack/ryu[Ryu library]
+  and associated https://doi.org/10.1145/3296979.3192369[PLDI paper]
+  by Ulf Adams.
+
+* Added missing implementation of `Real64.nextAfter` function.
+
+* Added `Unsafe.Real64` structure that implements bit casts between
+  double-precision reals and 64-bit words.
+
+=== SML/NJ Library
+
+In addition to the bug fixes noted below, the following improvements
+made to the **SML/NJ Library**:
+
+* Rewrote the *JSON* parsers to work directly on the input source (instead of
+  using a ML-ulex lexer.  This change fixes {issue-base}/284[Issue #284 (ML-ULex's
+  memoization causes massive performance penalties for *JSON* parsing).  For
+  the `data.json` file mentioned in the issue, parsing is about eight times
+  faster, while the speedup is even greater for the `huge.json` file.
+
+* Added the `JSONDecode` structure to the *JSON* library.  This module implements
+  a set of combinators (inspired by the *Elm* `JSON.Decode` module)
+  for decoding *JSON* values.
+
+* Added `insertWith`, `insertWithi`, and `findAndRemove` operations to the
+  `HASH_TABLE` and `MONO_HASH_TABLE` interfaces (and corresponding
+  implementations).
+
+* Fixed a bug in `Random.randReal` on 32-bit systems.
+
+* Fixed the error checking and documentation for the `subArray` function
+  in the `DynamicArray` structure and `DynamicArrayFn` functor.
+
+* Fixes to the `subArray` and `truncate` functions in the dynamic array
+  implementation (both structure `DynamicArray` and functor `DynamicArrayFn`).
+
+* Add `EditDistance` module to utility library.
+
+* Reworked the `UTF8` structure to impose stricter validation of the
+  encodings.  Added the `Invalid` exception for when an invalid encoding
+  is encountered and replaced uses of the `Domain` exception with `Invalid`.
+  Also added the `size'` function for getting the number of UTF-8
+  characters in a substring.
+
+* Added modules for the representation of booleans, integers, and words
+  as hash-consed values to the *HashCons* library.
+
+== Bugs
+
+Here is a list of the issues that are fixed (or closed) with this release.
+We include the original bug numbers for bugs that were reported using the
+gforge bug tracker.
+
+[.buglist,cols="^1,<10,^2",strips="none",options="header"]
+|=======
+| Issue
+| Description
+| Gforge Bug
+| [.bugid]#194#
+| {issue-base}/194[Incorrect formatting of real number]
+| 221
+| [.bugid]#269#
+| {issue-base}/269[`Real.realMod` and `Real.split` produce incorrect result for values close to zero]
+| **n.a.**
+| [.bugid]#280#
+| {issue-base}/280[Support forward-slash ("/") as a separator in the Windows implementation of `OS.Path`]
+| **n.a.**
+| [.bugid]#283#
+| {issue-base}/283[`TextIO.inputAll` segfaults when reading 980M file]
+| **n.a.**
+| [.bugid]#284#
+| {issue-base}/284[ML-ULex's memozation causes massive performance penalties for JSON parsing]
+| **n.a.**
+| [.bugid]#285#
+| {issue-base}/285[Unmatched specification in opaque signature ascription causes uncaught exception]
+| **n.a.**
+| [.bugid]#286#
+| {issue-base}/286[Get "fgrep is obsolescent" when run **sml** on Fedora]
+| **n.a.**
+| [.bugid]#287#
+| {issue-base}/287[The word literal `0wx80000000` is incorrectly converted to `0wx7FFFFFFF80000000`]
+| **n.a.**
+| [.bugid]#288#
+| {issue-base}/288[`DynamicArray.subArray` creates array with length bound+1]
+| **n.a.**
+| [.bugid]#289#
+| {issue-base}/289[Uncaught `Bind` exception in compiler with opaque signature matching]
+| **n.a.**
+| [.bugid]#290#
+| {issue-base}/290[`Random.realRand` returns far smaller value than unity]
+| **n.a.**
+| [.bugid]#292#
+| {issue-base}/292[`Word8.toLargeInt` is broken in 32-bit version]
+| **n.a.**
+| [.bugid]#294#
+| {issue-base}/294[Starting SML/NJ on Windows produces unsightly REM lines]
+| **n.a.**
+| [.bugid]#295#
+| {issue-base}/295[CM cannot find tools when using cmb-make to compile the compiler]
+| **n.a.**
+| [.bugid]#296#
+| {issue-base}/296[The `fromDecimal` and `toDecimal` functions in the `Real` structure are not implemented]
+| **n.a.**
+| [.bugid]#297#
+| {issue-base}/297[Additional operations for the `MONO_HASH_TABLE` interface]
+| **n.a.**
+| [.bugid]#298#
+| {issue-base}/298[Incorrect printing of source code in error message]
+| **n.a.**
+| [.bugid]#300#
+| {issue-base}/300[``PackReal64``{``Big``,``Little``}``.update`` is not implemented]
+| **n.a.**
+| [.bugid]#302#
+| {issue-base}/302[SML/NJ implementation of `Date.fromTimeLocal` differs from SML Basis Library Documentation]
+| **n.a.**
+|=======
+
+We also fixed the following bugs that did not have issues
+associated with them (or were bug fixes back-ported from the
+development repository):
+--
+* {smlnj-issue-base}/276[`UTF8.getu` should validate that it's input is UTF-8]
+
+* {smlnj-pull-base}/280[`DynamicArray.subArray` creates array with length bound+1]
+
+* The implementations of `PackWord64Little.update` and `PackWord64Big.update`
+  were swapped on 64-bit platforms.
+--
+
+== Supported systems
+
+We believe that SML/NJ will build and run on the following systems, but have only
+tested some of them:
+
+[.support-table,cols="^2s,^4v,^3v",options="header",strips="none"]
+|=======
+| Architecture | Operating System | Status
+| AMD64 | FreeBSD 12.0 |
+| | macOS 10.14 (Mojave) | Tested
+| | macOS 10.15 (Catalina) | Tested
+| | macOS 11 (Big Sur) | Tested
+| | macOS 12 (Monterey) | Tested
+| | Ubuntu 16.04.3 LTS |
+| | Ubuntu 18.04.3 LTS | Tested
+| {nbsp} | |
+| Power PC | Mac OS X 10.5 (Leopard) |
+| | AIX |
+| {nbsp} | |
+| Sparc | Solaris |
+| | Linux |
+| {nbsp} | |
+| x86 (32-bit) | Mac OS X 10.6 (Snow Leopard) |
+| | Mac OS X 10.7 (Lion) |
+| | Mac OS X 10.8 (Mountain Lion) |
+| | Mac OS X 10.9 (Mavericks) |
+| | Mac OS X 10.10 (Yosemite) |
+| | Mac OS X 10.11 (El Capitan) |
+| | macOS 10.12 (Sierra) |
+| | macOS 10.13 (High Sierra) |
+| | macOS 10.14 (Mojave) |
+| | Ubuntu 16.04.3 LTS |
+| | Other Linux variants |
+| | FreeBSD 12.0 |
+| | Other BSD variants |
+| | Windows 7 |
+| | Windows 10 |
+| | Cygwin (32-bit) |
+| {nbsp} | |
+|=======
+
+=== 32-bit macOS issues
+
+While the {dist-dir}smlnj-x86-{version}.pkg[x86 installer]
+for {version} works on **macOs** 10.14 Mojave, building from source
+requires some extra steps because the version of **Xcode**
+distributed for Mojave does not include a 32-bit SDK.
+
+Another issue that you may encounter
+when building on **macOs** 10.14 Mojave is an error message for a shell
+script of the form
+
+.....
+  /bin/sh: bad interpreter: Operation not permitted
+.....
+
+This error arises because the `com.apple.quarantine` attribute is set on the
+shell script.  To fix the problem, remove the attribute using the command
+
+[source,shell]
+-----
+  xattr -d com.apple.quarantine shell-script
+-----
+and resume the build.
