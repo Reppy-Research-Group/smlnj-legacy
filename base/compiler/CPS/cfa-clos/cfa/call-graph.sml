@@ -291,8 +291,8 @@ structure CallGraph :> CALL_GRAPH = struct
   fun callGraphDot (cg as T {escaping, ...}) =
     let fun escapes (f: LCPS.function) =
           Vector.exists (fn f' => LV.same (#2 f, #2 f')) escaping
-        fun convert f = (LV.lvarName (#2 f),
-                         if escapes f then [("color", "red")] else [])
+        fun convert (f: LCPS.function) =
+          (LV.lvarName (#2 f), if escapes f then [("color", "red")] else [])
     in  DotLanguage.fromGraph convert (toGraph cg)
     end
 

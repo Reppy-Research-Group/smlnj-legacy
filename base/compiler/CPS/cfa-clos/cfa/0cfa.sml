@@ -30,7 +30,7 @@ structure ZeroCFA :> CFA = struct
     val objects: t -> CallGraph.object
     val dump: t -> unit
 
-    val isBoxed: t -> bool option
+    val size: t -> int
     val isFirstOrder: t -> bool
 
     val app: (concrete -> unit) -> t -> unit
@@ -93,8 +93,7 @@ structure ZeroCFA :> CFA = struct
              | FUN OUT => topTag
              | RECORD addrs =>
                  addTag (foldl (fn (v, h) => hashCombine (h, hashAddr v))
-                               0w0
-                               addrs,
+                               0w0 addrs,
                          recordTag)
              | DATARECORD => datarecord
              | REF addr => addTag (Word.fromInt (LambdaVar.toId addr), refTag)
@@ -109,6 +108,7 @@ structure ZeroCFA :> CFA = struct
     val toList = Set.toList
     val fold = Set.fold
     val say = print
+    val size = Set.numItems
     val sayLvar = say o LambdaVar.lvarName
 
     fun dumpC (FUN (IN (_, name, _, _, _))) =
@@ -130,7 +130,6 @@ structure ZeroCFA :> CFA = struct
 
     fun dump set = (say "["; Set.app (fn c => (dumpC c; say ",")) set; say "]")
 
-
     fun add (set, v) =
       if Set.member (set, v) then
         false
@@ -142,27 +141,27 @@ structure ZeroCFA :> CFA = struct
         false
       else
         (Set.app (Set.addc set1) set2; true)
-      (* Set.fold (fn (v, changed) => add (set1, v) orelse changed) false set2 *)
 
-    fun isBoxed set =
-      let datatype b_lattice = Top | One of bool | Bot
-          fun boxed (FUN _ | RECORD _ | REF _) = One true
-            | boxed (DATA | DATARECORD) = One false
-            | boxed (UNKNOWN _) = Top
-          fun merge (Top, _) = Top
-            | merge (_, Top) = Top
-            | merge (One b1, One b2) = if b1 = b2 then One b1 else Top
-            | merge (Bot, x) = x
-            | merge (x, Bot) = x
-      in  case Set.fold (fn (v, acc) => merge (acc, boxed v)) Bot set
-            of Top => NONE
-             | Bot => raise Impossible "set is empty"
-             | One b => SOME b
-      end
+    (* fun isBoxed set = *)
+    (*   let datatype b_lattice = Top | One of bool | Bot *)
+    (*       fun boxed (FUN _ | RECORD _ | REF _) = One true *)
+    (*         | boxed DATA = One false *)
+    (*         | boxed (UNKNOWN _ | DATARECORD) = Top *)
+    (*       fun merge (Top, _) = Top *)
+    (*         | merge (_, Top) = Top *)
+    (*         | merge (One b1, One b2) = if b1 = b2 then One b1 else Top *)
+    (*         | merge (Bot, x) = x *)
+    (*         | merge (x, Bot) = x *)
+    (*   in  case Set.fold (fn (v, acc) => merge (acc, boxed v)) Bot set *)
+    (*         of Top => NONE *)
+    (*          | Bot => raise Impossible "set is empty" *)
+    (*          | One b => SOME b *)
+    (*   end *)
+    (* fun isBoxed _ = NONE *)
 
     fun isFirstOrder set =
-      let fun chk (FUN _ | RECORD _ | REF _ | UNKNOWN _) = false
-            | chk (DATA | DATARECORD) = true
+      let fun chk (FUN _ | RECORD _ | REF _) = false
+            | chk (DATA | DATARECORD | UNKNOWN _) = true
       in  Set.all chk set
       end
 
@@ -190,19 +189,21 @@ structure ZeroCFA :> CFA = struct
                  * ML value -- (A f) is a pointer whereas B is an integer.
                  * Call-sites discriminate the cases by testing if the value
                  * is boxed. *)
-                SOME (CallGraph.Function [CallGraph.In f, CallGraph.Out])
+                (* SOME (CallGraph.Function [CallGraph.In f, CallGraph.Out]) *)
+                SOME (CallGraph.Function [CallGraph.In f])
             | collect (FUN OUT, SOME CallGraph.Value) =
                 SOME (CallGraph.Function [CallGraph.Out])
-
             | collect (FUN _, SOME _) =
                 raise Fail "conflicting 1"
-            | collect (RECORD _,
-                       (NONE | SOME CallGraph.Value)) =
+            | collect (RECORD _, (NONE | SOME CallGraph.Value)) =
                 SOME CallGraph.Value
+            (* | collect (RECORD _, SOME (CallGraph.Function fs)) = *)
+            (*     SOME (CallGraph.Function fs) *)
+            | collect (RECORD _, SOME (CallGraph.Function fs)) =
+                SOME (CallGraph.Function fs)
             | collect (RECORD _, SOME _) =
                 raise Fail "conflicting 2"
-            | collect (REF _,
-                       (NONE | SOME CallGraph.Value)) =
+            | collect (REF _, (NONE | SOME CallGraph.Value)) =
                 SOME CallGraph.Value
             | collect (REF _, SOME _) =
                 raise Fail "conflicting 3"
@@ -226,17 +227,9 @@ structure ZeroCFA :> CFA = struct
             | collect (UNKNOWN _, SOME _) =
                 raise Fail "conflicting 5"
       in  fn v => (Option.valOf o (Set.fold collect NONE)) v
-          handle Fail conflict => (print (conflict ^ ": "); dump v; print "\n"; raise Fail
-          conflict)
+          handle Fail conflict =>
+            (print (conflict ^ ": "); dump v; print "\n"; raise Fail conflict)
       end
-
-    (* val records = collect (fn (RECORD data) => SOME data | _ => NONE) Set.fold *)
-    (* val refs = collect (fn (REF data) => SOME data | _ => NONE) Set.fold *)
-    (* val functions = collect (fn (FUN data) => SOME data | _ => NONE) Set.fold *)
-
-    (* val recordsL = collect (fn (RECORD data) => SOME data | _ => NONE) List.foldl *)
-    (* val refsL = collect (fn (REF data) => SOME data | _ => NONE) List.foldl *)
-    (* val functionsL = collect (fn (FUN data) => SOME data | _ => NONE) List.foldl *)
   end
 
   structure Store :> sig
@@ -245,7 +238,6 @@ structure ZeroCFA :> CFA = struct
 
     val epoch: t -> int
     val update: t -> CPS.lvar * Value.concrete -> bool
-    (* val setTop: t -> CPS.lvar -> bool *)
     val getHdlr: t -> Value.t
     val addHdlr: t -> Value.t -> bool
     val merge: t -> CPS.lvar * Value.t -> bool
@@ -260,7 +252,7 @@ structure ZeroCFA :> CFA = struct
     exception StoreLookUp
     fun new () =
       { epoch=ref 0
-      , table=LVarTbl.mkTable (32, StoreLookUp)
+      , table=LVarTbl.mkTable (1024, StoreLookUp)
       , hdlr=Value.mk (Value.FUN Value.OUT)
       }
 
@@ -275,32 +267,11 @@ structure ZeroCFA :> CFA = struct
          | NONE => (LVarTbl.insert table (lvar, Value.mk v);
                     updateEpoch epoch true)
 
-    (* fun setTop {epoch, table, hdlr=_} lvar = *)
-    (*   case LVarTbl.find table lvar *)
-    (*     of SOME set => updateEpoch epoch (Value.setTop set) *)
-    (*      | NONE => (LVarTbl.insert table (lvar, Value.mk Value.T); *)
-    (*                 updateEpoch epoch true) *)
-
     fun merge {epoch, table, hdlr=_} (lvar, value) =
       case LVarTbl.find table lvar
         of SOME orig => updateEpoch epoch (Value.merge (orig, value))
          | NONE => (LVarTbl.insert table (lvar, Value.copy value);
                     updateEpoch epoch true)
-
-    (* fun merge {epoch, table, hdlr=_} (lvar, value) = *)
-    (*   case LVarTbl.find table lvar *)
-    (*     of SOME orig => *)
-    (*          let val changed = Value.merge (orig, value) *)
-    (*          in  (if !epoch > 10000 andalso changed then *)
-    (*                (print ("\n" ^ LambdaVar.lvarName lvar ^ " ---> "); *)
-    (*                Value.dump orig; *)
-    (*                print "\n") *)
-    (*              else *)
-    (*                ()); *)
-    (*              updateEpoch epoch changed *)
-    (*          end *)
-    (*      | NONE => (LVarTbl.insert table (lvar, Value.copy value); *)
-    (*                 updateEpoch epoch true) *)
 
     fun getHdlr ({hdlr, ...}: t) = hdlr
     fun addHdlr ({hdlr, epoch, ...}: t) v =
@@ -343,10 +314,7 @@ structure ZeroCFA :> CFA = struct
     val dump: t -> unit
     val escape: t -> LCPS.lvar -> unit
     val escapeSet: t -> LCPS.FunMonoSet.set
-    (* val retrieveTodo: t -> LCPS.FunMonoSet.set *)
-    (* val clearTodo: t -> unit *)
     val epoch: t -> int
-    (* val propagateChange: t -> LCPS.lvar -> unit *)
     val getHdlr: t -> Value.t
     val addHdlr: t -> LCPS.lvar -> unit
   end = struct
@@ -397,12 +365,6 @@ structure ZeroCFA :> CFA = struct
        FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) escapeSet;
        print "}\n")
 
-    (* fun dump {epochTable=_, store, escapeSet, escapingAddr=_, syn=_, todo=_} = *)
-    (*   (print ("Epoch: " ^ Int.toString (Store.epoch store)); *)
-    (*    print "\nEscaping: {"; *)
-    (*    FunSet.app (fn x => print (LambdaVar.lvarName (#2 x) ^ ",")) escapeSet; *)
-    (*    print "}\n") *)
-
     val lookup = Store.lookup o (fn (ctx: t) => #store ctx)
     val find = Store.find o (fn (ctx: t) => #store ctx)
 
@@ -432,55 +394,6 @@ structure ZeroCFA :> CFA = struct
     fun addEscapingFun (ctx: t) name =
       scanAddr ctx LambdaVar.Set.empty [name]
 
-    (* fun propagateChange (ctx as {epochTable, ...}: t) (name: LCPS.lvar) = *)
-    (*   let val syn = #syn ctx *)
-    (*       val useSites = Syn.useSites syn name *)
-    (*       fun inFV f = LambdaVar.Set.member (Syn.fv syn f, name) *)
-    (*       fun hasEvaluated (_, _, _, _, body) = *)
-    (*         LCPS.Tbl.inDomain epochTable body *)
-    (*       fun addToTodo f = *)
-    (*         if inFV f andalso hasEvaluated f then *)
-    (*           FunSet.add (#todo ctx, f) *)
-    (*         else *)
-    (*           () *)
-    (*   in  LCPS.FunSet.app addToTodo useSites *)
-    (*   end *)
-
-    (* fun markValueChange' (ctx: t) name = *)
-    (*   let val {syn, escapeSet, todo, ...} = ctx *)
-    (*       fun useIndirectly f = *)
-    (*         let *)
-    (*           fun functionsOf v = *)
-    (*             let fun collect (Value.FUN (Value.IN f), acc) = f :: acc *)
-    (*                   | collect (_, acc) = acc *)
-    (*             in  Value.fold collect [] (lookup ctx v) *)
-    (*             end *)
-    (*           fun loop ([], seen) = false *)
-    (*             | loop (f::fs, seen) = *)
-    (*                 if LCPS.FunSet.member (seen, f) then *)
-    (*                   loop (fs, seen) *)
-    (*                 else *)
-    (*                   let val fv = LambdaVar.Set.subtract (Syn.fv syn f, #2 f) *)
-    (*                   in  if LambdaVar.Set.member (fv, name) then *)
-    (*                         true *)
-    (*                       else *)
-    (*                         let val next = LambdaVar.Set.foldl *)
-    (*                               (fn (v, acc) => functionsOf v @ acc) [] fv *)
-    (*                         in  loop (fs @ next, LCPS.FunSet.add (seen, f)) *)
-    (*                         end *)
-    (*                   end *)
-    (*         in loop ([f], LCPS.FunSet.empty) *)
-    (*         end *)
-    (*       fun addToTodo f = *)
-    (*         if FunSet.member (#escapeSet ctx, f) then *)
-    (*           FunSet.add (#todo ctx, f) *)
-    (*         else *)
-    (*           () *)
-    (*   in  FunSet.app *)
-    (*         (fn f => if useIndirectly f then addToTodo f else ()) *)
-    (*         escapeSet *)
-    (*   end *)
-
     fun escape (ctx: t) name =
       let val escapingAddr = #escapingAddr ctx
       in  if LambdaVarSet.member (escapingAddr, name) then
@@ -496,9 +409,7 @@ structure ZeroCFA :> CFA = struct
       end
 
     fun getHdlr ({store, ...}: t) = (Value.mk (Value.FUN Value.OUT))
-    fun addHdlr (ctx as {store, ...}: t) v =
-      (* (escape ctx v; ignore (Store.addHdlr store (lookup ctx v))) *)
-      (escape ctx v)
+    fun addHdlr (ctx as {store, ...}: t) v = escape ctx v
 
     fun add' (ctx: t) (addr, c) =
       (if LambdaVarSet.member (#escapingAddr ctx, addr) then
@@ -506,9 +417,6 @@ structure ZeroCFA :> CFA = struct
         in  app (escape ctx) addrs
         end
        else ();
-       (* if Store.update (#store ctx) (addr, c) then *)
-       (*   (markValueChange' ctx addr; true) *)
-       (* else false) *)
        Store.update (#store ctx) (addr, c))
     fun add ctx (addr, c) = (add' ctx (addr, c); ())
 
@@ -518,16 +426,11 @@ structure ZeroCFA :> CFA = struct
         in  app (escape ctx) addrs
         end
        else ();
-       (* if Store.merge (#store ctx) (addr, v) then *)
-       (*   (markValueChange' ctx addr; true) *)
-       (* else false) *)
        Store.merge (#store ctx) (addr, v))
     fun merge ctx (addr, v) = (merge' ctx (addr, v); ())
 
     fun epoch ({store, ...}: t) = Store.epoch store
     fun escapeSet ({escapeSet, ...}: t) = escapeSet
-    (* fun retrieveTodo ({todo, ...}: t) = todo *)
-    (* fun clearTodo ({todo, ...}: t) = FunSet.filter (fn _ => false) todo *)
   end
 
   fun evalValue ctx (CPS.VAR v) =
@@ -546,14 +449,21 @@ structure ZeroCFA :> CFA = struct
     | unknown cty = Value.UNKNOWN cty
 
   fun select ctx (values, off, cty) =
-    let fun collect (Value.RECORD addrs, acc) =
-              ((Context.lookup ctx (List.nth (addrs, off)) :: acc)
+    let fun filter (value, acc) =
+          let fun compatible (CPS.FUNt | CPS.CNTt) (v as Value.FUN _, acc) =
+                    v :: acc
+                | compatible (CPS.FUNt | CPS.CNTt) (_, acc) = acc
+                | compatible _ (v, acc) = v :: acc
+          in  Value.fold (compatible cty) acc value
+          end
+        fun collect (Value.RECORD addrs, acc) =
+              (filter (Context.lookup ctx (List.nth (addrs, off)), acc)
                handle Subscript => acc)
-          | collect (Value.DATARECORD, acc) =
+          | collect ((Value.DATARECORD | Value.DATA), acc) =
               (case cty
                  of (CPS.FUNt | CPS.CNTt) => acc
-                  | (CPS.NUMt _ | CPS.FLTt _) => Value.mk Value.DATA :: acc
-                  | (CPS.PTRt _) => Value.mk Value.DATARECORD :: acc)
+                  | (CPS.NUMt _ | CPS.FLTt _) => Value.DATA :: acc
+                  | (CPS.PTRt _) => Value.DATARECORD :: acc)
           | collect (Value.UNKNOWN (CPS.PTRt _), acc) =
               (* Unknown has to propagate unknown; I hate this.
                * e.g.
@@ -566,7 +476,7 @@ structure ZeroCFA :> CFA = struct
                         | (CPS.NUMt {tag=false, ...} | CPS.FLTt _) =>
                             Value.DATA
                         | _ => Value.UNKNOWN (CPS.PTRt CPS.VPT))
-              in  Value.mk v :: acc
+              in  v :: acc
               end
           | collect (_, acc) = acc
     in  Value.fold collect [] values
@@ -575,19 +485,6 @@ structure ZeroCFA :> CFA = struct
   fun access ctx =
     let fun go (concretes, CPS.OFFp 0) = Value.toList concretes
           | go (concretes, CPS.OFFp i) = raise Fail "OFFSET"
-              (* let fun offset addrs = SOME (Value.RECORD (List.drop (addrs, i))) *)
-              (*                        handle Subscript => NONE *)
-              (*     fun collect (Value.RECORD addrs, acc) = *)
-              (*           (case offset addrs *)
-              (*              of SOME c => c :: acc *)
-              (*               | NONE   => acc) *)
-              (*       | collect (Value.DATARECORD, acc) = *)
-                       
-              (*       | collect (Value.UNKNOWN (CPS.PTRt _), acc) = *)
-              (*           (Value.UNKNOWN (CPS.PTRt CPS.VPT) :: acc) *)
-              (*       | collect (_, acc) = acc *)
-              (* in  Value.fold collect [] concretes *)
-              (* end *)
           | go (concretes, CPS.SELp (i, p)) =
               let fun get addrs =
                     (let val addr = List.nth (addrs, i)
@@ -608,12 +505,11 @@ structure ZeroCFA :> CFA = struct
     end
 
   fun dump ctx cexp =
-    (print (concat ["Current expression: ", LambdaVar.lvarName (LCPS.labelOf
-    cexp), "\n"]);
-     (* print "\nCurrent state:\n"; *)
-     (* Context.dump ctx; *)
-     (* print "=================\n") *)
-     ())
+    (print (concat ["Current expression: ",
+                    LambdaVar.lvarName (LCPS.labelOf cexp), "\n"]);
+     print "\nCurrent state:\n";
+     Context.dump ctx;
+     print "=================\n")
   fun dump ctx _ =
     if Context.epoch ctx mod 20000 = 0 then
       (print ("\ncurrent epoch:          " ^ Int.toString (Context.epoch ctx));
@@ -621,16 +517,22 @@ structure ZeroCFA :> CFA = struct
        print "=================\n\n\n")
     else
       ()
-  (* fun dump ctx _ = *)
-  (*   print ("\rCurrent epoch:          " ^ Int.toString (Context.epoch ctx)) *)
-  (* fun dump _ _ = () *)
+  fun dump ctx _ =
+    let val epoch = Context.epoch ctx
+    in  if epoch mod 1000 = 0 then
+          print ("\rCurrent epoch:          " ^ Int.toString (Context.epoch ctx))
+        else
+          ()
+    end
+  fun dump _ _ = ()
 
-  fun loopExp ctx cexp = ( dump ctx cexp; Context.guard loopExpCase ctx cexp)
+  fun loopExp ctx cexp = (dump ctx cexp; Context.guard loopExpCase ctx cexp)
   and loopExpCase ctx (LCPS.APP (_, f, args)) =
         apply ctx (evalValue ctx f, args)
     | loopExpCase ctx (LCPS.RECORD (_, _, values, x, body)) =
         let fun isData (_, src, _) = Value.isFirstOrder (evalValue ctx src)
-            fun alloc (_, CPS.VAR src, CPS.OFFp 0) = src
+            fun alloc (dest, src, CPS.OFFp 0) =
+                  (Context.merge ctx (dest, evalValue ctx src); dest)
               | alloc (dest, src, path) =
                   let val concretes = access ctx (evalValue ctx src, path)
                       val value = Value.from concretes
@@ -648,22 +550,10 @@ structure ZeroCFA :> CFA = struct
         let val values = select ctx (evalValue ctx value, i, ty)
         in  case values
               of [] => () (* no record value is accessible here; type error *)
-               | _ => (app (fn v => Context.merge ctx (dest, v)) values;
+               | _ => (app (fn v => Context.add ctx (dest, v)) values;
                        loopExp ctx body)
         end
-    | loopExpCase _ (LCPS.OFFSET _) =
-        raise Fail "no OFFSET"
-        (* let val v = *)
-        (*       let val records = Value.records (evalValue ctx value) *)
-        (*           fun truncate addrs = *)
-        (*             SOME (Value.RECORD (List.drop (addrs, i))) *)
-        (*             handle Subscript => NONE *)
-        (*           val records' = List.mapPartial truncate records *)
-        (*       in  Value.from records' *)
-        (*       end *)
-        (* in  Context.merge ctx (dest, v); *)
-        (*     loopExp ctx body *)
-        (* end *)
+    | loopExpCase _ (LCPS.OFFSET _) = raise Fail "no OFFSET"
     | loopExpCase ctx (LCPS.FIX (_, bindings, body)) =
         let fun bind (f as (_, name, _, _, _)) =
               Context.add ctx (name, Value.FUN (Value.IN f))
@@ -673,18 +563,6 @@ structure ZeroCFA :> CFA = struct
     | loopExpCase ctx (LCPS.SWITCH (_, _, _, arms)) =
         (* Since we are not tracking integers, visit all arms *)
         app (loopExp ctx) arms
-    | loopExpCase ctx (LCPS.BRANCH (_, CPS.P.BOXED, [x], _, trueExp, falseExp))=
-        (case Value.isBoxed (evalValue ctx x)
-           of NONE => (loopExp ctx trueExp; loopExp ctx falseExp)
-            | SOME true  => loopExp ctx trueExp
-            | SOME false => loopExp ctx falseExp)
-    | loopExpCase ctx (LCPS.BRANCH (_, CPS.P.UNBOXED, [x], _, trueExp, falseExp))=
-        (case Value.isBoxed (evalValue ctx x)
-           of NONE => (loopExp ctx trueExp; loopExp ctx falseExp)
-            | SOME true  => loopExp ctx falseExp
-            | SOME false => loopExp ctx trueExp)
-    | loopExpCase ctx (LCPS.BRANCH (_, (CPS.P.UNBOXED | CPS.P.BOXED), _, _, _, _))=
-        (raise Impossible "boxed or unboxed applied to more than one arg")
     | loopExpCase ctx (LCPS.BRANCH (_, _, _, _, trueExp, falseExp)) =
         (loopExp ctx trueExp; loopExp ctx falseExp)
     | loopExpCase ctx (LCPS.SETTER (_, CPS.P.SETHDLR, [CPS.VAR hdlr], body)) =
@@ -703,9 +581,7 @@ structure ZeroCFA :> CFA = struct
                       | _ => changed)
               | assign (_, changed) = changed
             val changed = Value.fold assign false (Context.lookup ctx dest)
-        in
-            (* if changed then Context.propagateChange ctx dest else (); *)
-            loopExp ctx body
+        in  loopExp ctx body
         end
     | loopExpCase _ (LCPS.SETTER (_, (CPS.P.UNBOXEDASSIGN | CPS.P.ASSIGN),
                                        _, _)) =
@@ -728,9 +604,7 @@ structure ZeroCFA :> CFA = struct
                       | _ => changed)
               | assign (_, changed) = changed
             val changed = Value.fold assign false (Context.lookup ctx dest)
-        in
-            (* if changed then Context.propagateChange ctx dest else (); *)
-            loopExp ctx body
+        in  loopExp ctx body
         end
     | loopExpCase _ (LCPS.SETTER (_, (CPS.P.UNBOXEDUPDATE | CPS.P.UPDATE),
                                        _, _)) =
@@ -770,12 +644,16 @@ structure ZeroCFA :> CFA = struct
          Context.add ctx (dest, Value.DATA);
          loopExp ctx body)
     | loopExpCase ctx (LCPS.PURE (label, CPS.P.MAKEREF, [v], dest, _, body)) =
-        (Context.add ctx (dest, Value.REF label);
-         case v
-           of CPS.VAR w => Context.merge ctx (label, Context.lookup ctx w)
+        (case v
+           of CPS.VAR w =>
+                if Value.isFirstOrder (Context.lookup ctx w) then
+                  Context.add ctx (dest, Value.DATARECORD)
+                else
+                  (Context.add ctx (dest, Value.REF label);
+                   Context.merge ctx (label, Context.lookup ctx w))
             | CPS.LABEL _ => raise Impossible "label"
             | (CPS.NUM _ | CPS.REAL _ | CPS.STRING _) =>
-                Context.add ctx (label, Value.DATA)
+                Context.add ctx (dest, Value.DATARECORD)
             | CPS.VOID => raise Impossible "what is this?";
          loopExp ctx body)
     | loopExpCase ctx (LCPS.PURE (_, _, _, dest, ty, body)) =
@@ -785,100 +663,44 @@ structure ZeroCFA :> CFA = struct
   and apply ctx (f: Value.t, args: LCPS.value list) =
         let
           val argVals = map (evalValue ctx) args
-          (* val () = (Value.dump f; print "\n") *)
           fun call (Value.FUN (Value.IN (_, name, formals, _, body))) =
-                ((
-                  (* print ("calling " ^ LambdaVar.lvarName name ^ "\n"); *)
-                  app (Context.merge ctx) (ListPair.zipEq (formals, argVals));
-                  loopExp ctx body)
-                 handle ListPair.UnequalLengths => ())
+                if List.length formals = List.length argVals then
+                  (app (Context.merge ctx) (ListPair.zipEq (formals, argVals));
+                   loopExp ctx body)
+                else
+                  ()
                 (* if the function is applied with incorrect number
                  * of arguments, this path is aborted *)
              | call (Value.FUN Value.OUT | Value.UNKNOWN _) =
                  app (fn (CPS.VAR v) => Context.escape ctx v | _ => ()) args
-             (* | call Value.UNCAUGHTEXN = *)
-             (*     app (fn (CPS.VAR v) => Context.escape ctx v | _ => ()) args *)
              | call (Value.RECORD _ | Value.DATARECORD
                     | Value.REF _ | Value.DATA) =
-                 (* (Value.dump f; print "\n"; raise Fail "does this happen?") *)
-                 ()
+                 raise Fail "Impossible"
                 (* if applying a non-function, nothing to be done *)
         in
           Value.app call f
         end
 
-  (* fun loopEscape ctx q visited = *)
-  (*   let *)
-  (*     fun doFunction (fun_kind, name, formals, tys, body) = *)
-  (*       let *)
-  (*         val beforeSet = Context.escapeSet ctx *)
-  (*         fun mkUnknown (arg, cty) = ignore (Context.add ctx (arg, unknown cty)) *)
-  (*       in *)
-  (*         ListPair.appEq mkUnknown (formals, tys); *)
-  (*         loopExp ctx body; *)
-  (*         Context.FunctionSet.app (fn f => Queue.enqueue (q, f)) *)
-  (*           (Context.FunctionSet.difference (Context.escapeSet ctx, beforeSet)); *)
-  (*         () *)
-  (*       end *)
-  (*   in *)
-  (*     case Queue.next q *)
-  (*       of SOME (function as (_, name, _, _, _)) => *)
-  (*            if LambdaVar.Set.member (visited, name) then *)
-  (*              loopEscape ctx q visited *)
-  (*            else *)
-  (*              (doFunction function; *)
-  (*               loopEscape ctx q (LambdaVar.Set.add (visited, name)); *)
-  (*               ()) *)
-  (*        | NONE => () *)
-  (*   end *)
-
-  (* fun loopEscape ctx q = *)
-  (*   let *)
-  (*     fun doFunction (_, name, formals, tys, body) = *)
-  (*       let fun addArg (arg, cty) = Context.add ctx (arg, unknown cty) *)
-  (*       in *)
-  (*           ListPair.appEq addArg (formals, tys); *)
-  (*           loopExp ctx body *)
-  (*       end *)
-      (* fun enqueueChanges () = *)
-      (*   let val todo = Context.retrieveTodo ctx *)
-      (*       fun addFun function = *)
-      (*         (Queue.delete (q, fn f' => LambdaVar.same (#2 f', #2 function)); *)
-      (*          Queue.enqueue (q, function)) *)
-      (*   in  LCPS.FunMonoSet.app addFun todo; *)
-      (*       Context.clearTodo ctx *)
-      (*   end *)
-      (* val () = (print "Queue: "; Queue.app *)
-      (*   (fn f => print (LambdaVar.lvarName (#2 f) ^ ", ")) q; *)
-      (*   print "\n") *)
-      (* val () = print ("\rQueue length: " ^ Int.toString (Queue.length q) ^ "    ") *)
-    (* in *)
-      (* case Queue.next q *)
-      (*   of SOME function => *)
-      (*        (doFunction function; enqueueChanges (); loopEscape ctx q) *)
-      (*    | NONE => () *)
-    (* end *)
-    fun loopEscape ctx n =
-      let
-        val () = print ("\rIteration: " ^ Int.toString n ^ "      ")
-        fun doFunction (_, name, formals, tys, body) =
-          let fun addArg (arg, cty) = Context.add ctx (arg, unknown cty)
-          in  ListPair.appEq addArg (formals, tys);
-              loopExp ctx body
-          end
-        val escapeSet = Context.escapeSet ctx
-        val epoch = Context.epoch ctx
-        val size  = LCPS.FunMonoSet.numItems escapeSet
-        val () = LCPS.FunMonoSet.app doFunction escapeSet
-        val epoch' = Context.epoch ctx
-        val size'  = LCPS.FunMonoSet.numItems escapeSet
-      in
-        if size = size' andalso epoch = epoch' then
-          ()
-        else
-          loopEscape ctx (n + 1)
-      end
-
+  fun loopEscape ctx n =
+    let
+      val () = print ("\rIteration: " ^ Int.toString n ^ "      ")
+      fun doFunction (_, name, formals, tys, body) =
+        let fun addArg (arg, cty) = Context.add ctx (arg, unknown cty)
+        in  ListPair.appEq addArg (formals, tys);
+            loopExp ctx body
+        end
+      val escapeSet = Context.escapeSet ctx
+      val epoch = Context.epoch ctx
+      val size  = LCPS.FunMonoSet.numItems escapeSet
+      val () = LCPS.FunMonoSet.app doFunction escapeSet
+      val epoch' = Context.epoch ctx
+      val size'  = LCPS.FunMonoSet.numItems escapeSet
+    in
+      if size = size' andalso epoch = epoch' then
+        ()
+      else
+        loopEscape ctx (n + 1)
+    end
 
   fun timeit str thunk =
     let
