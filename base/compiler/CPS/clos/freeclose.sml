@@ -256,6 +256,8 @@ structure FreeClose : FREECLOSE = struct
 	(i + 1, foldl (fn (v, nm) => LVM.insert (nm, v, i)) nm vl)
 
     val number_map = #2 (foldl assNum (0, LVM.empty) (SCC.topOrder' (mkgraph fe')))
+    (* val ecg = DotLanguage.fromGraph (fn node => (LV.lvarName node, [])) (mkgraph fe') *)
+    (* val ()  = DotLanguage.dump ecg *)
 
     fun sccnum x = valOf (LVM.find (number_map, x))
 
@@ -643,7 +645,10 @@ structure FreeClose : FREECLOSE = struct
 		      end)
 	   end
 
-     in (#1(freefix (0,[]) fe'), getsn, freeV, ekfunsP)
+      val res = (#1(freefix (0,[]) fe'), getsn, freeV, ekfunsP)
+    (* val () = LV.Tbl.appi (fn (n, i) => print (concat [LV.lvarName n, " ---> ", *)
+    (* Int.toString i, "\n"])) snum *)
+     in res
     end (* function freemapClose *)
 
 (*
