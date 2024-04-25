@@ -82,7 +82,7 @@ end = struct
     let
       fun dfs seen [] doc = doc
         | dfs seen (node::todo) doc =
-            let val n as (name, _) = convert node
+            let val n as (name, attr) = convert node
                 val name' = Atom.atom name
             in  if AtomSet.member (seen, name') then
                   dfs seen todo doc
