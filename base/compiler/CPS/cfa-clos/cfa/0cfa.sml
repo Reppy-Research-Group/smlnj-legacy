@@ -445,7 +445,7 @@ structure ZeroCFA :> CFA = struct
                handle Subscript => acc)
           | collect ((Value.DATARECORD | Value.DATA), acc) =
               (case cty
-                 of (CPS.FUNt | CPS.CNTt) => acc
+                 of (CPS.FUNt | CPS.CNTt) => (Value.FUN Value.OUT :: acc)
                   | (CPS.NUMt _ | CPS.FLTt _) => Value.DATA :: acc
                   | (CPS.PTRt _) => Value.DATARECORD :: acc)
           | collect (Value.UNKNOWN (CPS.PTRt _), acc) =
