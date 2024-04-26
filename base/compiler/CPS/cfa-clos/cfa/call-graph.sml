@@ -27,6 +27,8 @@ signature CALL_GRAPH = sig
     escapingLambdas: LabelledCPS.function vector
   } -> t
 
+  val bogus : unit -> t
+
   val scc : t -> component list
   val info   : t -> LabelledCPS.function -> info
   val whatis : t -> LabelledCPS.lvar -> object
@@ -103,6 +105,14 @@ structure CallGraph :> CALL_GRAPH = struct
   fun sameFun f1 f2 = LV.same (LCPS.nameOfF f1, LCPS.nameOfF f2)
 
   exception CallGraph
+
+  fun bogus () = 
+      T { funTbl=LCPS.FunTbl.mkTable (0, CallGraph),
+          varTbl=LV.Tbl.mkTable (0, CallGraph),
+          allFunctions=Vector.fromList [],
+          knownFunctions=Vector.fromList [],
+          escaping= #[] }
+
   fun build {cps, lookup, escapingLambdas} =
     let
       val funTbl = LCPS.FunTbl.mkTable (64, CallGraph)
