@@ -35,15 +35,16 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       val syntactic = SyntacticInfo.calculate lcps
       (* val () = SyntacticInfo.dump syntactic *)
       val callgraph = ZeroCFA.analyze (syntactic, lcps)
-      val () = CG.dumpStats callgraph
+      val callgraph2 = FlowCFA.analyze (syntactic, lcps)
+      (* val () = CG.dumpStats callgraph *)
       (* val f  = RefClosure.convert (lcps, callgraph, syntactic) *)
       (* val () = ClosureRep.analyze (lcps, callgraph, syntactic) *)
       (* val scc = CallGraph.scc callgraph *)
-      val cg  = CallGraph.callGraphDot callgraph
+      (* val cg  = CallGraph.callGraphDot callgraph *)
       (* val web = CallGraph.callWebDot callgraph *)
       (* val (lcps, lifetime) = Lifetime.analyze (lcps, callgraph) *)
       (* val slots = ClosureRep.analyze (lcps, callgraph, lifetime) *)
-      val () = DotLanguage.dump cg
+      (* val () = DotLanguage.dump cg *)
       (* val () = dumpSCC scc *)
     in
       (* UnRebind.unrebind (LCPS.unlabelF f) *)

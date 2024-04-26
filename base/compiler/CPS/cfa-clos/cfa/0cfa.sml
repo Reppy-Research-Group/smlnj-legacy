@@ -78,14 +78,15 @@ structure ZeroCFA :> CFA = struct
 
       fun hashVal v =
         let
-          val dataTag    = 0w0
-          val funTag     = 0w1
-          val recordTag  = 0w2
-          val refTag     = 0w3
-          val topTag     = 0w4
-          val unknownTag = 0w5
-          val datarecord = 0w6
-          fun addTag (hash, tag) = Word.orb (Word.<< (hash, 0w3), tag)
+          val shift = Word.fromInt (Word.wordSize - 3)
+          val dataTag    = Word.<< (0w0, shift)
+          val funTag     = Word.<< (0w1, shift)
+          val recordTag  = Word.<< (0w2, shift)
+          val refTag     = Word.<< (0w3, shift)
+          val topTag     = Word.<< (0w4, shift)
+          val unknownTag = Word.<< (0w5, shift)
+          val datarecord = Word.<< (0w6, shift)
+          fun addTag (hash, tag) = Word.orb (Word.>> (hash, 0w3), tag)
         in
           case v
             of DATA => dataTag
@@ -668,7 +669,7 @@ structure ZeroCFA :> CFA = struct
 
   fun loopEscape ctx n =
     let
-      val () = print ("\rIteration: " ^ Int.toString n ^ "      ")
+      (* val () = print ("\rIteration: " ^ Int.toString n ^ "      ") *)
       fun doFunction (_, name, formals, tys, body) =
         let fun addArg (arg, cty) = Context.add ctx (arg, unknown cty)
         in  ListPair.appEq addArg (formals, tys);
@@ -709,7 +710,7 @@ structure ZeroCFA :> CFA = struct
          loopEscape ctx 1)
     in
       timeit "\n>> 0cfa: " run;
-      Context.dump ctx;
+      (* Context.dump ctx; *)
       CallGraph.build {
         cps=function,
         lookup=Option.map Value.objects o Context.find ctx,
