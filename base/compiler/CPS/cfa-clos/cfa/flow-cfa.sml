@@ -25,7 +25,6 @@ structure FlowCFA :> CFA = struct
     datatype t = Function of LCPS.function
                | Record   of lvar vector
                | Mutable  of lvar
-               | ExternalFunction
                | Value    of LCPS.cty
 
     val hash : t -> word
@@ -37,31 +36,32 @@ structure FlowCFA :> CFA = struct
     datatype t = Function of LCPS.function
                | Record   of lvar vector
                | Mutable  of lvar
-               | ExternalFunction
                | Value    of LCPS.cty
 
     fun hash v =
       let val funtag = 0w0
           val rectag = 0w1
           val muttag = 0w2
-          val extfun = 0w3
-          val valtag = 0w4
+          val valtag = 0w3
           val hashvar = Word.fromInt o LV.toId
+          fun hashTy (CPS.NUMt _) = 0w0
+            | hashTy (CPS.PTRt _) = 0w1
+            | hashTy (CPS.FUNt)   = 0w2
+            | hashTy (CPS.FLTt _) = 0w3
+            | hashTy (CPS.CNTt)   = 0w4
       in  case v
             of Function f => hashCombine (funtag, hashvar (#2 f))
              | Record vs => Vector.foldl
                               (fn (v, h) => hashCombine (h, hashvar v))
                               rectag vs
              | Mutable v => hashCombine (muttag, hashvar v)
-             | ExternalFunction => hashCombine (extfun, 0w17)
-             | Value _ => hashCombine (valtag, 0w17)
+             | Value ty => hashCombine (valtag, hashTy ty)
       end
 
     fun same (Function f1, Function f2) = LV.same (#2 f1, #2 f2)
       | same (Record vs1, Record vs2) =
           Vector.collate LV.compare (vs1, vs2) = EQUAL
       | same (Mutable v1, Mutable v2) = LV.same (v1, v2)
-      | same (ExternalFunction, ExternalFunction) = true
       | same (Value ty1, Value ty2) =
           (case (ty1, ty2) (* Do we only care about the first level? *)
              of (CPS.NUMt _, CPS.NUMt _) => true
@@ -76,7 +76,6 @@ structure FlowCFA :> CFA = struct
       | toString (Record vs) =
           concat ["{", concatWithMap ", " LV.lvarName vs, "} [R]"]
       | toString (Mutable v) = concat [LV.lvarName v, "[REF]"]
-      | toString ExternalFunction = "Extern"
       | toString (Value cty) = CPSUtil.ctyToString cty
 
     structure HashSet = HashSetFn(struct
@@ -379,8 +378,7 @@ structure FlowCFA :> CFA = struct
   fun isFunTy (CPS.FUNt | CPS.CNTt) = true
     | isFunTy _ = false
 
-  fun fromType (v, ty) =
-    if isFunTy ty then ExternalFunction --> v else Value ty --> v
+  fun fromType (v, ty) = Value ty --> v
 
   fun initialize (syn, cps) =
     let
@@ -411,7 +409,7 @@ structure FlowCFA :> CFA = struct
         | walk (BRANCH (_, _, _, _, te, fe)) = (walk te; walk fe)
         | walk (SETTER (_, _, _, cexp)) = walk cexp
         | walk (LOOKER (_, CPS.P.GETHDLR, _, dest, _, cexp)) =
-            (add (ExternalFunction --> dest); walk cexp)
+            (add (Value CPS.FUNt --> dest); walk cexp)
         | walk (LOOKER (_, _, _, _, _, cexp)) = walk cexp
         | walk (ARITH (_, _, _, dest, ty, cexp)) =
             (add (Value ty --> dest); walk cexp)
@@ -455,7 +453,7 @@ structure FlowCFA :> CFA = struct
                     else ()
                 | SETTER (_, CPS.P.SETHDLR, _, _) => add (/-- func)
                 | _ => ())
-        | propagateValue (ExternalFunction, x) =
+        | propagateValue (Value (CPS.FUNt | CPS.CNTt), x) =
             forallUsesOf x
               (fn APP (_, f, args) =>
                     let fun markEscape (CPS.VAR v) = add (--/ v)
@@ -498,11 +496,17 @@ structure FlowCFA :> CFA = struct
               else ()) vars
         | escape (Mutable v) =
               if not (member (--/ v)) then
-                (add (--/ v); forallValuesOf v escape)
+                (add (--/ v);
+                 transitivity (Value CPS.FUNt, v);
+                 forallValuesOf v escape)
               else ()
-        | escape (ExternalFunction | Value _) = ()
+        | escape (Value _) = ()
+
+      (* val propagate = fn f => (print ("prop: " ^ Fact.toString f ^ "\n"); *)
+      (* propagate f) *)
 
       fun dump n = (print ("\r" ^ Int.toString n))
+      fun dump _ = ()
 
       fun loop n =
         (case Context.next ctx
