@@ -1,7 +1,10 @@
 structure FlowCFA :> CFA = struct
 
   structure LCPS = LabelledCPS
-  structure LV   = LambdaVar
+  structure LV   = struct
+    open LambdaVar
+    structure MonoSet = HashSetFn(Tbl.Key)
+  end
   structure Syn  = SyntacticInfo
   type lvar = LV.lvar
 
@@ -28,6 +31,8 @@ structure FlowCFA :> CFA = struct
     val hash : t -> word
     val same : t * t -> bool
     val toString : t -> string
+
+    structure HashSet : MONO_HASH_SET where type Key.hash_key = t
   end = struct
     datatype t = Function of LCPS.function
                | Record   of lvar vector
@@ -73,6 +78,12 @@ structure FlowCFA :> CFA = struct
       | toString (Mutable v) = concat [LV.lvarName v, "[REF]"]
       | toString ExternalFunction = "Extern"
       | toString (Value cty) = CPSUtil.ctyToString cty
+
+    structure HashSet = HashSetFn(struct
+      type hash_key = t
+      val hashVal = hash
+      val sameKey = same
+    end)
   end
 
   infix 6 >-> -->
@@ -126,6 +137,139 @@ structure FlowCFA :> CFA = struct
     structure HashTbl = HashTableFn(Key)
   end
 
+  datatype fact  = datatype Fact.t
+  datatype value = datatype Value.t
+  datatype cexp  = datatype LCPS.cexp
+  datatype either = datatype Either.either
+
+  structure FactSet :> sig
+    type t
+    val mk : int -> t
+    val add            : t -> Fact.t -> bool
+    val member         : t -> Fact.t -> bool
+    val forallValuesOf : t -> lvar -> (Value.t -> unit) -> unit
+    val transitivity   : t -> Value.t * lvar -> (Fact.t -> unit) -> unit
+    val dump : t -> unit
+  end = struct
+    type t = {
+      (* row(i) = { j | i >-> j ∈ R }*)
+      row    : LV.MonoSet.set LV.Tbl.hash_table,
+      (* store(i) = { v | v --> i ∈ R }*)
+      store  : Value.HashSet.set LV.Tbl.hash_table,
+      (* sink = { v | --/ v } *)
+      sink   : LV.MonoSet.set,
+      (* escape = { f | /-- f } *)
+      escape : LCPS.FunMonoSet.set
+    }
+
+    structure LVS = LV.MonoSet
+    structure LVT = LV.Tbl
+    structure VS  = Value.HashSet
+
+    exception FactSet
+    fun mk hint = {
+      row = LV.Tbl.mkTable (hint, FactSet),
+      store = LV.Tbl.mkTable (hint, FactSet),
+      sink  = LV.MonoSet.mkEmpty hint,
+      escape = LCPS.FunMonoSet.mkEmpty hint
+    }
+
+    fun add ({row, store, sink, escape}: t) =
+      fn x >-> y =>
+          (case LVT.find row x
+             of SOME set =>
+                  if LVS.member (set, y) then
+                    false
+                  else
+                    (LVS.add (set, y); true)
+              | NONE =>
+                  (LVT.insert row (x, LVS.mkSingleton y); true))
+       | v --> x =>
+          (case LVT.find store x
+             of SOME set =>
+                  if VS.member (set, v) then false else (VS.add (set, v); true)
+              | NONE =>
+                  (LV.Tbl.insert store (x, VS.mkSingleton v); true))
+       | /-- f =>
+          if LCPS.FunMonoSet.member (escape, f) then
+            false
+          else
+            (LCPS.FunMonoSet.add (escape, f); true)
+       | --/ v =>
+          if LVS.member (sink, v) then false else (LVS.add (sink, v); true)
+
+    fun member ({row, store, sink, escape}: t) =
+      fn x >-> y =>
+           (case LVT.find row x
+              of SOME set => LVS.member (set, y)
+               | NONE     => false)
+       | v --> x =>
+           (case LVT.find store x
+              of SOME set => VS.member (set, v)
+               | NONE     => false)
+       | /-- f =>
+           LCPS.FunMonoSet.member (escape, f)
+       | --/ v =>
+           LVS.member (sink, v)
+
+    fun forallValuesOf ({store, ...}: t) v f =
+      (case LVT.find store v
+         of SOME set => VS.app f set
+          | NONE => ())
+
+    fun transitivity (t as {row, ...}: t) (v, x) f =
+      (case LVT.find row x
+         of SOME set =>
+              LVS.app (fn y => if add t (v --> y) then f (v --> y) else ()) set
+          | NONE => ())
+
+    fun dump ({row, store, sink, escape}: t) =
+      let val puts = print o concat
+          fun prow (x, set) =
+            puts [LV.lvarName x, " >-> {",
+                  String.concatWithMap " " LV.lvarName (LVS.listItems set),
+                  "}\n"]
+          fun pstore (x, vs) =
+            puts [LV.lvarName x, " <-- {",
+                  String.concatWithMap " " Value.toString (VS.listItems vs),
+                  "}\n"]
+      in  LVT.appi prow row;
+          LVT.appi pstore store;
+          puts ["/-- {",
+                String.concatWithMap " " (LV.lvarName o #2)
+                (LCPS.FunMonoSet.listItems escape),
+                "}\n"];
+          puts ["--/ {",
+                String.concatWithMap " " LV.lvarName (LVS.listItems sink),
+                "}\n"]
+      end
+  end
+
+(*   structure FactSetRef :> sig *)
+(*     type t *)
+(*     val mk : int -> t *)
+(*     val add            : t -> Fact.t -> bool *)
+(*     val member         : t -> Fact.t -> bool *)
+(*     val forallValuesOf : t -> lvar -> (Value.t -> unit) -> unit *)
+(*     val transitivity   : t -> Value.t * lvar -> (Fact.t -> unit) -> unit *)
+(*   end = struct *)
+(*     fun forallValuesOf ({facts, ...}: ctx) x f = *)
+(*       let fun find (v --> y) = if LV.same (x, y) then f v else () *)
+(*             | find _ = () *)
+(*       in  Fact.HashSet.app find facts *)
+(*       end *)
+
+(*     fun transitivity (ctx as {facts, ...}: ctx) (v, x) = *)
+(*       let fun collect (x' >-> y, facts) = *)
+(*                 if LV.same (x, x') then v --> y :: facts else facts *)
+(*             | collect (_, facts) = facts *)
+(*           val facts' = Fact.HashSet.fold collect [] facts *)
+(*       in  List.app (fn f => remember (ctx, f)) facts' *)
+(*       end *)
+
+(*     fun member ({facts, ...}: ctx) fact = Fact.HashSet.member (facts, fact) *)
+(*   end *)
+
   structure Context :> sig
     type ctx
     val mk : Syn.t -> ctx
@@ -136,96 +280,75 @@ structure FlowCFA :> CFA = struct
     val forallUsesOf   : ctx -> lvar -> (LCPS.cexp -> unit) -> unit
     val transitivity   : ctx -> Value.t * lvar -> unit
     val member : ctx -> Fact.t -> bool
+    (* val summary : ctx -> unit *)
   end = struct
     type ctx = {
       todo  : Fact.t Queue.queue,
-      facts : Fact.HashSet.set,
+      facts : FactSet.t,
       syn   : Syn.t
     }
 
     fun mk syn = {
       todo=Queue.mkQueue (),
-      facts=Fact.HashSet.mkEmpty 1024,
+      facts=FactSet.mk 1024,
       syn=syn
     }
 
-    (* r = (x1 : r1, x2 : r2, x3 : r3)
-     * -----------------------------------
-     * x1 >-> r1, x2 >-> r2, x3 >-> r3
-     *
-     * x = r.0       (r1, r2, r3) >-> r
-     * -----------------------------------
-     * r1 >-> x
-     *
-     *
-     * r = makeref(a : r1)
-     * -----------------------------------
-     * REF r1 --> r
-     *
-     * x = !r   REF r1 --> r
-     * -----------------------------------
-     * r1 >-> x
-     *
-     *
-     * r := x   REF r1 --> r
-     * -----------------------------------
-     * x >-> r1
-     *)
-    (* Operations to support:
-     *   for all b --> x
-     *   for all x >-> y
-     *
-     *   given x, for all x(x1, x2, x3, ...)
-     *   given x, for all
-     *
-     *   Easy: b --> x ? x >-> y ?
-     *)
-
     fun remember ({todo, facts, ...}: ctx, fact) =
-      if not (Fact.HashSet.member (facts, fact)) then
-        (Fact.HashSet.add (facts, fact);
-         Queue.enqueue (todo, fact))
-      else
-        ()
+      if FactSet.add facts fact then Queue.enqueue (todo, fact) else ()
 
     fun next ({todo, ...}: ctx) = Queue.next todo
-
-    datatype fact = datatype Fact.t
-    fun forallValuesOf ({facts, ...}: ctx) x f =
-      let fun find (v --> y) = if LV.same (x, y) then f v else ()
-            | find _ = ()
-      in  Fact.HashSet.app find facts
-      end
 
     fun forallUsesOf ({syn, ...}: ctx) x f =
       let val set = Syn.usePoints syn x
       in  LCPS.Set.app f set
       end
 
-    fun transitivity (ctx as {facts, ...}: ctx) (v, x) =
-      let fun collect (x' >-> y, facts) =
-                if LV.same (x, x') then v --> y :: facts else facts
-            | collect (_, facts) = facts
-          val facts' = Fact.HashSet.fold collect [] facts
-      in  List.app (fn f => remember (ctx, f)) facts'
-      end
+    fun forallValuesOf ({facts, ...}: ctx) = FactSet.forallValuesOf facts
 
-    fun member ({facts, ...}: ctx) fact = Fact.HashSet.member (facts, fact)
+    fun transitivity ({facts, todo, ...}: ctx) (v, x) =
+      FactSet.transitivity facts (v, x) (fn f => Queue.enqueue (todo, f))
+
+    fun member ({facts, ...}: ctx) f = FactSet.member facts f
 
     fun dump {todo, facts, syn=_} =
       (print "Context:\n";
-       Fact.HashSet.app (fn f => print (Fact.toString f ^ "\n")) facts;
+       FactSet.dump facts;
        ())
-  end
 
-  datatype fact  = datatype Fact.t
-  datatype value = datatype Value.t
-  datatype cexp  = datatype LCPS.cexp
-  datatype either = datatype Either.either
+    (* fun summary ({facts, ...}: ctx) = *)
+    (*   (print "Escaping: {"; *)
+    (*    Fact.HashSet.app (fn (/-- f) => print (LV.lvarName (#2 f) ^ ", ") *)
+    (*                       | _ => ()) facts; *)
+    (*    print "}\n") *)
+  end
 
   fun label _ = raise Impossible "Label generated before closure conversion"
   fun offset _ = raise Impossible "Offset"
   val bogusTy = CPSUtil.BOGt
+
+  (* r = (x1 : r1, x2 : r2, x3 : r3)
+   * -----------------------------------
+   * x1 >-> r1, x2 >-> r2, x3 >-> r3
+   *
+   * x = r.0       (r1, r2, r3) >-> r
+   * -----------------------------------
+   * r1 >-> x
+   *
+   *
+   * r = makeref(a : r1)
+   * -----------------------------------
+   * REF r1 --> r
+   *
+   * x = !r   REF r1 --> r
+   * -----------------------------------
+   * r1 >-> x
+   *
+   *
+   * r := x   REF r1 --> r
+   * -----------------------------------
+   * x >-> r1
+   *)
 
   fun flowValue (value, dest) =
     (case value
@@ -265,14 +388,20 @@ structure FlowCFA :> CFA = struct
       fun add fact = Context.remember (ctx, fact)
       fun walkB (f as (kind, name, args, tys, body)) =
             (add (Function f --> name); walk body)
-      and walk (RECORD (_, _, values, dest, cexp)) =
+      and walk (RECORD (label, CPS.RK_VECTOR, values, dest, cexp)) =
+            let fun build (_, value, CPS.OFFp 0) = flowValue (value, label)
+                  | build (_, value, CPS.OFFp i) = offset ()
+                  | build (_, value, CPS.SELp _) = raise Fail "desugar"
+            in  add (Mutable label --> dest); app (add o build) values;
+                walk cexp
+            end
+        | walk (RECORD (_, _, values, dest, cexp)) =
             let fun build (addr, CPS.VAR v, CPS.OFFp 0) : lvar = v
                   | build (addr, value, CPS.OFFp 0) =
                       (add (flowValue (value, addr)); addr)
                   | build (addr, value, CPS.OFFp i) = offset ()
                   | build (addr, value, CPS.SELp _) = raise Fail "desugar"
-            in  (add (Record (mapToVec build values) --> dest);
-                 walk cexp)
+            in  add (Record (mapToVec build values) --> dest); walk cexp
             end
         | walk (SELECT (_, _, _, _, _, cexp)) = walk cexp
         | walk (OFFSET _) = offset ()
@@ -349,7 +478,7 @@ structure FlowCFA :> CFA = struct
                     let val (_, rhs) = twoArgs args
                     in  add (flowValue (rhs, r))
                     end
-                | LOOKER (_, CPS.P.DEREF, _, dest, _, _) =>
+                | LOOKER (_, (CPS.P.DEREF | CPS.P.SUBSCRIPT), _, dest, _, _) =>
                     add (r >-> dest)
                 | _ => ())
         | propagateValue (Value _, x) =
@@ -373,10 +502,6 @@ structure FlowCFA :> CFA = struct
               else ()
         | escape (ExternalFunction | Value _) = ()
 
-      (* fun dump n = *)
-      (*   (print (concat ["==========", Int.toString n, "============", "\n"]); *)
-      (*    Context.dump ctx; *)
-      (*    print "----------------------------------\n") *)
       fun dump n = (print ("\r" ^ Int.toString n))
 
       fun loop n =
@@ -404,7 +529,7 @@ structure FlowCFA :> CFA = struct
         (* val () = Context.dump ctx *)
         val () = timeit "flow-cfa" (fn () => run ctx)
         val () = print "\n"
-        (* val () = Context.dump ctx *)
+        val () = Context.dump ctx
     in  CallGraph.bogus ()
     end
 end
