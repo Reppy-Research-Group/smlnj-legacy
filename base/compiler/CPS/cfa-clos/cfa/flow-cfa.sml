@@ -441,10 +441,9 @@ structure FlowCFA :> CFA = struct
         | propagate (x >-> y) = forallValuesOf x (fn v => add (v --> y))
         | propagate (--/ x) = forallValuesOf x escape
         | propagate (v --> x) =
-            if member (--/ x) then
-              escape v
-            else
-              (transitivity (v, x); propagateValue (v, x))
+            (if member (--/ x) then escape v else ();
+             transitivity (v, x);
+             propagateValue (v, x))
       and propagateValue (Function (func as (_, _, formals, _, _)), x) =
             forallUsesOf x
               (fn APP (_, f, args) =>
