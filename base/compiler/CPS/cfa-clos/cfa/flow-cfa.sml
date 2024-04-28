@@ -23,7 +23,7 @@ structure FlowCFA :> CFA = struct
 
   structure Value :> sig
     datatype t = Function of LCPS.function
-               | Record   of lvar vector
+               | Record   of int * lvar
                | Mutable  of lvar
                | Value    of LCPS.cty
 
@@ -34,7 +34,7 @@ structure FlowCFA :> CFA = struct
     structure HashSet : MONO_HASH_SET where type Key.hash_key = t
   end = struct
     datatype t = Function of LCPS.function
-               | Record   of lvar vector
+               | Record   of int * lvar
                | Mutable  of lvar
                | Value    of LCPS.cty
 
@@ -51,16 +51,15 @@ structure FlowCFA :> CFA = struct
             | hashTy (CPS.CNTt)   = 0w4
       in  case v
             of Function f => hashCombine (funtag, hashvar (#2 f))
-             | Record vs => Vector.foldl
-                              (fn (v, h) => hashCombine (h, hashvar v))
-                              rectag vs
+             | Record (i, v) =>
+                 hashCombine (rectag, hashCombine (Word.fromInt i, hashvar v))
              | Mutable v => hashCombine (muttag, hashvar v)
              | Value ty => hashCombine (valtag, hashTy ty)
       end
 
     fun same (Function f1, Function f2) = LV.same (#2 f1, #2 f2)
-      | same (Record vs1, Record vs2) =
-          Vector.collate LV.compare (vs1, vs2) = EQUAL
+      | same (Record (i1, v1), Record (i2, v2)) =
+          i1 = i2 andalso LV.same (v1, v2)
       | same (Mutable v1, Mutable v2) = LV.same (v1, v2)
       | same (Value ty1, Value ty2) =
           (case (ty1, ty2) (* Do we only care about the first level? *)
@@ -73,8 +72,8 @@ structure FlowCFA :> CFA = struct
       | same _ = false
 
     fun toString (Function f) = LV.lvarName (#2 f) ^ "[f]"
-      | toString (Record vs) =
-          concat ["{", concatWithMap ", " LV.lvarName vs, "} [R]"]
+      | toString (Record (i, v)) =
+          concat ["{.", Int.toString i, " = ", LV.lvarName v, "} [R]"]
       | toString (Mutable v) = concat [LV.lvarName v, "[REF]"]
       | toString (Value cty) = CPSUtil.ctyToString cty
 
@@ -347,6 +346,20 @@ structure FlowCFA :> CFA = struct
    * r := x   REF r1 --> r
    * -----------------------------------
    * x >-> r1
+   *
+   * Better(?) record semantics
+   *
+   * (Function f)                  important
+   * (Value (CPS.FUNt | CPS.CNTt)) important
+   * (Record (i, x))               important
+   *
+   * r = (... x_i ...)  v --> x_i  v important
+   * -------------------------------------
+   * Record (i, x_i) --> r
+   *
+   * x = r.i   Record (i, y) --> r
+   * -------------------------------------
+   * y >-> x
    *)
 
   fun flowValue (value, dest) =
@@ -380,6 +393,15 @@ structure FlowCFA :> CFA = struct
 
   fun fromType (v, ty) = Value ty --> v
 
+  fun fieldOf (fields : (lvar * CPS.value * CPS.accesspath) list, v) : int * lvar =
+    let fun check (_, CPS.VAR w, CPS.OFFp 0) = LV.same (v, w)
+          | check (_, CPS.VAR _, _) = offset ()
+          | check (_, _, _) = false
+    in  case List.findi (check o #2) fields
+          of SOME (i, _) => (i, v)
+           | NONE => raise Impossible "bug: indexOf not found"
+    end
+
   fun initialize (syn, cps) =
     let
       val ctx = Context.mk syn
@@ -394,13 +416,14 @@ structure FlowCFA :> CFA = struct
                 walk cexp
             end
         | walk (RECORD (_, _, values, dest, cexp)) =
-            let fun build (addr, CPS.VAR v, CPS.OFFp 0) : lvar = v
-                  | build (addr, value, CPS.OFFp 0) =
-                      (add (flowValue (value, addr)); addr)
-                  | build (addr, value, CPS.OFFp i) = offset ()
-                  | build (addr, value, CPS.SELp _) = raise Fail "desugar"
-            in  add (Record (mapToVec build values) --> dest); walk cexp
-            end
+            (* let fun build (addr, CPS.VAR v, CPS.OFFp 0) : lvar = v *)
+            (*       | build (addr, value, CPS.OFFp 0) = *)
+            (*           (add (flowValue (value, addr)); addr) *)
+            (*       | build (addr, value, CPS.OFFp i) = offset () *)
+            (*       | build (addr, value, CPS.SELp _) = raise Fail "desugar" *)
+            (* in  add (Record (mapToVec build values) --> dest); walk cexp *)
+            (* end *)
+            walk cexp
         | walk (SELECT (_, _, _, _, _, cexp)) = walk cexp
         | walk (OFFSET _) = offset ()
         | walk (APP _) = ()
@@ -414,13 +437,16 @@ structure FlowCFA :> CFA = struct
         | walk (ARITH (_, _, _, dest, ty, cexp)) =
             (add (Value ty --> dest); walk cexp)
         | walk (PURE (label, CPS.P.MAKEREF, values, dest, _, cexp)) =
-            let val v = oneArg values
-            in  add (flowValue (v, label)); add (Mutable label --> dest);
+            (* let val v = oneArg values *)
+            (* in  add (flowValue (v, label)); add (Mutable label --> dest); *)
                 walk cexp
-            end
+            (* end *)
         | walk (PURE (label, (CPS.P.RAWRECORD _ | CPS.P.NEWARRAY0), _,
                       dest, _, cexp)) =
-            (add (Mutable label --> dest); walk cexp)
+            (* (add (Mutable label --> dest); *)
+            (* FIXME: check this case *)
+             walk cexp
+             (* ) *)
         | walk (PURE (label, _, _, _, _, cexp)) = walk cexp
         | walk (RCC (_, _, _, _, _, results, cexp)) =
             (app (add o fromType) results; walk cexp)
@@ -451,8 +477,8 @@ structure FlowCFA :> CFA = struct
                       ListPair.appEq (add o flowValue) (args, formals)
                     else ()
                 | SETTER (_, CPS.P.SETHDLR, _, _) => add (/-- func)
-                | _ => ())
-        | propagateValue (Value (CPS.FUNt | CPS.CNTt), x) =
+                | cexp => record (cexp, x))
+        | propagateValue (Value (CPS.FUNt|CPS.CNTt), x) =
             forallUsesOf x
               (fn APP (_, f, args) =>
                     let fun markEscape (CPS.VAR v) = add (--/ v)
@@ -461,24 +487,22 @@ structure FlowCFA :> CFA = struct
                           List.app markEscape args
                         else ()
                     end
-                | _ => ())
-        | propagateValue (Record rs, x) =
+                | cexp => record (cexp, x))
+        | propagateValue (Record (i', v), x) =
             forallUsesOf x
               (fn SELECT (_, i, _, dest, _, _) =>
-                    if i < Vector.length rs then
-                      add (Vector.sub (rs, i) >-> dest)
-                    else ()
-                | _ => ())
+                    if i = i' then add (v >-> dest) else ()
+                | cexp => record (cexp, x))
         | propagateValue (Mutable r, x) =
             forallUsesOf x
               (fn SETTER (_, (CPS.P.ASSIGN|CPS.P.UNBOXEDASSIGN), args, _) =>
                     let val (_, rhs) = twoArgs args
                     in  add (flowValue (rhs, r))
                     end
-                | LOOKER (_, (CPS.P.DEREF | CPS.P.SUBSCRIPT), _, dest, _, _) =>
+                | LOOKER (_, (CPS.P.DEREF|CPS.P.SUBSCRIPT), _, dest, _, _) =>
                     add (r >-> dest)
-                | _ => ())
-        | propagateValue (Value _, x) =
+                | cexp => record (cexp, x))
+        | propagateValue (Value ty, x) =
             forallUsesOf x
               (fn SELECT (_, _, value, dest, ty, _) =>
                     add (fromType (dest, ty))
@@ -486,13 +510,28 @@ structure FlowCFA :> CFA = struct
                     () (* Uniform value cannot be used as a function *)
                 | LOOKER (_, _, _, dest, ty, _) =>
                     add (fromType (dest, ty))
-                | _ => ())
+
+                (* If a cell captures an unknown value, i.e. makeref(x),
+                 * we don't need to create a cell unless x can contain a
+                 * function. That is, x has type FUNt, CNTt, or PTRt. The
+                 * former two cases has been handled by the above, so we
+                 * just need to handle the case of PTRt. *)
+
+                | RECORD (_, _, fields, dest, _) =>
+                    add (Value bogusTy --> dest)
+                | PURE   (_, _, _, dest, ty, _) =>
+                    add (fromType (dest, ty))
+                    (* (case ty *)
+                    (*    of CPS.PTRt _ => add (Value bogusTy --> dest) *)
+                    (*     | _ => ()) *)
+                | _ => (* These are all constructors by which a function can end
+                        * up in a data structure *)
+                    ())
       and escape (Function f) = add (/-- f)
-        | escape (Record vars) =
-            Vector.app (fn v =>
+        | escape (Record (_, v)) =
               if not (member (--/ v)) then
                 (add (--/ v); forallValuesOf v escape)
-              else ()) vars
+              else ()
         | escape (Mutable v) =
               if not (member (--/ v)) then
                 (add (--/ v);
@@ -500,6 +539,20 @@ structure FlowCFA :> CFA = struct
                  forallValuesOf v escape)
               else ()
         | escape (Value _) = ()
+      and record (cexp, x) =
+            (case cexp
+               of RECORD (label, CPS.RK_VECTOR, fields, dest, _) =>
+                    (add (Mutable label --> dest); add (x >-> label))
+                | RECORD (_, _, fields, dest, _) =>
+                    add (Record (fieldOf (fields, x)) --> dest)
+                | PURE   (label, CPS.P.MAKEREF, values, dest, _, _) =>
+                    (add (Mutable label --> dest); add (x >-> label))
+                | PURE   (label, CPS.P.CAST, values, dest, _, _) =>
+                    (add (x >-> dest))
+                | _ => (* These are all constructors by which a function can end
+                        * up in a data structure *)
+                    ())
+
 
       (* val propagate = fn f => (print ("prop: " ^ Fact.toString f ^ "\n"); *)
       (* propagate f) *)
