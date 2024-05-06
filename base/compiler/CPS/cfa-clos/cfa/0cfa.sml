@@ -710,7 +710,7 @@ structure ZeroCFA :> CFA = struct
          loopEscape ctx 1)
     in
       timeit "\n>> 0cfa: " run;
-      (* Context.dump ctx; *)
+      Context.dump ctx;
       CallGraph.build {
         cps=function,
         lookup=Option.map Value.objects o Context.find ctx,

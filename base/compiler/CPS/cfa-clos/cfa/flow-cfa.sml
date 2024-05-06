@@ -148,6 +148,8 @@ structure FlowCFA :> CFA = struct
     val forallValuesOf : t -> lvar -> (Value.t -> unit) -> unit
     val transitivity   : t -> Value.t * lvar -> (Fact.t -> unit) -> unit
     val dump : t -> unit
+    val dumpFlowGraph : t -> unit
+    val dumpClosureDependency : Syn.t * t -> unit
   end = struct
     type t = {
       (* row(i) = { j | i >-> j ∈ R }*)
@@ -241,32 +243,130 @@ structure FlowCFA :> CFA = struct
                 String.concatWithMap " " LV.lvarName (LVS.listItems sink),
                 "}\n"]
       end
+
+    local open DotLanguage in
+    fun dumpFlowGraph ({row, store, sink, escape}) =
+      let val dot = empty (true, "flow-graph")
+          val functions = LCPS.FunMonoSet.mkEmpty 32
+          fun collectFunctions values =
+            let fun chk (Function f) = LCPS.FunMonoSet.add (functions, f)
+                  | chk _ = ()
+            in  VS.app chk values
+            end
+          val () = LVT.app collectFunctions store
+          fun fromF f =
+            let val name = LV.lvarName (#2 f)
+                val fname = "[F]" ^ name
+                val node =
+                  if LCPS.FunMonoSet.member (escape, f) then
+                    NODE (name, [("label", fname), ("color", "red")])
+                  else
+                    NODE (name, [("label", fname)])
+            in  [node]
+            end
+          fun fromV v =
+            if LVS.member (sink, v) then
+              NODE (LV.lvarName v, [("color", "red")])
+            else
+              NODE (LV.lvarName v, [])
+          fun reachable functions =
+            let val set = LVS.mkEmpty 32
+                fun dfs n =
+                  if LVS.member (set, n) then
+                    ()
+                  else
+                    (LVS.add (set, n);
+                     (case LVT.find row n
+                        of SOME ys => LVS.app dfs ys
+                         | NONE => ()))
+            in  LCPS.FunMonoSet.app (fn f => dfs (#2 f)) functions;
+                set
+            end
+          val reachableVs = reachable functions
+          fun prow (x, set, dot) =
+            let fun collect (y, edges) =
+                  (EDGE (LV.lvarName x, LV.lvarName y, []) :: edges)
+            in  if LVS.member (reachableVs, x) then
+                  <+< (dot, LVS.fold collect [] set)
+                else
+                  dot
+            end
+          fun run dot =
+            let
+                val dot =
+                  LCPS.FunMonoSet.fold (fn (f, d) => <+< (d, fromF f))
+                    dot functions
+                val dot =
+                  LVS.fold (fn (v, d) =>
+                    if LVS.member (reachableVs, v) then
+                      << (d, fromV v)
+                    else d) dot sink
+                val dot = LVT.foldi prow dot row
+            in  dot
+            end
+      in  dump (run (<+< (dot, [ATTR "rankdir=\"LR\"", ATTR "rank=source"])))
+      end
+    fun dumpClosureDependency (syn, {row, store, sink, escape}) =
+      let val dot = empty (true, "dependency-graph")
+          val functions = LCPS.FunMonoSet.mkEmpty 32
+          fun collectFunctions values =
+            let fun chk (Function f) = LCPS.FunMonoSet.add (functions, f)
+                  | chk _ = ()
+            in  VS.app chk values
+            end
+          val () = LVT.app collectFunctions store
+          fun fromF (f, fv) =
+            let val name = LV.lvarName (#2 f)
+                val closure =
+                  concat ["Closure ", name, "<", String.concatWithMap ", "
+                             LV.lvarName (LV.Set.listItems fv), ">"]
+                val node =
+                  if LCPS.FunMonoSet.member (escape, f) then
+                    NODE (name, [("label", closure), ("color", "red")])
+                  else
+                    NODE (name, [("label", closure)])
+            in  node
+            end
+          fun fromV v =
+            if LVS.member (sink, v) then
+              NODE (LV.lvarName v, [("color", "red")])
+            else
+              NODE (LV.lvarName v, [])
+          fun pf (function as (_, name, _, _, _), dot) =
+            let val fv = LV.Set.subtract (Syn.fv syn function, name)
+                val self = fromF (function, fv)
+                fun dofv (v, dot) =
+                  (case LVT.find store v
+                     of SOME values =>
+                          let val fs = VS.fold
+                            (fn (Function f, acc) => f :: acc
+                              | (_, acc) => acc) [] values
+                          in  case fs
+                                of [] => dot
+                                 | _ =>
+                                     <+< (dot, fromV v ::
+                                               EDGE (LV.lvarName v, LV.lvarName
+                                               name, []) ::
+                                       foldl (fn (f, edges) =>
+                                         if LV.same (#2 f, v) then edges
+                                         else
+                                         (EDGE (LV.lvarName (#2 f),
+                                                LV.lvarName v,
+                                                [("style", "dotted")]) :: edges))
+                                         [] fs)
+                          end
+                      | NONE => dot)
+            in  LV.Set.foldl dofv (<< (dot, self)) fv
+            end
+
+          fun run dot =
+            let val dot = LCPS.FunMonoSet.fold pf dot functions
+            in  dot
+            end
+      in  dump (run (<+< (dot, [ATTR "rankdir=\"LR\"", ATTR "rank=source"])))
+      end
+    end
   end
-
-(*   structure FactSetRef :> sig *)
-(*     type t *)
-(*     val mk : int -> t *)
-(*     val add            : t -> Fact.t -> bool *)
-(*     val member         : t -> Fact.t -> bool *)
-(*     val forallValuesOf : t -> lvar -> (Value.t -> unit) -> unit *)
-(*     val transitivity   : t -> Value.t * lvar -> (Fact.t -> unit) -> unit *)
-(*   end = struct *)
-(*     fun forallValuesOf ({facts, ...}: ctx) x f = *)
-(*       let fun find (v --> y) = if LV.same (x, y) then f v else () *)
-(*             | find _ = () *)
-(*       in  Fact.HashSet.app find facts *)
-(*       end *)
-
-(*     fun transitivity (ctx as {facts, ...}: ctx) (v, x) = *)
-(*       let fun collect (x' >-> y, facts) = *)
-(*                 if LV.same (x, x') then v --> y :: facts else facts *)
-(*             | collect (_, facts) = facts *)
-(*           val facts' = Fact.HashSet.fold collect [] facts *)
-(*       in  List.app (fn f => remember (ctx, f)) facts' *)
-(*       end *)
-
-(*     fun member ({facts, ...}: ctx) fact = Fact.HashSet.member (facts, fact) *)
-(*   end *)
 
   structure Context :> sig
     type ctx
@@ -278,6 +378,8 @@ structure FlowCFA :> CFA = struct
     val forallUsesOf   : ctx -> lvar -> (LCPS.cexp -> unit) -> unit
     val transitivity   : ctx -> Value.t * lvar -> unit
     val member : ctx -> Fact.t -> bool
+    val dumpFlowGraph : ctx -> unit
+    val dumpClosureDependency : ctx -> unit
     (* val summary : ctx -> unit *)
   end = struct
     type ctx = {
@@ -314,6 +416,10 @@ structure FlowCFA :> CFA = struct
        FactSet.dump facts;
        ())
 
+    fun dumpFlowGraph ({facts, ...}: ctx) = FactSet.dumpFlowGraph facts
+    fun dumpClosureDependency ({facts, syn, ...}: ctx) =
+      FactSet.dumpClosureDependency (syn, facts)
+
     (* fun summary ({facts, ...}: ctx) = *)
     (*   (print "Escaping: {"; *)
     (*    Fact.HashSet.app (fn (/-- f) => print (LV.lvarName (#2 f) ^ ", ") *)
@@ -347,7 +453,7 @@ structure FlowCFA :> CFA = struct
    * -----------------------------------
    * x >-> r1
    *
-   * Better(?) record semantics
+   * Better(!) record semantics
    *
    * (Function f)                  important
    * (Value (CPS.FUNt | CPS.CNTt)) important
@@ -408,22 +514,8 @@ structure FlowCFA :> CFA = struct
       fun add fact = Context.remember (ctx, fact)
       fun walkB (f as (kind, name, args, tys, body)) =
             (add (Function f --> name); walk body)
-      and walk (RECORD (label, CPS.RK_VECTOR, values, dest, cexp)) =
-            let fun build (_, value, CPS.OFFp 0) = flowValue (value, label)
-                  | build (_, value, CPS.OFFp i) = offset ()
-                  | build (_, value, CPS.SELp _) = raise Fail "desugar"
-            in  add (Mutable label --> dest); app (add o build) values;
-                walk cexp
-            end
-        | walk (RECORD (_, _, values, dest, cexp)) =
-            (* let fun build (addr, CPS.VAR v, CPS.OFFp 0) : lvar = v *)
-            (*       | build (addr, value, CPS.OFFp 0) = *)
-            (*           (add (flowValue (value, addr)); addr) *)
-            (*       | build (addr, value, CPS.OFFp i) = offset () *)
-            (*       | build (addr, value, CPS.SELp _) = raise Fail "desugar" *)
-            (* in  add (Record (mapToVec build values) --> dest); walk cexp *)
-            (* end *)
-            walk cexp
+      and walk (RECORD (label, CPS.RK_VECTOR, values, dest, cexp)) = walk cexp
+        | walk (RECORD (_, _, values, dest, cexp)) = walk cexp
         | walk (SELECT (_, _, _, _, _, cexp)) = walk cexp
         | walk (OFFSET _) = offset ()
         | walk (APP _) = ()
@@ -437,10 +529,7 @@ structure FlowCFA :> CFA = struct
         | walk (ARITH (_, _, _, dest, ty, cexp)) =
             (add (Value ty --> dest); walk cexp)
         | walk (PURE (label, CPS.P.MAKEREF, values, dest, _, cexp)) =
-            (* let val v = oneArg values *)
-            (* in  add (flowValue (v, label)); add (Mutable label --> dest); *)
                 walk cexp
-            (* end *)
         | walk (PURE (label, (CPS.P.RAWRECORD _ | CPS.P.NEWARRAY0), _,
                       dest, _, cexp)) =
             (* (add (Mutable label --> dest); *)
@@ -521,12 +610,7 @@ structure FlowCFA :> CFA = struct
                     add (Value bogusTy --> dest)
                 | PURE   (_, _, _, dest, ty, _) =>
                     add (fromType (dest, ty))
-                    (* (case ty *)
-                    (*    of CPS.PTRt _ => add (Value bogusTy --> dest) *)
-                    (*     | _ => ()) *)
-                | _ => (* These are all constructors by which a function can end
-                        * up in a data structure *)
-                    ())
+                | _ => ())
       and escape (Function f) = add (/-- f)
         | escape (Record (_, v)) =
               if not (member (--/ v)) then
@@ -553,13 +637,8 @@ structure FlowCFA :> CFA = struct
                         * up in a data structure *)
                     ())
 
-
-      (* val propagate = fn f => (print ("prop: " ^ Fact.toString f ^ "\n"); *)
-      (* propagate f) *)
-
       fun dump n = (print ("\r" ^ Int.toString n))
       fun dump _ = ()
-
       fun loop n =
         (case Context.next ctx
            of NONE => ()
@@ -582,10 +661,11 @@ structure FlowCFA :> CFA = struct
 
   fun analyze (syn, cps) =
     let val ctx = initialize (syn, cps)
-        (* val () = Context.dump ctx *)
         val () = timeit "flow-cfa" (fn () => run ctx)
         val () = print "\n"
+        (* val () = Context.dumpFlowGraph ctx *)
         val () = Context.dump ctx
+        val () = Context.dumpClosureDependency ctx
     in  CallGraph.bogus ()
     end
 end
