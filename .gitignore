@@ -207,6 +207,7 @@ osx-dist/smlnj-*.pkg
 win-dist/smlnj
 
 # Project specific
+base/system/
 base/system/unittests
 base/system/benchmarks
 Session.vim
