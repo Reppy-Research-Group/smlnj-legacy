@@ -270,6 +270,7 @@ CPS/clos/unrebind.sml
 CPS/cfa-clos/closure.sml
 CPS/cfa-clos/lifetime.sml
 CPS/cfa-clos/reference.sml
+CPS/cfa-clos/identifier-fn.sml
     (* (setup: (pre: "val w = !Control.Elab.unusedWarn;\n\ *)
     (*               \val () = Control.Elab.unusedWarn := true\n;" *)
     (*          post: "Control.Elab.unusedWarn := w;")) *)
@@ -285,6 +286,7 @@ CPS/cfa-clos/cfa/0cfa.sml
                   \val () = Control.Elab.unusedWarn := true\n;"
              post: "Control.Elab.unusedWarn := w;"))
 CPS/cfa-clos/cfa/call-graph.sml
+CPS/cfa-clos/cfa/flow-cfa.sml
     (* (setup: (pre: "val w = !Control.Elab.unusedWarn;\n\ *)
     (*               \val () = Control.Elab.unusedWarn := true\n;" *)
     (*          post: "Control.Elab.unusedWarn := w;")) *)
