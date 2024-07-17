@@ -293,8 +293,11 @@ functor MLRiscGen (
 	 *)
 	  exception TypTbl
 	  val typTbl  : C.cty Tbl.hash_table = Tbl.mkTable(32, TypTbl)
-	  val addTypBinding = Tbl.insert typTbl
-	  val typmap = Tbl.lookup typTbl
+          fun addTypBinding (x, ty) = Tbl.insert typTbl (x, ty) (* TODO: HERE *)
+          fun typmap x = Tbl.lookup typTbl x
+                         handle TypTbl =>
+                         (print (LambdaVar.lvarName x ^ " missing in typTbl"); 
+                          raise TypTbl)
 
 	(*
 	 * mkGlobalTables define the labels and cty for all CPS functions
@@ -456,7 +459,9 @@ functor MLRiscGen (
 	     * The following function looks up the MLTREE expression associated
 	     * with a general purpose value expression.
 	     *)
-	      val lookupGpRegTbl = Tbl.lookup gpRegTbl
+    fun lookupGpRegTbl x = Tbl.lookup gpRegTbl x
+                           handle RegMap => (print (LambdaVar.lvarName x ^ " unbound");
+                                             raise RegMap)
 
 	    (*
 	     * This function resolve the address computation of the
@@ -1238,6 +1243,9 @@ functor MLRiscGen (
 	      and externalApp (f, args, hp) = let
 		    val ctys = map grabty args
 		    val formals = ArgP.standard{fnTy=typmap f, vfp=vfp, argTys=ctys}
+                    handle Subscript => (print (concat ["externalApp f=", LambdaVar.lvarName
+                    f, "args=[", String.concatWithMap ", " PPCps.value2str
+                    args, "]\n"]); raise Subscript)
 		    val dest = (case formals
 			   of (M.GPR dest::_) => dest
 			    | _ => error "externalApp: dest"
@@ -1283,6 +1291,9 @@ functor MLRiscGen (
 			  emit (branchToLabel(externLabel f)))
 		     | Frag.STANDARD{fmlTyps, ...} => let
 			  val formals = ArgP.standard{fnTy=typmap f, argTys=fmlTyps, vfp=vfp}
+                    handle Subscript => (print (concat ["internalApp f=", LambdaVar.lvarName
+                    f, "args=[", String.concatWithMap ", " PPCps.value2str
+                    args, "]\n"]); raise Subscript)
 			  in
 			    callSetup(formals, args);
 			    testLimit hp;
@@ -1887,6 +1898,8 @@ raise Fail "unexpected constant branch"
 			  Frag.STANDARD{func as ref(SOME (zz as (k,f,vl,tl,e))),
 			...})) = let
 		          val formals = ArgP.standard{fnTy=typmap f, argTys=tl, vfp=vfp}
+                    handle Subscript => (print "fragComp\n"; print
+                    (LambdaVar.lvarName f ^ "??\n"); raise Subscript)
 			  in
 			    func := NONE;
 			    pseudoOp(PB.ALIGN_SZ 2);

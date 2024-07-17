@@ -1353,6 +1353,9 @@ functor MLRiscGen (
 	      and externalApp (f, args, hp) = let
 		    val ctys = map grabty args
 		    val formals = ArgP.standard{fnTy=typmap f, vfp=vfp, argTys=ctys}
+                    handle Subscript => (print (concat ["externalApp f=", LambdaVar.lvarName
+                    f, "args=[", String.concatWithMap ", " PPCps.value2str
+                    args, "]\n"]); raise Subscript)
 		    val dest = (case formals
 			   of (M.GPR dest::_) => dest
 			    | _ => error "externalApp: dest"
@@ -1401,6 +1404,9 @@ functor MLRiscGen (
 			  emit (branchToLabel(functionLabel f)))
 		     | Frag.STANDARD{fmlTyps, ...} => let
 			  val formals = ArgP.standard{fnTy=typmap f, argTys=fmlTyps, vfp=vfp}
+                    handle Subscript => (print (concat ["internalApp f=", LambdaVar.lvarName
+                    f, "args=[", String.concatWithMap ", " PPCps.value2str
+                    args, "]\n"]); raise Subscript)
 			  in
 			    callSetup(formals, args);
 			    testLimit hp;
@@ -2059,6 +2065,9 @@ raise Fail "unexpected constant branch"
 			  Frag.STANDARD{func as ref(SOME (zz as (k,f,vl,tl,e))),
 			...})) = let
 		          val formals = ArgP.standard{fnTy=typmap f, argTys=tl, vfp=vfp}
+                    handle Subscript => (print (concat ["fragComp() f=", LambdaVar.lvarName
+                    f, "args=[", String.concatWithMap ", " PPCps.value2str
+                    args, "]\n"]); raise Subscript)
 			  in
 			    func := NONE;
 			    pseudoOp(PB.ALIGN_SZ 2);
