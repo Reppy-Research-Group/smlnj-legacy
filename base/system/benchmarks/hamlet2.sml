@@ -14,7 +14,7 @@
  * from stdIn.
  *)
 
- local
+local
 val ins = ref TextIO.stdIn
 
 (* start of STAMP.sml *)
