@@ -25,7 +25,7 @@ usage() {
 }
 
 export CM_VERBOSE
-CM_VERBOSE=false
+CM_VERBOSE=true
 
 SML=sml
 ARGS=""
@@ -84,6 +84,6 @@ $SML $SIZE_OPT $ARGS $@ -DNO_PLUGINS '$smlnj/cmb.cm' <<XXXX | tee "$logfile"
 CMB.make();
 XXXX
 status=$(grep -q "val it = true : bool" "$logfile"; echo $?)
-rm "$logfile"
+# rm "$logfile"
 exit $status
 
