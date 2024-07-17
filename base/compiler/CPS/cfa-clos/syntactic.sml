@@ -10,6 +10,7 @@ structure SyntacticInfo :> sig
   val binderOf  : t -> LabelledCPS.function -> LabelledCPS.function option
   val fv        : t -> LabelledCPS.function -> LambdaVar.Set.set
   val enclosing : t -> LabelledCPS.cexp -> LabelledCPS.function
+  val appF      : t -> (LabelledCPS.function -> unit) -> unit
   val dump : t -> unit
 end = struct
   structure LCPS = LabelledCPS
@@ -170,6 +171,9 @@ end = struct
       LV.Set.empty
     else
       #fv (LCPS.FunTbl.lookup funTbl f)
+
+  fun appF (T { funTbl, ... }) f =
+    LCPS.FunTbl.appi (fn (function, _) => f function) funTbl
 
   fun dump (t as (T { funTbl, varTbl, ... })) =
     let val p = print

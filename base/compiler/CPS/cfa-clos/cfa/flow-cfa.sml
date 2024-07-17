@@ -1,4 +1,8 @@
-structure FlowCFA :> CFA = struct
+structure FlowCFA :> sig
+  type functions = { known: LabelledCPS.function list, unknown: bool }
+  val analyze : SyntacticInfo.t * LabelledCPS.function ->
+    { lookup: LambdaVar.lvar -> functions option, escape: LabelledCPS.function -> bool }
+end = struct
 
   structure LCPS = LabelledCPS
   structure LV   = struct
@@ -7,6 +11,7 @@ structure FlowCFA :> CFA = struct
   end
   structure Syn  = SyntacticInfo
   type lvar = LV.lvar
+  type functions = { known: LabelledCPS.function list, unknown: bool }
 
   exception Unimp
   exception Impossible of string
@@ -147,6 +152,8 @@ structure FlowCFA :> CFA = struct
     val member         : t -> Fact.t -> bool
     val forallValuesOf : t -> lvar -> (Value.t -> unit) -> unit
     val transitivity   : t -> Value.t * lvar -> (Fact.t -> unit) -> unit
+    val lookup : t -> lvar -> functions option
+    val escape : t -> LCPS.function -> bool
     val dump : t -> unit
     val dumpFlowGraph : t -> unit
     val dumpClosureDependency : Syn.t * t -> unit
@@ -222,6 +229,24 @@ structure FlowCFA :> CFA = struct
          of SOME set =>
               LVS.app (fn y => if add t (v --> y) then f (v --> y) else ()) set
           | NONE => ())
+
+    fun lookup ({store, ...}: t) v =
+      (case LVT.find store v
+         of NONE => NONE
+          | SOME set =>
+              let fun collect (Function f, {known, unknown}) =
+                        {known=f::known, unknown=unknown}
+                    | collect (Record _, acc) = acc
+                    | collect (Mutable _, acc) = acc
+                    | collect (Value (CPS.FUNt | CPS.CNTt), {known, unknown}) =
+                        {known=known, unknown=true}
+                    | collect (Value _, acc) = acc
+              in  case VS.fold collect {known=[], unknown=false} set
+                    of {known=[], unknown=false} => NONE
+                     | result => SOME result
+              end)
+    fun escape ({escape=escapeSet, ...}: t) f =
+      LCPS.FunMonoSet.member (escapeSet, f)
 
     fun dump ({row, store, sink, escape}: t) =
       let val puts = print o concat
@@ -368,6 +393,7 @@ structure FlowCFA :> CFA = struct
     end
   end
 
+
   structure Context :> sig
     type ctx
     val mk : Syn.t -> ctx
@@ -378,6 +404,8 @@ structure FlowCFA :> CFA = struct
     val forallUsesOf   : ctx -> lvar -> (LCPS.cexp -> unit) -> unit
     val transitivity   : ctx -> Value.t * lvar -> unit
     val member : ctx -> Fact.t -> bool
+    val result : ctx -> { lookup: lvar -> functions option,
+                          escape: LCPS.function -> bool }
     val dumpFlowGraph : ctx -> unit
     val dumpClosureDependency : ctx -> unit
     (* val summary : ctx -> unit *)
@@ -415,6 +443,9 @@ structure FlowCFA :> CFA = struct
       (print "Context:\n";
        FactSet.dump facts;
        ())
+
+    fun result ({facts, ...}: ctx) =
+      { lookup=FactSet.lookup facts, escape=FactSet.escape facts }
 
     fun dumpFlowGraph ({facts, ...}: ctx) = FactSet.dumpFlowGraph facts
     fun dumpClosureDependency ({facts, syn, ...}: ctx) =
@@ -666,6 +697,6 @@ structure FlowCFA :> CFA = struct
         (* val () = Context.dumpFlowGraph ctx *)
         val () = Context.dump ctx
         val () = Context.dumpClosureDependency ctx
-    in  CallGraph.bogus ()
+    in  Context.result ctx
     end
 end

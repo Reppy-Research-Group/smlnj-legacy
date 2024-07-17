@@ -33,9 +33,12 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n")
       val lcps = LabelledCPS.labelF cps
       val syntactic = SyntacticInfo.calculate lcps
-      (* val () = SyntacticInfo.dump syntactic *)
+      val () = SyntacticInfo.dump syntactic
       (* val callgraph = ZeroCFA.analyze (syntactic, lcps) *)
-      val callgraph2 = FlowCFA.analyze (syntactic, lcps)
+      val {lookup, escape} = FlowCFA.analyze (syntactic, lcps)
+      val repr = ClosureRep.initialize
+                   {cps=lcps, syn=syntactic, lookup=lookup, escape=escape}
+      val () = ClosureRep.dumpGraph repr
       (* val () = CG.dumpStats callgraph *)
       (* val f  = RefClosure.convert (lcps, callgraph, syntactic) *)
       (* val () = ClosureRep.analyze (lcps, callgraph, syntactic) *)
