@@ -393,7 +393,6 @@ end = struct
     end
   end
 
-
   structure Context :> sig
     type ctx
     val mk : Syn.t -> ctx
@@ -678,7 +677,6 @@ end = struct
       loop 0
     end
 
-
   fun timeit str thunk =
     let
       val start = Time.now ()
@@ -692,11 +690,10 @@ end = struct
 
   fun analyze (syn, cps) =
     let val ctx = initialize (syn, cps)
-        val () = timeit "flow-cfa" (fn () => run ctx)
-        val () = print "\n"
+        val () = timeit "flow-cfa " (fn () => run ctx)
         (* val () = Context.dumpFlowGraph ctx *)
-        val () = Context.dump ctx
-        val () = Context.dumpClosureDependency ctx
+        (* val () = Context.dump ctx *)
+        (* val () = Context.dumpClosureDependency ctx *)
     in  Context.result ctx
     end
 end

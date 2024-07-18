@@ -10,35 +10,35 @@
 functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
   exception Unimp
 
-  structure ClosureRep = ClosureRepFn(MachSpec)
-  structure CG   = CallGraph
+  (* structure ClosureRep = ClosureRepFn(MachSpec) *)
+  (* structure CG   = CallGraph *)
   structure LCPS = LabelledCPS
   structure LV   = LambdaVar
-  structure RefClosure = RefClosureFn(MachSpec)
+  (* structure RefClosure = RefClosureFn(MachSpec) *)
   structure Cheat = Closure(MachSpec)
 
-  fun dumpSCC components =
-    let
-      fun p (CallGraph.Single f) =
-           print ("[" ^ LambdaVar.lvarName (#2 f) ^ "]\n")
-        | p (CallGraph.Group g) =
-           print ("[" ^ String.concatWithMap "," (LambdaVar.lvarName o #2) g ^ "]\n")
-    in
-      app p components
-    end
+  (* fun dumpSCC components = *)
+  (*   let *)
+  (*     fun p (CallGraph.Single f) = *)
+  (*          print ("[" ^ LambdaVar.lvarName (#2 f) ^ "]\n") *)
+  (*       | p (CallGraph.Group g) = *)
+  (*          print ("[" ^ String.concatWithMap "," (LambdaVar.lvarName o #2) g ^ "]\n") *)
+  (*   in *)
+  (*     app p components *)
+  (*   end *)
 
   fun test cps =
     let
       (* val cps = #1 (FreeClose.freemapClose cps) *)
-      val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n")
+      (* val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n") *)
       val lcps = LabelledCPS.labelF cps
       val syntactic = SyntacticInfo.calculate lcps
-      val () = SyntacticInfo.dump syntactic
+      (* val () = SyntacticInfo.dump syntactic *)
       (* val callgraph = ZeroCFA.analyze (syntactic, lcps) *)
       val {lookup, escape} = FlowCFA.analyze (syntactic, lcps)
-      val repr = ClosureRep.initialize
-                   {cps=lcps, syn=syntactic, lookup=lookup, escape=escape}
-      val () = ClosureRep.dumpGraph repr
+      (* val repr = ClosureRep.initialize *)
+      (*              {cps=lcps, syn=syntactic, lookup=lookup, escape=escape} *)
+      (* val () = ClosureRep.dumpGraph repr *)
       (* val () = CG.dumpStats callgraph *)
       (* val f  = RefClosure.convert (lcps, callgraph, syntactic) *)
       (* val () = ClosureRep.analyze (lcps, callgraph, syntactic) *)

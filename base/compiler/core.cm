@@ -268,33 +268,33 @@ CPS/clos/freeclose.sml
 CPS/clos/staticprof.sml
 CPS/clos/unrebind.sml
 CPS/cfa-clos/closure.sml
-CPS/cfa-clos/lifetime.sml
-CPS/cfa-clos/reference.sml
+(* CPS/cfa-clos/lifetime.sml *)
+(* CPS/cfa-clos/reference.sml *)
 CPS/cfa-clos/identifier-fn.sml
     (* (setup: (pre: "val w = !Control.Elab.unusedWarn;\n\ *)
     (*               \val () = Control.Elab.unusedWarn := true\n;" *)
     (*          post: "Control.Elab.unusedWarn := w;")) *)
-CPS/cfa-clos/representation.sml
+(* CPS/cfa-clos/representation.sml *)
 CPS/cfa-clos/syntactic.sml
     (setup: (pre: "val w = !Control.Elab.unusedWarn;\n\
                   \val () = Control.Elab.unusedWarn := true\n;"
              post: "Control.Elab.unusedWarn := w;"))
-CPS/cfa-clos/unchangedvar.sml
-CPS/cfa-clos/cfa/cfa.sig
-CPS/cfa-clos/cfa/0cfa.sml
-    (setup: (pre: "val w = !Control.Elab.unusedWarn;\n\
-                  \val () = Control.Elab.unusedWarn := true\n;"
-             post: "Control.Elab.unusedWarn := w;"))
-CPS/cfa-clos/cfa/call-graph.sml
-CPS/cfa-clos/cfa/flow-cfa.sml
+(* CPS/cfa-clos/unchangedvar.sml *)
+(* CPS/cfa-clos/cfa/cfa.sig *)
+(* CPS/cfa-clos/cfa/0cfa.sml *)
+(*     (setup: (pre: "val w = !Control.Elab.unusedWarn;\n\ *)
+(*                   \val () = Control.Elab.unusedWarn := true\n;" *)
+(*              post: "Control.Elab.unusedWarn := w;")) *)
+(* CPS/cfa-clos/cfa/call-graph.sml *)
+CPS/cfa-clos/flow-cfa.sml
     (* (setup: (pre: "val w = !Control.Elab.unusedWarn;\n\ *)
     (*               \val () = Control.Elab.unusedWarn := true\n;" *)
     (*          post: "Control.Elab.unusedWarn := w;")) *)
-CPS/cfa-clos/cfa/labelled-cps.sml
+CPS/cfa-clos/labelled-cps.sml
     (setup: (pre: "val w = !Control.Elab.unusedWarn;\n\
                   \val () = Control.Elab.unusedWarn := true\n;"
              post: "Control.Elab.unusedWarn := w;"))
-CPS/cfa-clos/cfa/dot-lang.sml
+CPS/cfa-clos/dot-lang.sml
 
 CPS/convert/convert.sml
 CPS/convert/cpstrans.sml

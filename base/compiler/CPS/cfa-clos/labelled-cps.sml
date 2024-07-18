@@ -1,3 +1,4 @@
+(* Is this really necessary? *)
 structure LabelledCPS :> sig
   type label = LambdaVar.lvar
 
