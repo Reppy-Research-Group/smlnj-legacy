@@ -9,21 +9,32 @@ structure SyntacticInfo :> sig
   val usePoints : t -> LabelledCPS.lvar -> LabelledCPS.Set.set
   val binderOf  : t -> LabelledCPS.function -> LabelledCPS.function option
   val fv        : t -> LabelledCPS.function -> LambdaVar.Set.set
+  val groupOf   : t -> LabelledCPS.function -> Group.t
+  val depthOf   : t -> LabelledCPS.function -> int
+  val groupFV   : t -> Group.t -> LambdaVar.Set.set
+  val groupFun  : t -> Group.t -> LabelledCPS.function vector
   val enclosing : t -> LabelledCPS.cexp -> LabelledCPS.function
   val appF      : t -> (LabelledCPS.function -> unit) -> unit
-  val dump : t -> unit
+  val functions : t -> LabelledCPS.function vector
+  val groups    : t -> Group.t vector
+  val dump      : t -> unit
 end = struct
   structure LCPS = LabelledCPS
   structure LV   = LambdaVar
 
   type var_info = { ty: LCPS.cty, def: LCPS.function, uses: LCPS.Set.set }
-  type fun_info = { binder: LCPS.function, fv: LV.Set.set }
+  type fun_info = { binder: LCPS.function, fv: LV.Set.set, group: Group.t,
+                    depth: int }
   type exp_info = { enclosing: LCPS.function }
+  type grp_info = { functions: LCPS.function vector, fv: LV.Set.set }
 
   datatype t = T of {
     funTbl: fun_info LCPS.FunTbl.hash_table,
     varTbl: var_info LV.Tbl.hash_table,
     expTbl: exp_info LCPS.Tbl.hash_table,
+    grpTbl: grp_info Group.Tbl.hash_table,
+    functions: LabelledCPS.function vector,
+    groups: Group.t vector,
     lam0: LCPS.function
   }
 
@@ -43,6 +54,7 @@ end = struct
       val funTbl = LCPS.FunTbl.mkTable (32, SyntacticInfo)
       val varTbl = LV.Tbl.mkTable (32, SyntacticInfo)
       val expTbl = LCPS.Tbl.mkTable (32, SyntacticInfo)
+      val grpTbl = Group.Tbl.mkTable (32, SyntacticInfo)
 
       fun newVar currF (var, ty) =
             LV.Tbl.insert varTbl
@@ -57,27 +69,36 @@ end = struct
             end
         | useVar function _ = ()
 
-      fun walkF (parent, e) (function as (kind, name, args, tys, body)) =
+      fun newGrp (label, bindings, fv) =
+            Group.Tbl.insert grpTbl
+              (Group.wrap label, { functions=Vector.fromList bindings, fv=fv })
+
+      fun walkF
+        (parent, label, depth)
+        (function as (kind, name, args, tys, body)) =
         let val () = ListPair.appEq (newVar function) (args, tys)
-            val fv = subtracts (walkE function body, args)
-        in  LCPS.FunTbl.insert funTbl (function, { binder=parent, fv=fv });
+            val fv = subtracts (walkE (function, depth + 1) body, args)
+        in  LCPS.FunTbl.insert funTbl
+              (function, { binder=parent, fv=fv, group=Group.wrap label,
+                           depth=depth });
             fv
         end
-      and walkE currF =
+      and walkE (currF, depth) =
         let
           val newVar' = newVar currF
           fun exp e =
             (LCPS.Tbl.insert expTbl (e, { enclosing=currF });
              case e
-               of LCPS.FIX (_, bindings, cexp) =>
+               of LCPS.FIX (label, bindings, cexp) =>
                     let val names = map #2 bindings
                         val () = app (fn (kind, name, _, _, _) =>
                                         newVar' (name, kindToCty kind))
                                      bindings
-                        val fvs = map (walkF (currF, e)) bindings
-                        val fv  = exp cexp
-                        val fv' = foldr LV.Set.union fv fvs
-                    in  subtracts (fv', names)
+                        val fvs = map (walkF (currF, label, depth)) bindings
+                        val fv = foldr LV.Set.union LV.Set.empty fvs
+                        val () = newGrp (label, bindings, subtracts (fv, names))
+                        val fv' = exp cexp
+                    in  subtracts (LV.Set.union (fv', fv), names)
                     end
                 | LCPS.APP (_, f, args) =>
                     (app (useVar e) (f :: args);
@@ -124,8 +145,16 @@ end = struct
       val (_, _, args, tys, body) = cps
     in
       ListPair.appEq (newVar cps) (args, tys);
-      walkE cps body;
-      T { funTbl=funTbl, varTbl=varTbl, expTbl=expTbl, lam0=cps }
+      walkE (cps, 1) body;
+      T {
+        funTbl=funTbl,
+        varTbl=varTbl,
+        expTbl=expTbl,
+        grpTbl=grpTbl,
+        functions=Vector.fromList (map #1 (LCPS.FunTbl.listItemsi funTbl)),
+        groups=Vector.fromList (map #1 (Group.Tbl.listItemsi grpTbl)),
+        lam0=cps
+      }
     end
 
   fun typeof (T { varTbl, lam0, ... }) v =
@@ -166,21 +195,38 @@ end = struct
       NONE
     else
       SOME (#binder (LCPS.FunTbl.lookup funTbl f))
-  fun fv (T { funTbl, lam0, ... }) f = 
+  fun fv (T { funTbl, lam0, ... }) f =
     if LV.same (#2 lam0, #2 f) then
       LV.Set.empty
     else
       #fv (LCPS.FunTbl.lookup funTbl f)
+  fun groupOf (T { funTbl, lam0, ... }) f =
+    if LV.same (#2 lam0, #2 f) then
+      raise Fail "looking up group of the top level lambda"
+    else
+      #group (LCPS.FunTbl.lookup funTbl f)
+  fun depthOf (T { funTbl, lam0, ... }) f =
+    if LV.same (#2 lam0, #2 f) then
+      0
+    else
+      #depth (LCPS.FunTbl.lookup funTbl f)
+
+  fun groupFV (T { grpTbl, ... }) g = #fv (Group.Tbl.lookup grpTbl g)
+  fun groupFun (T { grpTbl, ... }) g = #functions (Group.Tbl.lookup grpTbl g)
 
   fun appF (T { funTbl, ... }) f =
     LCPS.FunTbl.appi (fn (function, _) => f function) funTbl
+  fun functions (T { functions, ... }) = functions
+  fun groups (T { groups, ... }) = groups
 
   fun dump (t as (T { funTbl, varTbl, ... })) =
     let val p = print
         fun lst xs = "[" ^ String.concatWith ", " xs ^ "]"
         val funName = LV.lvarName o (#2: LCPS.function -> LCPS.lvar)
-        fun pF (function: LCPS.function, { binder, fv }) =
-          (p ("fun " ^ funName function ^  ": ");
+        fun pF (function: LCPS.function, { binder, fv, group, depth }) =
+          (p (concat ["fun ", funName function,
+                      " of group ", Group.toString group,
+                      " at depth ", Int.toString depth, ": "]);
            p ("inside " ^ funName binder);
            p "; ";
            p ("fv: " ^ lst (map LV.lvarName (LV.Set.listItems fv)));

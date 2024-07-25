@@ -1,7 +1,11 @@
 structure FlowCFA :> sig
   type functions = { known: LabelledCPS.function list, unknown: bool }
-  val analyze : SyntacticInfo.t * LabelledCPS.function ->
-    { lookup: LambdaVar.lvar -> functions option, escape: LabelledCPS.function -> bool }
+  type variables = { known: LabelledCPS.lvar list, escape: bool }
+  type result = {
+    lookup: LambdaVar.lvar -> functions option,
+    flow  : LabelledCPS.function -> variables
+  }
+  val analyze : SyntacticInfo.t * LabelledCPS.function -> result
 end = struct
 
   structure LCPS = LabelledCPS
@@ -12,6 +16,11 @@ end = struct
   structure Syn  = SyntacticInfo
   type lvar = LV.lvar
   type functions = { known: LabelledCPS.function list, unknown: bool }
+  type variables = { known: LabelledCPS.lvar list, escape: bool }
+  type result = {
+    lookup: LambdaVar.lvar -> functions option,
+    flow  : LabelledCPS.function -> variables
+  }
 
   exception Unimp
   exception Impossible of string
@@ -153,7 +162,7 @@ end = struct
     val forallValuesOf : t -> lvar -> (Value.t -> unit) -> unit
     val transitivity   : t -> Value.t * lvar -> (Fact.t -> unit) -> unit
     val lookup : t -> lvar -> functions option
-    val escape : t -> LCPS.function -> bool
+    val getFlow : t -> LCPS.function -> variables
     val dump : t -> unit
     val dumpFlowGraph : t -> unit
     val dumpClosureDependency : Syn.t * t -> unit
@@ -245,8 +254,13 @@ end = struct
                     of {known=[], unknown=false} => NONE
                      | result => SOME result
               end)
-    fun escape ({escape=escapeSet, ...}: t) f =
-      LCPS.FunMonoSet.member (escapeSet, f)
+    fun getFlow ({escape, row, ...}: t) f =
+      let val name = #2 f
+          val escape = LCPS.FunMonoSet.member (escape, f)
+      in  case LVT.find row name
+            of NONE => { known=[name], escape=escape }
+             | SOME set => { known=name :: LVS.toList set, escape=escape }
+      end
 
     fun dump ({row, store, sink, escape}: t) =
       let val puts = print o concat
@@ -403,8 +417,7 @@ end = struct
     val forallUsesOf   : ctx -> lvar -> (LCPS.cexp -> unit) -> unit
     val transitivity   : ctx -> Value.t * lvar -> unit
     val member : ctx -> Fact.t -> bool
-    val result : ctx -> { lookup: lvar -> functions option,
-                          escape: LCPS.function -> bool }
+    val result : ctx -> result
     val dumpFlowGraph : ctx -> unit
     val dumpClosureDependency : ctx -> unit
     (* val summary : ctx -> unit *)
@@ -444,7 +457,7 @@ end = struct
        ())
 
     fun result ({facts, ...}: ctx) =
-      { lookup=FactSet.lookup facts, escape=FactSet.escape facts }
+      { lookup=FactSet.lookup facts, flow=FactSet.getFlow facts }
 
     fun dumpFlowGraph ({facts, ...}: ctx) = FactSet.dumpFlowGraph facts
     fun dumpClosureDependency ({facts, syn, ...}: ctx) =
