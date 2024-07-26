@@ -2,23 +2,28 @@ structure Web :> sig
   type id
   type t
 
-  val calculate : FlowCFA.result * SynataticInfo.t -> t
+  val calculate : FlowCFA.result * SyntacticInfo.t -> t
 
   val webOfVar : t * LabelledCPS.lvar -> id
   val webOfFun : t * LabelledCPS.function -> id
 
   datatype kind = User | Cont
 
-  val defs : id -> LabelledCPS.function vector
-  val uses : id -> LabelledCPS.lvar vector
-  val content : id -> { defs: LabelledCPS.function vector,
-                        uses: LabelledCPS.lvar vector }
-  val polluted : id -> bool
-  val kind : id -> kind
+  val defs : t * id -> LabelledCPS.function vector
+  val uses : t * id -> LabelledCPS.lvar vector
+  val content : t * id -> { defs: LabelledCPS.function vector,
+                            uses: LabelledCPS.lvar vector,
+                            polluted: bool,
+                            kind: kind }
+  val polluted : t * id -> bool
+  val kind : t * id -> kind
 
+  val dump : t -> unit
 end = struct
 
-  structure S = SyntaticInfo
+  structure S = SyntacticInfo
+  structure LCPS = LabelledCPS
+  structure LV = LambdaVar
 
   type id = int
 
@@ -33,15 +38,15 @@ end = struct
 
   datatype t = T of {
     webs: info vector,
-    funMap: id LCPS.FunTbl.tbl,
-    varMap: id LV.Tbl.tbl
+    funMap: id LCPS.FunTbl.hash_table,
+    varMap: id LV.Tbl.hash_table
   }
 
   datatype either = datatype Either.either
 
-  fun calculate ({lookup, escape}, syn) =
+  fun calculate ({lookup, flow} : FlowCFA.result, syn) =
     let
-      type item = (LCPS.var, LCPS.function) either
+      type item = (LCPS.lvar, LCPS.function) either
 
       fun maximize ([], defs, uses, polluted) = (defs, uses, polluted)
         | maximize (INL v :: todo', defs, uses, polluted) =
@@ -52,20 +57,18 @@ end = struct
                  of NONE => (* v is dead, can this even be possible? *)
                       raise Fail "Impossible dead variable in a web"
                   | SOME { known, unknown } =>
-                      let val defs = LCPS.FunSet.addList (defs, known)
-                          val uses = LV.Set.add (uses, v)
+                      let val uses = LV.Set.add (uses, v)
                           val polluted = polluted orelse unknown
-                      in  maximize (todo', defs, uses, polluted)
+                      in  maximize (map INR known @ todo', defs, uses, polluted)
                       end)
         | maximize (INR f :: todo', defs, uses, polluted) =
             if LCPS.FunSet.member (defs, f) then
               maximize (todo', defs, uses, polluted)
             else
               let val { known, escape } = flow f
-                  val uses = LV.Set.addList (uses, known)
                   val defs = LCPS.FunSet.add (defs, f)
                   val polluted = polluted orelse escape
-              in  maximize (todo', defs, uses, polluted)
+              in  maximize (map INL known @ todo', defs, uses, polluted)
               end
 
       val funMap = LCPS.FunTbl.mkTable (1024, Fail "funmap")
@@ -89,7 +92,40 @@ end = struct
                           polluted=polluted, kind=kind }
           in  (length + 1, web :: webs)
           end
+      val (length, webs) = Vector.foldl processFun (0, []) (S.functions syn)
+      val webs = Vector.fromList (List.rev webs)
     in
-      raise Fail "TODO"
+      T {
+        webs=webs,
+        funMap=funMap,
+        varMap=varMap
+      }
     end
+
+  fun webOfVar (T { varMap, ... }, v) = LV.Tbl.lookup varMap v
+  fun webOfFun (T { funMap, ... }, f) = LCPS.FunTbl.lookup funMap f
+  fun content (T { webs, ... }, x) = Vector.sub (webs, x)
+
+  fun mapL f vector = Vector.foldr (fn (v, xs) => f v :: xs) [] vector
+  val _ = mapL : ('a -> 'b) -> 'a vector -> 'b list
+
+  val defs = #defs o content
+  val uses = #uses o content
+  val polluted = #polluted o content
+  val kind = #kind o content
+
+  fun webToS (id: int, { defs, uses, polluted, kind }: info) =
+    let val fs = String.concatWith "," (mapL (LV.lvarName o #2) defs)
+        val vs = String.concatWith "," (mapL LV.lvarName uses)
+        val polluted = if polluted then " (polluted)" else ""
+        val kind = case kind of User => "user" | Cont => "cont"
+    in  concat [
+          "Web #", Int.toString id, " ", kind, polluted, "\n",
+          "  defs: [", fs, "]\n",
+          "  uses: [", vs, "]\n"
+        ]
+    end
+
+  fun dump (T { webs, ... }) = Vector.appi (print o webToS) webs
+
 end

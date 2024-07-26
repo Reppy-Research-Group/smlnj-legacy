@@ -35,9 +35,12 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       val syntactic = SyntacticInfo.calculate lcps
       (* val () = SyntacticInfo.dump syntactic *)
       (* val callgraph = ZeroCFA.analyze (syntactic, lcps) *)
-      val {lookup, flow} = FlowCFA.analyze (syntactic, lcps)
+      val result = FlowCFA.analyze (syntactic, lcps)
       val decision = FlatClosureDecision.produce (lcps, syntactic)
       val () = ClosureDecision.dump (decision, syntactic)
+      val web = Web.calculate (result, syntactic)
+      val () = Web.dump web
+
       (* val repr = ClosureRep.initialize *)
       (*              {cps=lcps, syn=syntactic, lookup=lookup, escape=escape} *)
       (* val () = ClosureRep.dumpGraph repr *)

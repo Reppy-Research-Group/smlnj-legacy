@@ -57,9 +57,9 @@ structure ClosureDecision = struct
             | Code c => p [indent, "Lab ", LV.lvarName c, "\n"]
             | Null   => p [indent, "Null\n"]
             | EnvID e =>
-                (p [indent, "Env ", EnvID.toString e, ": "];
+                (p [indent, "Env ", EnvID.toString e, ":"];
                  if EnvID.MonoSet.member (printed, e) then
-                   p ["<seen>\n"]
+                   p [" <seen>\n"]
                  else (
                    p ["\n"];
                    EnvID.MonoSet.add (printed, e);
