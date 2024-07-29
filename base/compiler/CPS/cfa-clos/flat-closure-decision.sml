@@ -26,13 +26,18 @@ end = struct
     (not (isUntaggedInt syn v)) andalso (not (isFloat syn v))
 
   datatype fv = Var of LV.lvar
+              | CS  of LV.lvar * int
               | Env of D.EnvID.t * LV.lvar list
 
   fun embed (Var v) = D.Var v
+    | embed (CS (v, i)) = D.Expand (v, i)
     | embed (Env (e, _)) = D.EnvID e
 
-  fun spill syn (vs: fv list) : (D.slot list * D.slot list) =
+  val fvToS = D.slotToString o embed
+
+  fun spill syn (group, vs: fv list) : (D.slot list * D.slot list) =
     let
+      val returnCont = S.returnCont syn (S.groupExp syn group)
       fun choose []        = ([D.Null, D.Null, D.Null], [])
         | choose [x]       = ([embed x, D.Null, D.Null], [])
         | choose [x, y]    = ([embed x, embed y, D.Null], [])
@@ -52,6 +57,13 @@ end = struct
             in  Option.valOf lifetime
                 (* v is free in a function, so useSite cannot be empty. *)
             end
+        | lifetimeOf (CS (v, _)) =
+            (case returnCont
+               of SOME c => if LV.same (v, c) then
+                              (~1, ~1) (* Top priority *)
+                            else
+                              lifetimeOf (Var v)
+                | NONE => lifetimeOf (Var v))
         | lifetimeOf (Env (e, vs)) =
             let val fs = foldl
                   (fn (v, fs) => LCPS.FunSet.union (S.useSites syn v, fs))
@@ -61,7 +73,7 @@ end = struct
             end
       val vs = map (fn v => (v, lifetimeOf v)) vs
       fun gt ((v, (fut1, lut1)), (w, (fut2, lut2)))=
-        if lut1 = lut2 then fut2 >= fut1 else lut1 >= lut2
+        if lut1 = lut2 then fut2 > fut1 else lut1 > lut2
       val vs = map #1 (ListMergeSort.sort gt vs)
     in
       choose vs
@@ -70,22 +82,31 @@ end = struct
   fun mapL f vector = Vector.foldr (fn (v, xs) => f v :: xs) [] vector
   val _ = mapL : ('a -> 'b) -> 'a vector -> 'b list
 
+  fun trueFV (fv, syn, repr) =
+    let fun require v =
+          (case S.typeof syn v
+             of CPS.CNTt => [Var v, CS (v, 1), CS (v, 2), CS (v, 3)]
+              | _ => [Var v])
+        fun collect (v, vs) = require v @ vs
+    in  LV.Set.foldr collect [] fv
+    end
+
   fun collect syn (group, (repr, allo, heap)) =
     let val functions = S.groupFun syn group
-        val fv = LV.Set.toList (S.groupFV syn group)
-        val (fv, ufv) = List.partition (isMLValue syn) fv
+        val (fv, ufv) = LV.Set.partition (isMLValue syn) (S.groupFV syn group)
+        val fv = trueFV (fv, syn, repr)
         val (fv, envs, heap) =
-          (case ufv
-             of [] => (map Var fv, [], heap)
-              | _  =>
-                  let val boxedE = EnvID.new ()
-                      val boxedV = map Var ufv
-                      val heap = EnvID.Map.insert (heap, boxedE, map D.Var ufv)
-                  in  (Env (boxedE, ufv) :: map Var fv, [boxedE], heap)
-                  end)
+          if LV.Set.isEmpty ufv then
+             (fv, [], heap)
+          else
+             let val boxedE = EnvID.new ()
+                 val ufv = LV.Set.listItems ufv
+                 val heap = EnvID.Map.insert (heap, boxedE, map D.Var ufv)
+             in  (Env (boxedE, ufv) :: fv, [boxedE], heap)
+             end
     in  case functions
           of #[f as ((CPS.CONT | CPS.KNOWN_CONT), name, _, _, _)] =>
-               (case spill syn fv
+               (case spill syn (group, fv)
                   of (callees, []) =>
                        let val slots = D.Code name :: callees
                            val repr = LCPS.FunMap.insert (repr, f, slots)

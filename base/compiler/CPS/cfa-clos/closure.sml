@@ -30,16 +30,16 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
   fun test cps =
     let
       (* val cps = #1 (FreeClose.freemapClose cps) *)
-      val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n")
+      (* val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n") *)
       val lcps = LabelledCPS.labelF cps
       val syntactic = SyntacticInfo.calculate lcps
       (* val () = SyntacticInfo.dump syntactic *)
       (* val callgraph = ZeroCFA.analyze (syntactic, lcps) *)
       val result = FlowCFA.analyze (syntactic, lcps)
-      val decision = FlatClosureDecision.produce (lcps, syntactic)
-      val () = ClosureDecision.dump (decision, syntactic)
+      (* val decision = FlatClosureDecision.produce (lcps, syntactic) *)
+      (* val () = ClosureDecision.dump (decision, syntactic) *)
       val web = Web.calculate (result, syntactic)
-      val () = Web.dump web
+      (* val () = Web.dump web *)
 
       (* val repr = ClosureRep.initialize *)
       (*              {cps=lcps, syn=syntactic, lookup=lookup, escape=escape} *)

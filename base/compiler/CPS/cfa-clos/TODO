@@ -1,25 +1,27 @@
 [x] Flow analysis
 
+[x] Web
+    WebID --> { defs: Functions, uses: Variables, unknown: bool }
+    Variables --> WebID
+    Functions --> WebID
+
 [x] Groups --- (real) mutually recursive functions form a group
     A group is a unit of closure decision
 
 [x] Decision representation
     <H, Clos, Alloc>
 
-[ ] Decision invariant checker
+[x] Decision invariant checker
 
 [ ] Transformation: decision representation, invariant checker
+
+[ ] Comments
 
 [ ] Decision rewriting
 
     [ ] Flattening: Web
 
     [ ] Sharing: Shareable chain, *unchanging variable analysis
-
-[ ] Web
-    WebID --> { defs: Functions, uses: Variables, unknown: bool }
-    Variables --> WebID
-    Functions --> WebID
 
 [ ] Shareable chain
 

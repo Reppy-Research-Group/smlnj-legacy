@@ -2,22 +2,26 @@ structure SyntacticInfo :> sig
   type t
   exception SyntacticInfo
 
-  val calculate : LabelledCPS.function -> t
-  val typeof    : t -> LabelledCPS.lvar -> LabelledCPS.cty
-  val defSite   : t -> LabelledCPS.lvar -> LabelledCPS.function
-  val useSites  : t -> LabelledCPS.lvar -> LabelledCPS.FunSet.set
-  val usePoints : t -> LabelledCPS.lvar -> LabelledCPS.Set.set
-  val binderOf  : t -> LabelledCPS.function -> LabelledCPS.function option
-  val fv        : t -> LabelledCPS.function -> LambdaVar.Set.set
-  val groupOf   : t -> LabelledCPS.function -> Group.t
-  val depthOf   : t -> LabelledCPS.function -> int
-  val groupFV   : t -> Group.t -> LambdaVar.Set.set
-  val groupFun  : t -> Group.t -> LabelledCPS.function vector
-  val enclosing : t -> LabelledCPS.cexp -> LabelledCPS.function
-  val appF      : t -> (LabelledCPS.function -> unit) -> unit
-  val functions : t -> LabelledCPS.function vector
-  val groups    : t -> Group.t vector
-  val dump      : t -> unit
+  val calculate     : LabelledCPS.function -> t
+  val typeof        : t -> LabelledCPS.lvar -> LabelledCPS.cty
+  val defSite       : t -> LabelledCPS.lvar -> LabelledCPS.function
+  val useSites      : t -> LabelledCPS.lvar -> LabelledCPS.FunSet.set
+  val usePoints     : t -> LabelledCPS.lvar -> LabelledCPS.Set.set
+  val knownFun      : t -> LabelledCPS.lvar -> LabelledCPS.function option
+  val binderOf      : t -> LabelledCPS.function -> LabelledCPS.function option
+  val fv            : t -> LabelledCPS.function -> LambdaVar.Set.set
+  val groupOf       : t -> LabelledCPS.function -> Group.t
+  val depthOf       : t -> LabelledCPS.function -> int
+  val groupFV       : t -> Group.t -> LambdaVar.Set.set
+  val groupFun      : t -> Group.t -> LabelledCPS.function vector
+  val groupExp      : t -> Group.t -> LabelledCPS.cexp
+  val enclosing     : t -> LabelledCPS.cexp -> LabelledCPS.function
+  val enclosingUser : t -> LabelledCPS.cexp -> LabelledCPS.function
+  val returnCont    : t -> LabelledCPS.cexp -> LabelledCPS.lvar option
+  val appF          : t -> (LabelledCPS.function -> unit) -> unit
+  val functions     : t -> LabelledCPS.function vector
+  val groups        : t -> Group.t vector
+  val dump          : t -> unit
 end = struct
   structure LCPS = LabelledCPS
   structure LV   = LambdaVar
@@ -26,7 +30,8 @@ end = struct
   type fun_info = { binder: LCPS.function, fv: LV.Set.set, group: Group.t,
                     depth: int }
   type exp_info = { enclosing: LCPS.function }
-  type grp_info = { functions: LCPS.function vector, fv: LV.Set.set }
+  type grp_info = { functions: LCPS.function vector, fv: LV.Set.set,
+                    exp: LCPS.cexp }
 
   datatype t = T of {
     funTbl: fun_info LCPS.FunTbl.hash_table,
@@ -55,6 +60,8 @@ end = struct
       val varTbl = LV.Tbl.mkTable (32, SyntacticInfo)
       val expTbl = LCPS.Tbl.mkTable (32, SyntacticInfo)
       val grpTbl = Group.Tbl.mkTable (32, SyntacticInfo)
+      val grps = ref ([]: Group.t list)
+      fun prependGrp group = grps := group :: !grps
 
       fun newVar currF (var, ty) =
             LV.Tbl.insert varTbl
@@ -67,11 +74,13 @@ end = struct
                 val uses' = LCPS.Set.add (uses, exp)
             in  LV.Tbl.insert varTbl (var, { ty=ty, def=def, uses=uses' })
             end
-        | useVar function _ = ()
+        | useVar _ _ = ()
 
-      fun newGrp (label, bindings, fv) =
-            Group.Tbl.insert grpTbl
-              (Group.wrap label, { functions=Vector.fromList bindings, fv=fv })
+      fun newGrp (label, bindings, fv, exp) =
+        (prependGrp (Group.wrap label);
+         Group.Tbl.insert grpTbl
+           (Group.wrap label, 
+            { functions=Vector.fromList bindings, fv=fv, exp=exp }))
 
       fun walkF
         (parent, label, depth)
@@ -96,7 +105,8 @@ end = struct
                                      bindings
                         val fvs = map (walkF (currF, label, depth)) bindings
                         val fv = foldr LV.Set.union LV.Set.empty fvs
-                        val () = newGrp (label, bindings, subtracts (fv, names))
+                        val () =
+                          newGrp (label, bindings, subtracts (fv, names), e)
                         val fv' = exp cexp
                     in  subtracts (LV.Set.union (fv', fv), names)
                     end
@@ -152,7 +162,7 @@ end = struct
         expTbl=expTbl,
         grpTbl=grpTbl,
         functions=Vector.fromList (map #1 (LCPS.FunTbl.listItemsi funTbl)),
-        groups=Vector.fromList (map #1 (Group.Tbl.listItemsi grpTbl)),
+        groups=Vector.fromList (List.rev (!grps)),
         lam0=cps
       }
     end
@@ -162,10 +172,28 @@ end = struct
       CPS.FUNt
     else
       #ty (LV.Tbl.lookup varTbl v)
+
   fun enclosing (T { expTbl, ... }) e =
     #enclosing (LCPS.Tbl.lookup expTbl e)
     handle SyntacticInfo => (print "missing expression\n";
                              raise SyntacticInfo)
+
+  fun enclosingUser (T { expTbl, funTbl, ...}) e =
+    let fun walkUp (f as ((CPS.CONT | CPS.KNOWN_CONT), _, _, _, _)) =
+              let val binder = #binder (LCPS.FunTbl.lookup funTbl f)
+              in  walkUp binder
+              end
+          | walkUp f = f
+    in  walkUp (#enclosing (LCPS.Tbl.lookup expTbl e))
+    end
+
+  fun returnCont t e =
+    let val (_, _, args, tys, _) = enclosingUser t e
+    in  case (args, tys)
+          of (x::xs, CPS.CNTt::ts) => SOME x
+           | _ => NONE
+    end
+
   fun enclosingFs (t, usePoints) =
     LCPS.Set.foldl (fn (p, set) => LCPS.FunSet.add (set, enclosing t p))
                    LCPS.FunSet.empty
@@ -190,6 +218,13 @@ end = struct
       handle SyntacticInfo => (print (LV.lvarName v ^ " missing\n");
                                raise SyntacticInfo)
 
+  fun knownFun (t as (T { functions, lam0, ... })) v =
+    if LV.same (#2 lam0, v) then
+      SOME lam0
+    else
+      (* GROSS HACK *)
+      Vector.find (fn (_, name, _, _, _) => LV.same (name, v)) functions
+
   fun binderOf (T { funTbl, lam0, ... }) f =
     if LV.same (#2 lam0, #2 f) then
       NONE
@@ -213,6 +248,7 @@ end = struct
 
   fun groupFV (T { grpTbl, ... }) g = #fv (Group.Tbl.lookup grpTbl g)
   fun groupFun (T { grpTbl, ... }) g = #functions (Group.Tbl.lookup grpTbl g)
+  fun groupExp (T { grpTbl, ... }) g = #exp (Group.Tbl.lookup grpTbl g)
 
   fun appF (T { funTbl, ... }) f =
     LCPS.FunTbl.appi (fn (function, _) => f function) funTbl

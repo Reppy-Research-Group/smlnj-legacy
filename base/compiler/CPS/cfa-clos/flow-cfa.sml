@@ -25,9 +25,7 @@ end = struct
   exception Unimp
   exception Impossible of string
 
-  fun mapToList f vs = Vector.foldl (fn (v, acc) => f v :: acc) [] vs
-  fun mapToVec  f vs = Vector.fromList (map f vs)
-  fun concatWithMap str f vs = String.concatWith str (mapToList f vs)
+  (* TODO: Feature request *)
   fun hashCombine (hash1, hash2) =
     (* C++ Boost's hash_combine *)
     Word.xorb (hash1, Word.+ (hash2,
@@ -39,7 +37,7 @@ end = struct
     datatype t = Function of LCPS.function
                | Record   of int * lvar
                | Mutable  of lvar
-               | Value    of LCPS.cty
+               | Value    of LCPS.cty (* TODO: flatten *)
 
     val hash : t -> word
     val same : t * t -> bool
@@ -228,6 +226,7 @@ end = struct
        | --/ v =>
            LVS.member (sink, v)
 
+    (* TODO: Try uncurrying this *)
     fun forallValuesOf ({store, ...}: t) v f =
       (case LVT.find store v
          of SOME set => VS.app f set
@@ -555,6 +554,7 @@ end = struct
     let
       val ctx = Context.mk syn
       fun add fact = Context.remember (ctx, fact)
+      (* FIXME: If functions flow to GETVAR *)
       fun walkB (f as (kind, name, args, tys, body)) =
             (add (Function f --> name); walk body)
       and walk (RECORD (label, CPS.RK_VECTOR, values, dest, cexp)) = walk cexp
@@ -627,6 +627,7 @@ end = struct
                 | cexp => record (cexp, x))
         | propagateValue (Mutable r, x) =
             forallUsesOf x
+              (* TODO: ignore unboxed assign, handle update *)
               (fn SETTER (_, (CPS.P.ASSIGN|CPS.P.UNBOXEDASSIGN), args, _) =>
                     let val (_, rhs) = twoArgs args
                     in  add (flowValue (rhs, r))
@@ -643,7 +644,7 @@ end = struct
                 | LOOKER (_, _, _, dest, ty, _) =>
                     add (fromType (dest, ty))
 
-                (* If a cell captures an unknown value, i.e. makeref(x),
+                (* If a cell contains an unknown value, i.e., makeref(x),
                  * we don't need to create a cell unless x can contain a
                  * function. That is, x has type FUNt, CNTt, or PTRt. The
                  * former two cases has been handled by the above, so we

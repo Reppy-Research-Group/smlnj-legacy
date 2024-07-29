@@ -31,6 +31,7 @@ structure ClosureDecision = struct
 
   datatype slot = EnvID  of EnvID.t
                 | Var    of LV.lvar
+                | Expand of LV.lvar * int
                 | Code   of LV.lvar
                 | Null
 
@@ -42,6 +43,8 @@ structure ClosureDecision = struct
 
   fun slotToString (Var v) = concat ["[V]", LV.lvarName v]
     | slotToString (Code c) = concat ["[L]", LV.lvarName c]
+    | slotToString (Expand (v, i)) =
+        concat ["[CS]", LV.lvarName v, "#", Int.toString i]
     | slotToString Null = "Null"
     | slotToString (EnvID e) = concat ["[E]", EnvID.toString e]
 
@@ -55,6 +58,8 @@ structure ClosureDecision = struct
            of Var v  => p [indent, "Var ", LV.lvarName v,
                            tyToS (S.typeof syn v), "\n"]
             | Code c => p [indent, "Lab ", LV.lvarName c, "\n"]
+            | Expand (v, i) => p [indent, "Expand #", Int.toString i, " of ",
+                                  LV.lvarName v, "\n"]
             | Null   => p [indent, "Null\n"]
             | EnvID e =>
                 (p [indent, "Env ", EnvID.toString e, ":"];

@@ -2,6 +2,7 @@ structure Group :> sig
   (* a group is represented by the label of the letfun *)
   type t
 
+  val fromExp : LabelledCPS.cexp -> t
   val wrap : LabelledCPS.label -> t
   val unwrap : t -> LabelledCPS.label
   val toString : t -> string
@@ -14,6 +15,9 @@ end = struct
   structure LV = LambdaVar
 
   type t = LabelledCPS.label
+
+  fun fromExp (LabelledCPS.FIX (label, _, _)) = label
+    | fromExp _ = raise Fail "Group: Not a fix"
 
   fun wrap x = x
   fun unwrap x = x
