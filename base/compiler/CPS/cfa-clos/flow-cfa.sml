@@ -208,9 +208,9 @@ end = struct
     val toString : t -> string
     val hash : t -> word
     val same : t * t -> bool
+    val priority : t -> int
 
-    structure Priority : PRIORITY where type item = t
-
+    structure Priority : PRIORITY       where type item = t
     structure HashSet : MONO_HASH_SET   where type Key.hash_key = t
     structure HashTbl : MONO_HASH_TABLE where type Key.hash_key = t
   end = struct
@@ -241,15 +241,18 @@ end = struct
       | same (--/ v1, --/ v2) = LV.same (v1, v2)
       | same _ = false
 
+    fun priority (x >-> y) = 1
+      | priority (v --> y) = 3
+      | priority (/-- f) = 2
+      | priority (--/ v) = 4
+
     structure Priority : PRIORITY = struct
       type priority = int
       val compare = Int.compare
       type item = t
-      fun priority (x >-> y) = 1
-        | priority (v --> y) = 3
-        | priority (/-- f) = 2
-        | priority (--/ v) = 4
+      val priority = priority
     end
+
     structure Key : HASH_KEY = struct
       type hash_key = t
       val hashVal = hash
@@ -263,6 +266,66 @@ end = struct
   datatype value = datatype Value.t
   datatype cexp  = datatype LCPS.cexp
   datatype either = datatype Either.either
+
+  structure FactUnorderedQueue :> sig
+    type t
+    val mkQueue : unit -> t
+    val enqueue : t * Fact.t -> unit
+    val next    : t -> Fact.t option
+  end = struct
+    open Queue
+    type t = Fact.t queue
+  end
+
+  structure FactPQueue :> sig
+    type t
+    val mkQueue : unit -> t
+    val enqueue : t * Fact.t -> unit
+    val next    : t -> Fact.t option
+  end = struct
+    structure PQueue = LeftPriorityQFn(Fact.Priority)
+    type t = PQueue.queue ref
+
+    fun mkQueue () = ref PQueue.empty
+
+    fun enqueue (queue, fact) = queue := PQueue.insert (fact, !queue)
+
+    fun next (queue) =
+      (case PQueue.next (!queue)
+         of NONE => NONE
+          | SOME (item, queue') => (queue := queue'; SOME item))
+  end
+
+  structure FactFlatPQueue :> sig
+    type t
+    val mkQueue : unit -> t
+    val enqueue : t * Fact.t -> unit
+    val next    : t -> Fact.t option
+  end = struct
+    type t = Fact.t list ref vector
+
+    fun mkQueue () : t = #[ref [], ref [], ref [], ref[]]
+
+    fun enqueue (queue, fact) =
+      let val idx = Fact.priority fact - 1
+          val queue = Vector.sub (queue, idx)
+      in  queue := fact :: (!queue)
+      end
+
+    fun next queue =
+      let val num = 4
+          fun next queue =
+            (case !queue
+               of [] => NONE
+                | (fact :: queue') => (queue := queue'; SOME fact))
+          fun visit 0 = next (Vector.sub (queue, 0))
+            | visit n =
+               (case next (Vector.sub (queue, n))
+                  of SOME fact => SOME fact
+                   | NONE => visit (n - 1))
+      in  visit (num - 1)
+      end
+  end
 
   structure FactSet :> sig
     type t
@@ -389,6 +452,7 @@ end = struct
                     of {known=[], unknown=false} => NONE
                      | result => SOME result
               end)
+
     fun getFlow ({escape, row, ...}: t) f =
       let val name = #2 f
           val escape = LCPS.FunMonoSet.member (escape, f)
@@ -617,8 +681,7 @@ end = struct
       end
   end
 
-  structure PQueue = LeftPriorityQFn(Fact.Priority)
-
+  structure Queue = FactFlatPQueue
   structure Context :> sig
     type ctx
     val mk : Syn.t -> ctx
@@ -636,24 +699,20 @@ end = struct
     (* val summary : ctx -> unit *)
   end = struct
     type ctx = {
-      todo  : PQueue.queue ref,
+      todo  : Queue.t,
       facts : FactSet.t,
       syn   : Syn.t
     }
 
     fun mk syn = {
-      todo=ref PQueue.empty,
+      todo=Queue.mkQueue (),
       facts=FactSet.mk (Syn.numVars syn),
       syn=syn
     }
 
-    fun next ({todo, ...}: ctx) =
-      (case PQueue.next (!todo)
-         of NONE => NONE
-          | SOME (item, queue) => (todo := queue; SOME item))
+    fun next ({todo, ...}: ctx) = Queue.next todo
 
-    fun enqueue (todo, fact) =
-      todo := PQueue.insert (fact, !todo)
+    fun enqueue (todo, fact) = Queue.enqueue (todo, fact)
 
     fun remember ({todo, facts, ...}: ctx, fact) =
       if FactSet.add facts fact then enqueue (todo, fact) else ()
