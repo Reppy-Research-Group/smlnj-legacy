@@ -21,6 +21,7 @@ structure SyntacticInfo :> sig
   val appF          : t -> (LabelledCPS.function -> unit) -> unit
   val functions     : t -> LabelledCPS.function vector
   val groups        : t -> Group.t vector
+  val numVars       : t -> int
   val dump          : t -> unit
 end = struct
   structure LCPS = LabelledCPS
@@ -254,6 +255,7 @@ end = struct
     LCPS.FunTbl.appi (fn (function, _) => f function) funTbl
   fun functions (T { functions, ... }) = functions
   fun groups (T { groups, ... }) = groups
+  fun numVars (T { varTbl, ... }) = LV.Tbl.numItems varTbl
 
   fun dump (t as (T { funTbl, varTbl, ... })) =
     let val p = print

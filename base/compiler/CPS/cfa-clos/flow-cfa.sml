@@ -9,11 +9,32 @@ structure FlowCFA :> sig
 end = struct
 
   structure LCPS = LabelledCPS
-  structure LV   = struct
+  structure Syn  = SyntacticInfo
+
+  exception Unimp
+  exception Impossible of string
+
+  (* TODO: Feature request *)
+  (* C++ Boost's hash_combine *)
+  fun hashMix x =
+    let val m1 = 0wx21f0aaad
+        val m2 = 0wx735a2d97
+        val x  = Word.xorb (x, Word.>> (x, 0w16))
+        val x  = x * m1
+        val x  = Word.xorb (x, Word.>> (x, 0w15))
+        val x  = x * m2
+        val x  = Word.xorb (x, Word.>> (x, 0w15))
+    in  x
+    end
+        
+  fun hashCombine (hash1, hash2) =
+    hashMix (hash1 + 0wx9e3779b9 + hash2)
+
+  structure LV = struct
     open LambdaVar
     structure MonoSet = HashSetFn(Tbl.Key)
   end
-  structure Syn  = SyntacticInfo
+
   type lvar = LV.lvar
   type functions = { known: LabelledCPS.function list, unknown: bool }
   type variables = { known: LabelledCPS.lvar list, escape: bool }
@@ -21,17 +42,6 @@ end = struct
     lookup: LambdaVar.lvar -> functions option,
     flow  : LabelledCPS.function -> variables
   }
-
-  exception Unimp
-  exception Impossible of string
-
-  (* TODO: Feature request *)
-  fun hashCombine (hash1, hash2) =
-    (* C++ Boost's hash_combine *)
-    Word.xorb (hash1, Word.+ (hash2,
-                              (Word.+ (0wx9e3779b9,
-                                       (Word.+ (Word.<< (hash1, 0w6),
-                                                Word.>> (hash1, 0w2)))))))
 
   structure Value :> sig
     datatype t = Function of LCPS.function
@@ -62,11 +72,10 @@ end = struct
             | hashTy (CPS.FLTt _) = 0w3
             | hashTy (CPS.CNTt)   = 0w4
       in  case v
-            of Function f => hashCombine (funtag, hashvar (#2 f))
-             | Record (i, v) =>
-                 hashCombine (rectag, hashCombine (Word.fromInt i, hashvar v))
-             | Mutable v => hashCombine (muttag, hashvar v)
-             | Value ty => hashCombine (valtag, hashTy ty)
+            of Function f => hashMix (hashvar (#2 f))
+             | Record (i, v) => hashCombine (Word.fromInt i, hashvar v)
+             | Mutable v => hashMix (hashvar v)
+             | Value ty => hashMix (hashTy ty)
       end
 
     fun same (Function f1, Function f2) = LV.same (#2 f1, #2 f2)
@@ -184,8 +193,8 @@ end = struct
     fun mk hint = {
       row = LV.Tbl.mkTable (hint, FactSet),
       store = LV.Tbl.mkTable (hint, FactSet),
-      sink  = LV.MonoSet.mkEmpty hint,
-      escape = LCPS.FunMonoSet.mkEmpty hint
+      sink  = LV.MonoSet.mkEmpty (hint div 5),
+      escape = LCPS.FunMonoSet.mkEmpty (hint div 5)
     }
 
     fun add ({row, store, sink, escape}: t) =
@@ -261,25 +270,45 @@ end = struct
              | SOME set => { known=name :: LVS.toList set, escape=escape }
       end
 
+    fun histogram (xs: int list) =
+      let fun insert (x, map) =
+            (case IntRedBlackMap.find (map, x)
+               of SOME n => IntRedBlackMap.insert (map, x, n + 1)
+                | NONE   => IntRedBlackMap.insert (map, x, 1))
+          fun show (n, count, ()) =
+            app print [Int.toString n, " | ", Int.toString count, "\n"]
+          val hist = foldl insert IntRedBlackMap.empty xs
+      in  IntRedBlackMap.foldli show () hist
+      end
+
     fun dump ({row, store, sink, escape}: t) =
       let val puts = print o concat
           fun prow (x, set) =
             puts [LV.lvarName x, " >-> {",
                   String.concatWithMap " " LV.lvarName (LVS.listItems set),
+                  Int.toString (LVS.numItems set),
                   "}\n"]
           fun pstore (x, vs) =
             puts [LV.lvarName x, " <-- {",
-                  String.concatWithMap " " Value.toString (VS.listItems vs),
+                  (* String.concatWithMap " " Value.toString (VS.listItems vs), *)
+                  Int.toString (VS.numItems vs),
                   "}\n"]
-      in  LVT.appi prow row;
-          LVT.appi pstore store;
-          puts ["/-- {",
-                String.concatWithMap " " (LV.lvarName o #2)
-                (LCPS.FunMonoSet.listItems escape),
-                "}\n"];
-          puts ["--/ {",
-                String.concatWithMap " " LV.lvarName (LVS.listItems sink),
-                "}\n"]
+          fun rowSizes (x, set, data) = LVS.bucketSizes set @ data
+          fun storeSizes (x, set, data) = VS.bucketSizes set @ data
+          val () = histogram (LVT.foldi rowSizes [] row)
+          val () = print "-----------------------------------------\n"
+          val () = histogram (LVT.foldi storeSizes [] store)
+      in  
+          (* LVT.appi prow row; *)
+          (* LVT.appi pstore store; *)
+          (* puts ["/-- {", *)
+          (*       String.concatWithMap " " (LV.lvarName o #2) *)
+          (*       (LCPS.FunMonoSet.listItems escape), *)
+          (*       "}\n"]; *)
+          (* puts ["--/ {", *)
+          (*       String.concatWithMap " " LV.lvarName (LVS.listItems sink), *)
+          (*       "}\n"] *)
+          ()
       end
 
     local open DotLanguage in
@@ -429,7 +458,7 @@ end = struct
 
     fun mk syn = {
       todo=Queue.mkQueue (),
-      facts=FactSet.mk 1024,
+      facts=FactSet.mk (Syn.numVars syn),
       syn=syn
     }
 
@@ -706,7 +735,7 @@ end = struct
     let val ctx = initialize (syn, cps)
         val () = timeit "flow-cfa " (fn () => run ctx)
         (* val () = Context.dumpFlowGraph ctx *)
-        (* val () = Context.dump ctx *)
+        val () = Context.dump ctx
         (* val () = Context.dumpClosureDependency ctx *)
     in  Context.result ctx
     end
