@@ -319,6 +319,13 @@ functor HashSetFn (Key : HASH_KEY) : MONO_HASH_SET =
 	    find' 0
 	  end
 
+    fun bucketSizes (SET{table=ref tbl, ...}) = let
+	  fun len (NIL, n) = n
+	    | len (B(_, _, r), n) = len(r, n+1)
+	  in
+	    Array.foldr (fn (b, l) => len(b, 0) :: l) [] tbl
+	  end
+
   (* DEPRECATED FUNCTIONS *)
 
     val listItems = toList

@@ -102,6 +102,11 @@ signature MONO_HASH_SET =
     val find : (item -> bool) -> set -> item option
 	(* find an element in the set for which the predicate is true *)
 
+    val bucketSizes : set -> int list
+	(* returns a list of the sizes of the various buckets.  This is to
+	 * allow users to gauge the quality of their hashing function.
+	 *)
+
   (* DEPRECATED FUNCTIONS *)
 
     val listItems : set -> item list
