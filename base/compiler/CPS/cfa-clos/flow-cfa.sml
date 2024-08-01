@@ -245,10 +245,10 @@ end = struct
       type priority = int
       val compare = Int.compare
       type item = t
-      fun priority (x >-> y) = 3
-        | priority (v --> y) = 4
+      fun priority (x >-> y) = 1
+        | priority (v --> y) = 3
         | priority (/-- f) = 2
-        | priority (--/ v) = 1
+        | priority (--/ v) = 4
     end
     structure Key : HASH_KEY = struct
       type hash_key = t
