@@ -209,6 +209,8 @@ end = struct
     val hash : t -> word
     val same : t * t -> bool
 
+    structure Priority : PRIORITY where type item = t
+
     structure HashSet : MONO_HASH_SET   where type Key.hash_key = t
     structure HashTbl : MONO_HASH_TABLE where type Key.hash_key = t
   end = struct
@@ -239,6 +241,15 @@ end = struct
       | same (--/ v1, --/ v2) = LV.same (v1, v2)
       | same _ = false
 
+    structure Priority : PRIORITY = struct
+      type priority = int
+      val compare = Int.compare
+      type item = t
+      fun priority (x >-> y) = 3
+        | priority (v --> y) = 4
+        | priority (/-- f) = 2
+        | priority (--/ v) = 1
+    end
     structure Key : HASH_KEY = struct
       type hash_key = t
       val hashVal = hash
@@ -258,6 +269,7 @@ end = struct
     val mk : int -> t
     val add            : t -> Fact.t -> bool
     val member         : t -> Fact.t -> bool
+    val merge          : t -> lvar * lvar -> (Value.t -> unit) -> unit
     val forallValuesOf : t -> lvar -> (Value.t -> unit) -> unit
     val transitivity   : t -> Value.t * lvar -> (Fact.t -> unit) -> unit
     val lookup : t -> lvar -> functions option
@@ -333,6 +345,29 @@ end = struct
          of SOME set => VS.app f set
           | NONE => ())
 
+    fun merge ({store, ...}: t) (src, dst) f =
+      let val facts1' = LVT.find store src
+          val facts2' = LVT.find store dst
+      in  case (facts1', facts2')
+            of (NONE, _) => ()
+             | (SOME facts1, NONE) =>
+                 let val facts2 = VS.copy facts1
+                     val () = LVT.insert store (dst, facts2)
+                     val () = VS.app f facts2
+                 in  ()
+                 end
+             | (SOME facts1, SOME facts2) =>
+                 let fun insert (fact, diff) =
+                       if VS.member (facts2, fact) then
+                         diff
+                       else
+                         (VS.add (facts2, fact); fact :: diff)
+                     val diff = VS.fold insert [] facts1
+                     val () = app f diff
+                 in  ()
+                 end
+      end
+
     fun transitivity (t as {row, ...}: t) (v, x) f =
       (case LVT.find row x
          of SOME set =>
@@ -393,7 +428,7 @@ end = struct
                 (* fun v (fact, ls) = Word.toInt (Value.hash fact mod 0w64) :: ls *)
             in  VS.fold v [] set
             end
-          fun rowSizes (x, set, data) = LVS.numItems set :: data
+          fun rowSizes (x, set, data) = LVS.bucketSizes set @ data
           fun storeSizes (x, set, data) = VS.bucketSizes set @ data
           fun storeSizes (x, set, data) = valueSetTally set @ data
           val () = histogram (LVT.foldi rowSizes [] row)
@@ -536,6 +571,54 @@ end = struct
     end
   end
 
+  structure Profiler :> sig
+    type timer
+
+    val fvo : timer
+    val fuo : timer
+    val trans : timer
+    val member : timer
+    val remember : timer
+    val propa : timer
+
+    val profile : timer -> ('a -> 'b) -> ('a -> 'b)
+    val report  : unit -> unit
+
+  end = struct
+    type timer = Time.time ref
+
+    fun profile timer f a =
+      let
+        val start = Time.now ()
+        val result = f a
+        val stop = Time.now ()
+        val diff = Time.- (stop, start)
+        val () = timer := Time.+ (!timer, diff)
+      in
+        result
+      end
+
+    val fvo = ref Time.zeroTime
+    val fuo = ref Time.zeroTime
+    val trans = ref Time.zeroTime
+    val member = ref Time.zeroTime
+    val remember = ref Time.zeroTime
+    val propa = ref Time.zeroTime
+
+    fun report () =
+      let val puts = app print
+          val () = puts ["fvo :", Time.toString (!fvo), "\n"]
+          val () = puts ["fuo :", Time.toString (!fuo), "\n"]
+          val () = puts ["trans :", Time.toString (!trans), "\n"]
+          val () = puts ["member :", Time.toString (!member), "\n"]
+          val () = puts ["remember :", Time.toString (!remember), "\n"]
+          val () = puts ["propa :", Time.toString (!propa), "\n"]
+      in  ()
+      end
+  end
+
+  structure PQueue = LeftPriorityQFn(Fact.Priority)
+
   structure Context :> sig
     type ctx
     val mk : Syn.t -> ctx
@@ -543,6 +626,7 @@ end = struct
     val next : ctx -> Fact.t option
     val dump : ctx -> unit
     val forallValuesOf : ctx -> lvar -> (Value.t -> unit) -> unit
+    val merge : ctx -> lvar * lvar -> unit
     val forallUsesOf   : ctx -> lvar -> (LCPS.cexp -> unit) -> unit
     val transitivity   : ctx -> Value.t * lvar -> unit
     val member : ctx -> Fact.t -> bool
@@ -552,33 +636,53 @@ end = struct
     (* val summary : ctx -> unit *)
   end = struct
     type ctx = {
-      todo  : Fact.t Queue.queue,
+      todo  : PQueue.queue ref,
       facts : FactSet.t,
       syn   : Syn.t
     }
 
     fun mk syn = {
-      todo=Queue.mkQueue (),
+      todo=ref PQueue.empty,
       facts=FactSet.mk (Syn.numVars syn),
       syn=syn
     }
 
-    fun remember ({todo, facts, ...}: ctx, fact) =
-      if FactSet.add facts fact then Queue.enqueue (todo, fact) else ()
+    fun next ({todo, ...}: ctx) =
+      (case PQueue.next (!todo)
+         of NONE => NONE
+          | SOME (item, queue) => (todo := queue; SOME item))
 
-    fun next ({todo, ...}: ctx) = Queue.next todo
+    fun enqueue (todo, fact) =
+      todo := PQueue.insert (fact, !todo)
+
+    fun remember ({todo, facts, ...}: ctx, fact) =
+      if FactSet.add facts fact then enqueue (todo, fact) else ()
 
     fun forallUsesOf ({syn, ...}: ctx) x f =
       let val set = Syn.usePoints syn x
       in  LCPS.Set.app f set
       end
 
+    fun merge ({facts, todo, ...}: ctx) (src, dst) =
+      FactSet.merge facts (src, dst) (fn v => enqueue (todo, v --> dst))
+
+    fun forallUsesOf' ctx x f =
+      Profiler.profile Profiler.fuo (forallUsesOf ctx x) f
+
     fun forallValuesOf ({facts, ...}: ctx) = FactSet.forallValuesOf facts
 
+    fun forallValuesOf' ctx x f =
+      Profiler.profile Profiler.fvo (forallValuesOf ctx x) f
+
     fun transitivity ({facts, todo, ...}: ctx) (v, x) =
-      FactSet.transitivity facts (v, x) (fn f => Queue.enqueue (todo, f))
+      FactSet.transitivity facts (v, x) (fn f => enqueue (todo, f))
+
+    fun transitivity' ctx vx =
+      Profiler.profile Profiler.trans (transitivity ctx) vx
 
     fun member ({facts, ...}: ctx) f = FactSet.member facts f
+
+    fun member' ctx f = Profiler.profile Profiler.member (member ctx) f
 
     fun dump {todo, facts, syn=_} =
       (print "Context:\n";
@@ -686,10 +790,12 @@ end = struct
       val forallUsesOf = Context.forallUsesOf ctx
       val transitivity = Context.transitivity ctx
       val member = Context.member ctx
+      val merge = Context.merge ctx
 
       fun propagate (/-- (function as (kind, name, args, tys, body))) =
             (ListPair.appEq (add o fromType) (args, tys))
-        | propagate (x >-> y) = forallValuesOf x (fn v => add (v --> y))
+        | propagate (x >-> y) = merge (x, y)
+            (* forallValuesOf x (fn v => add (v --> y)) *)
         | propagate (--/ x) = forallValuesOf x escape
         | propagate (v --> x) =
             (if member (--/ x) then escape v else ();
@@ -800,6 +906,7 @@ end = struct
         val () = timeit "flow-cfa " (fn () => run ctx)
         (* val () = Context.dumpFlowGraph ctx *)
         val () = Context.dump ctx
+      (* val () = Profiler.report () *)
         (* val () = Context.dumpClosureDependency ctx *)
     in  Context.result ctx
     end
