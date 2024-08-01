@@ -14,6 +14,77 @@ end = struct
   exception Unimp
   exception Impossible of string
 
+  structure SipHash13 :> sig
+    type state
+
+    val new : unit -> state
+    val write : state * Word64.word -> state
+    val finalize : state -> Word64.word
+  end = struct
+    type state = {
+      v0: Word64.word,
+      v1: Word64.word,
+      v2: Word64.word,
+      v3: Word64.word
+    }
+    fun rotl (x, b) = Word64.orb (Word64.<< (x, b), Word64.>> (x, 0w64 - b))
+    fun compress ({v0, v1, v2, v3}: state) =
+      let val v0 = v0 + v1
+            val v1 = rotl (v1, 0w13)
+            val v1 = Word64.xorb (v1, v0)
+
+          val v0 = rotl (v0, 0w32)
+
+          val v2 = v2 + v3
+            val v3 = rotl (v3, 0w16)
+            val v3 = Word64.xorb (v3, v2)
+
+          val v0 = v0 + v3
+            val v3 = rotl (v3, 0w21)
+            val v3 = Word64.xorb (v3, v0)
+
+          val v2 = v2 + v1
+            val v1 = rotl (v1, 0w17)
+            val v1 = Word64.xorb (v1, v2)
+
+          val v2 = rotl (v2, 0w32)
+      in  {v0=v0, v1=v1, v2=v2, v3=v3}
+      end
+      fun cRounds state = compress state
+      fun dRounds state = compress (compress (compress state))
+      fun finalize ({v0, v1, v2, v3}: state) =
+        let val v2 = Word64.xorb (v2, 0wxff)
+            val {v0, v1, v2, v3} = dRounds {v0=v0, v1=v1, v2=v2, v3=v3}
+        in  Word64.xorb (Word64.xorb (Word64.xorb (v0, v1), v2), v3)
+        end
+      fun new () : state =
+        let val v0 = 0wx736f6d6570736575
+            val v1 = 0wx646f72616e646f6d
+            val v2 = 0wx6c7967656e657261
+            val v3 = 0wx7465646279746573
+        in  {v0=v0, v1=v1, v2=v2, v3=v3}
+        end
+
+      fun write ({v0, v1, v2, v3}: state, x: Word64.word) =
+        let val v3 = Word64.xorb (v3, x)
+            val {v0, v1, v2, v3} = cRounds {v0=v0, v1=v1, v2=v2, v3=v3}
+        in  {v0=Word64.xorb (v0, x), v1=v1, v2=v2, v3=v3}
+        end
+  end
+
+  fun hashMix (x: word) =
+    let val state = SipHash13.new ()
+        val state = SipHash13.write (state, Word.toLarge x)
+    in  Word.fromLarge (SipHash13.finalize state)
+    end
+
+  fun hashCombine (hash1: word, hash2: word) =
+    let val state = SipHash13.new ()
+        val state = SipHash13.write (state, Word.toLarge hash1)
+        val state = SipHash13.write (state, Word.toLarge hash2)
+    in  Word.fromLarge (SipHash13.finalize state)
+    end
+
   (* TODO: Feature request *)
   (* C++ Boost's hash_combine *)
   fun hashMix x =
@@ -26,13 +97,16 @@ end = struct
         val x  = Word.xorb (x, Word.>> (x, 0w15))
     in  x
     end
-        
+
   fun hashCombine (hash1, hash2) =
     hashMix (hash1 + 0wx9e3779b9 + hash2)
 
   structure LV = struct
     open LambdaVar
-    structure MonoSet = HashSetFn(Tbl.Key)
+    structure MonoSet = HashSetFn(struct
+      open Tbl.Key
+      (* val hashVal = hashMix o Word.fromInt o toId *)
+    end)
   end
 
   type lvar = LV.lvar
@@ -76,6 +150,24 @@ end = struct
              | Record (i, v) => hashCombine (Word.fromInt i, hashvar v)
              | Mutable v => hashMix (hashvar v)
              | Value ty => hashMix (hashTy ty)
+      end
+
+    fun hash v =
+      let val funtag = 0w0
+          val rectag = 0w1
+          val muttag = 0w2
+          val valtag = 0w3
+          val hashvar = Word.fromInt o LV.toId
+          fun hashTy (CPS.NUMt _) = 0w0
+            | hashTy (CPS.PTRt _) = 0w1
+            | hashTy (CPS.FUNt)   = 0w2
+            | hashTy (CPS.FLTt _) = 0w3
+            | hashTy (CPS.CNTt)   = 0w4
+      in  case v
+            of Function f => hashCombine (funtag, hashvar (#2 f))
+             | Record (i, v) => hashCombine (Word.fromInt i, hashvar v)
+             | Mutable v => hashCombine (muttag, hashvar v)
+             | Value ty => hashCombine (valtag, hashTy ty)
       end
 
     fun same (Function f1, Function f2) = LV.same (#2 f1, #2 f2)
@@ -293,12 +385,21 @@ end = struct
                   (* String.concatWithMap " " Value.toString (VS.listItems vs), *)
                   Int.toString (VS.numItems vs),
                   "}\n"]
-          fun rowSizes (x, set, data) = LVS.bucketSizes set @ data
+          fun valueSetTally set =
+            let fun v (Function _, ls) = 0 :: ls
+                  | v (Record _, ls) = 1 :: ls
+                  | v (Mutable _, ls) = 2 :: ls
+                  | v (Value _, ls) = 3 :: ls
+                (* fun v (fact, ls) = Word.toInt (Value.hash fact mod 0w64) :: ls *)
+            in  VS.fold v [] set
+            end
+          fun rowSizes (x, set, data) = LVS.numItems set :: data
           fun storeSizes (x, set, data) = VS.bucketSizes set @ data
+          fun storeSizes (x, set, data) = valueSetTally set @ data
           val () = histogram (LVT.foldi rowSizes [] row)
           val () = print "-----------------------------------------\n"
           val () = histogram (LVT.foldi storeSizes [] store)
-      in  
+      in
           (* LVT.appi prow row; *)
           (* LVT.appi pstore store; *)
           (* puts ["/-- {", *)
@@ -501,43 +602,6 @@ end = struct
   fun label _ = raise Impossible "Label generated before closure conversion"
   fun offset _ = raise Impossible "Offset"
   val bogusTy = CPSUtil.BOGt
-
-  (* r = (x1 : r1, x2 : r2, x3 : r3)
-   * -----------------------------------
-   * x1 >-> r1, x2 >-> r2, x3 >-> r3
-   *
-   * x = r.0       (r1, r2, r3) >-> r
-   * -----------------------------------
-   * r1 >-> x
-   *
-   *
-   * r = makeref(a : r1)
-   * -----------------------------------
-   * REF r1 --> r
-   *
-   * x = !r   REF r1 --> r
-   * -----------------------------------
-   * r1 >-> x
-   *
-   *
-   * r := x   REF r1 --> r
-   * -----------------------------------
-   * x >-> r1
-   *
-   * Better(!) record semantics
-   *
-   * (Function f)                  important
-   * (Value (CPS.FUNt | CPS.CNTt)) important
-   * (Record (i, x))               important
-   *
-   * r = (... x_i ...)  v --> x_i  v important
-   * -------------------------------------
-   * Record (i, x_i) --> r
-   *
-   * x = r.i   Record (i, y) --> r
-   * -------------------------------------
-   * y >-> x
-   *)
 
   fun flowValue (value, dest) =
     (case value

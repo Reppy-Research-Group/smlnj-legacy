@@ -291,7 +291,8 @@ CPS/cfa-clos/syntactic.sml
 (* CPS/cfa-clos/cfa/call-graph.sml *)
 CPS/cfa-clos/flow-cfa.sml
     (* (setup: (pre: "val w = !Control.CG.printit;\n\ *)
-    (*               \val () = Control.CG.printit := true\n;" *)
+    (*               \val () = Control.CG.printit := true\n;\ *)
+    (*               \val () = Control.ElabData.saveLvarNames := true\n;" *)
     (*          post: "Control.CG.printit := w;")) *)
 CPS/cfa-clos/labelled-cps.sml
     (setup: (pre: "val w = !Control.Elab.unusedWarn;\n\
