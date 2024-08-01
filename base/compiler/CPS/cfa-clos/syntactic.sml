@@ -80,7 +80,7 @@ end = struct
       fun newGrp (label, bindings, fv, exp) =
         (prependGrp (Group.wrap label);
          Group.Tbl.insert grpTbl
-           (Group.wrap label, 
+           (Group.wrap label,
             { functions=Vector.fromList bindings, fv=fv, exp=exp }))
 
       fun walkF

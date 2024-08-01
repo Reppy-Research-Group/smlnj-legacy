@@ -272,6 +272,7 @@ end = struct
     val mkQueue : unit -> t
     val enqueue : t * Fact.t -> unit
     val next    : t -> Fact.t option
+    val length  : t -> int
   end = struct
     open Queue
     type t = Fact.t queue
@@ -282,6 +283,7 @@ end = struct
     val mkQueue : unit -> t
     val enqueue : t * Fact.t -> unit
     val next    : t -> Fact.t option
+    val length  : t -> int
   end = struct
     structure PQueue = LeftPriorityQFn(Fact.Priority)
     type t = PQueue.queue ref
@@ -290,10 +292,12 @@ end = struct
 
     fun enqueue (queue, fact) = queue := PQueue.insert (fact, !queue)
 
-    fun next (queue) =
+    fun next queue =
       (case PQueue.next (!queue)
          of NONE => NONE
           | SOME (item, queue') => (queue := queue'; SOME item))
+
+    fun length queue = PQueue.numItems (!queue)
   end
 
   structure FactFlatPQueue :> sig
@@ -301,9 +305,11 @@ end = struct
     val mkQueue : unit -> t
     val enqueue : t * Fact.t -> unit
     val next    : t -> Fact.t option
+    val length  : t -> int
   end = struct
     type t = Fact.t list ref vector
 
+    val numPriorities = 4
     fun mkQueue () : t = #[ref [], ref [], ref [], ref[]]
 
     fun enqueue (queue, fact) =
@@ -313,8 +319,7 @@ end = struct
       end
 
     fun next queue =
-      let val num = 4
-          fun next queue =
+      let fun next queue =
             (case !queue
                of [] => NONE
                 | (fact :: queue') => (queue := queue'; SOME fact))
@@ -323,9 +328,16 @@ end = struct
                (case next (Vector.sub (queue, n))
                   of SOME fact => SOME fact
                    | NONE => visit (n - 1))
-      in  visit (num - 1)
+      in  visit (numPriorities - 1)
+      end
+
+    fun length queue =
+      let fun length (ref lst, sum) = sum + List.length lst
+      in  Vector.foldl length 0 queue
       end
   end
+
+  structure Queue = FactFlatPQueue
 
   structure FactSet :> sig
     type t
@@ -492,7 +504,7 @@ end = struct
                 (* fun v (fact, ls) = Word.toInt (Value.hash fact mod 0w64) :: ls *)
             in  VS.fold v [] set
             end
-          fun rowSizes (x, set, data) = LVS.bucketSizes set @ data
+          fun rowSizes (x, set, data) = LVS.numItems set :: data
           fun storeSizes (x, set, data) = VS.bucketSizes set @ data
           fun storeSizes (x, set, data) = valueSetTally set @ data
           val () = histogram (LVT.foldi rowSizes [] row)
@@ -648,6 +660,7 @@ end = struct
     val profile : timer -> ('a -> 'b) -> ('a -> 'b)
     val report  : unit -> unit
 
+    val queueHighWater : int -> unit
   end = struct
     type timer = Time.time ref
 
@@ -668,20 +681,23 @@ end = struct
     val member = ref Time.zeroTime
     val remember = ref Time.zeroTime
     val propa = ref Time.zeroTime
+    val queuehw = ref 0
 
     fun report () =
       let val puts = app print
-          val () = puts ["fvo :", Time.toString (!fvo), "\n"]
-          val () = puts ["fuo :", Time.toString (!fuo), "\n"]
-          val () = puts ["trans :", Time.toString (!trans), "\n"]
-          val () = puts ["member :", Time.toString (!member), "\n"]
-          val () = puts ["remember :", Time.toString (!remember), "\n"]
-          val () = puts ["propa :", Time.toString (!propa), "\n"]
+          (* val () = puts ["fvo :", Time.toString (!fvo), "\n"] *)
+          (* val () = puts ["fuo :", Time.toString (!fuo), "\n"] *)
+          (* val () = puts ["trans :", Time.toString (!trans), "\n"] *)
+          (* val () = puts ["member :", Time.toString (!member), "\n"] *)
+          (* val () = puts ["remember :", Time.toString (!remember), "\n"] *)
+          (* val () = puts ["propa :", Time.toString (!propa), "\n"] *)
+          val () = puts ["high water ", Int.toString (!queuehw), "\n"]
       in  ()
       end
+
+    fun queueHighWater curr = queuehw := Int.max (!queuehw, curr)
   end
 
-  structure Queue = FactFlatPQueue
   structure Context :> sig
     type ctx
     val mk : Syn.t -> ctx
@@ -710,7 +726,9 @@ end = struct
       syn=syn
     }
 
-    fun next ({todo, ...}: ctx) = Queue.next todo
+    fun next ({todo, ...}: ctx) =
+      (* (Profiler.queueHighWater (Queue.length todo); Queue.next todo) *)
+      Queue.next todo
 
     fun enqueue (todo, fact) = Queue.enqueue (todo, fact)
 
@@ -854,7 +872,6 @@ end = struct
       fun propagate (/-- (function as (kind, name, args, tys, body))) =
             (ListPair.appEq (add o fromType) (args, tys))
         | propagate (x >-> y) = merge (x, y)
-            (* forallValuesOf x (fn v => add (v --> y)) *)
         | propagate (--/ x) = forallValuesOf x escape
         | propagate (v --> x) =
             (if member (--/ x) then escape v else ();
@@ -964,8 +981,9 @@ end = struct
     let val ctx = initialize (syn, cps)
         val () = timeit "flow-cfa " (fn () => run ctx)
         (* val () = Context.dumpFlowGraph ctx *)
+        val () = print ("num LVs :" ^ Int.toString (Syn.numVars syn) ^ "\n")
         val () = Context.dump ctx
-      (* val () = Profiler.report () *)
+        val () = Profiler.report ()
         (* val () = Context.dumpClosureDependency ctx *)
     in  Context.result ctx
     end
