@@ -101,6 +101,12 @@ end = struct
   fun hashCombine (hash1, hash2) =
     hashMix (hash1 + 0wx9e3779b9 + hash2)
 
+  fun oldHashCombine (hash1, hash2) =
+    (* C++ Boost's hash_combine *)
+    Word.xorb (hash1, Word.+ (hash2,
+                              (Word.+ (0wx9e3779b9,
+                                       (Word.+ (Word.<< (hash1, 0w6),
+                                                Word.>> (hash1, 0w2)))))))
   structure LV = struct
     open LambdaVar
     structure MonoSet = HashSetFn(struct
@@ -134,23 +140,23 @@ end = struct
                | Mutable  of lvar
                | Value    of LCPS.cty
 
-    fun hash v =
-      let val funtag = 0w0
-          val rectag = 0w1
-          val muttag = 0w2
-          val valtag = 0w3
-          val hashvar = Word.fromInt o LV.toId
-          fun hashTy (CPS.NUMt _) = 0w0
-            | hashTy (CPS.PTRt _) = 0w1
-            | hashTy (CPS.FUNt)   = 0w2
-            | hashTy (CPS.FLTt _) = 0w3
-            | hashTy (CPS.CNTt)   = 0w4
-      in  case v
-            of Function f => hashMix (hashvar (#2 f))
-             | Record (i, v) => hashCombine (Word.fromInt i, hashvar v)
-             | Mutable v => hashMix (hashvar v)
-             | Value ty => hashMix (hashTy ty)
-      end
+    (* fun hash v = *)
+    (*   let val funtag = 0w0 *)
+    (*       val rectag = 0w1 *)
+    (*       val muttag = 0w2 *)
+    (*       val valtag = 0w3 *)
+    (*       val hashvar = Word.fromInt o LV.toId *)
+    (*       fun hashTy (CPS.NUMt _) = 0w0 *)
+    (*         | hashTy (CPS.PTRt _) = 0w1 *)
+    (*         | hashTy (CPS.FUNt)   = 0w2 *)
+    (*         | hashTy (CPS.FLTt _) = 0w3 *)
+    (*         | hashTy (CPS.CNTt)   = 0w4 *)
+    (*   in  case v *)
+    (*         of Function f => hashMix (hashvar (#2 f)) *)
+    (*          | Record (i, v) => hashCombine (Word.fromInt i, hashvar v) *)
+    (*          | Mutable v => hashMix (hashvar v) *)
+    (*          | Value ty => hashMix (hashTy ty) *)
+    (*   end *)
 
     fun hash v =
       let val funtag = 0w0
@@ -165,7 +171,7 @@ end = struct
             | hashTy (CPS.CNTt)   = 0w4
       in  case v
             of Function f => hashCombine (funtag, hashvar (#2 f))
-             | Record (i, v) => hashCombine (Word.fromInt i, hashvar v)
+             | Record (i, v) => hashCombine (Word.fromInt i + 0w4, hashvar v)
              | Mutable v => hashCombine (muttag, hashvar v)
              | Value ty => hashCombine (valtag, hashTy ty)
       end
@@ -484,6 +490,8 @@ end = struct
       in  IntRedBlackMap.foldli show () hist
       end
 
+    fun sum (xs: int list) : string = (Int.toString (List.foldl (op+) 0 xs))
+
     fun dump ({row, store, sink, escape}: t) =
       let val puts = print o concat
           fun prow (x, set) =
@@ -501,15 +509,20 @@ end = struct
                   | v (Record _, ls) = 1 :: ls
                   | v (Mutable _, ls) = 2 :: ls
                   | v (Value _, ls) = 3 :: ls
-                (* fun v (fact, ls) = Word.toInt (Value.hash fact mod 0w64) :: ls *)
+                fun v (fact as Record _, ls) = Word.toInt (Value.hash fact mod 0w16) :: ls
+                  | v (_, ls) = ls
             in  VS.fold v [] set
             end
-          fun rowSizes (x, set, data) = LVS.numItems set :: data
-          fun storeSizes (x, set, data) = VS.bucketSizes set @ data
+          fun rowSizes (x, set, data) = LVS.bucketSizes set @ data
+          (* fun storeSizes (x, set, data) = VS.bucketSizes set @ data *)
           fun storeSizes (x, set, data) = valueSetTally set @ data
-          val () = histogram (LVT.foldi rowSizes [] row)
+          (* val () = histogram (LVT.foldi rowSizes [] row) *)
           val () = print "-----------------------------------------\n"
           val () = histogram (LVT.foldi storeSizes [] store)
+          (* val () = print ("x >-> y: " ^ sum (LVT.foldi rowSizes [] row) ^ "\n") *)
+          (* val () = print ("v --> y: " ^ sum (LVT.foldi storeSizes [] store) ^ "\n") *)
+          (* val () = print ("/-- f: " ^ sum [LCPS.FunMonoSet.numItems escape] ^ "\n") *)
+          (* val () = print ("--/ v: " ^ sum [LVS.numItems sink] ^ "\n") *)
       in
           (* LVT.appi prow row; *)
           (* LVT.appi pstore store; *)
@@ -828,7 +841,6 @@ end = struct
     let
       val ctx = Context.mk syn
       fun add fact = Context.remember (ctx, fact)
-      (* FIXME: If functions flow to GETVAR *)
       fun walkB (f as (kind, name, args, tys, body)) =
             (add (Function f --> name); walk body)
       and walk (RECORD (label, CPS.RK_VECTOR, values, dest, cexp)) = walk cexp
@@ -884,6 +896,7 @@ end = struct
                       ListPair.appEq (add o flowValue) (args, formals)
                     else ()
                 | SETTER (_, CPS.P.SETHDLR, _, _) => add (/-- func)
+                | SETTER (_, CPS.P.SETVAR, _, _) => add (/-- func)
                 | cexp => record (cexp, x))
         | propagateValue (Value (CPS.FUNt|CPS.CNTt), x) =
             forallUsesOf x
