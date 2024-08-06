@@ -1,6 +1,5 @@
 (* TODO
  * 1. FactSet should use a functional set.
- * 2. Vector -> Tuple
  *)
 structure FlowCFA :> sig
   type functions = { known: LabelledCPS.function list, unknown: bool }
@@ -15,7 +14,6 @@ end = struct
   structure LCPS = LabelledCPS
   structure Syn  = SyntacticInfo
 
-  exception Unimp
   exception Impossible of string
 
   structure SipHash13 :> sig
@@ -317,33 +315,44 @@ end = struct
     val next    : t -> Fact.t option
     val length  : t -> int
   end = struct
-    type t = Fact.t list ref
+    type t = {
+      q1: Fact.t list ref,
+      q2: Fact.t list ref,
+      q3: Fact.t list ref,
+      q4: Fact.t list ref
+    }
 
-    val numPriorities = 4
-    fun mkQueue () : t = #[ref [], ref [], ref [], ref[]]
+    fun mkQueue () : t = {q1=ref [], q2=ref [], q3=ref [], q4=ref[]}
+
+    fun getQueue ({q1, q2, q3, q4}, x >-> y) = q1
+      | getQueue ({q1, q2, q3, q4}, v --> y) = q3
+      | getQueue ({q1, q2, q3, q4}, /-- f) = q2
+      | getQueue ({q1, q2, q3, q4}, --/ v) = q4
 
     fun enqueue (queue, fact) =
-      let val idx = Fact.priority fact - 1
-          val queue = Vector.sub (queue, idx)
+      let val queue = getQueue (queue, fact)
       in  queue := fact :: (!queue)
       end
 
-    fun next queue =
+    fun next ({q1, q2, q3, q4}: t) =
       let fun next queue =
             (case !queue
                of [] => NONE
                 | (fact :: queue') => (queue := queue'; SOME fact))
-          fun visit 0 = next (Vector.sub (queue, 0))
-            | visit n =
-               (case next (Vector.sub (queue, n))
-                  of SOME fact => SOME fact
-                   | NONE => visit (n - 1))
-      in  visit (numPriorities - 1)
+      in  case next q4
+            of SOME v => SOME v
+             | NONE =>
+                 (case next q3
+                    of SOME v => SOME v
+                     | NONE =>
+                         (case next q2
+                            of SOME v => SOME v
+                             | NONE => next q1))
       end
 
-    fun length queue =
-      let fun length (ref lst, sum) = sum + List.length lst
-      in  Vector.foldl length 0 queue
+    fun length ({q1, q2, q3, q4}: t) =
+      let fun length (ref lst) = List.length lst
+      in  length q1 + length q2 + length q3 + length q4
       end
   end
 
