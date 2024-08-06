@@ -35,11 +35,14 @@ structure ClosureDecision = struct
                 | Code   of LV.lvar
                 | Null
 
-  datatype t = T of {
-    repr: slot    list LCPS.FunMap.map,
-    allo: EnvID.t list Group.Map.map,
-    heap: slot    list EnvID.Map.map
-  }
+  datatype object = Record   of slot list
+                  | RawBlock of LV.lvar list * CPS.record_kind
+
+  type repr = slot    list LCPS.FunMap.map
+  type allo = EnvID.t list Group.Map.map
+  type heap = object       EnvID.Map.map
+
+  datatype t = T of { repr: repr, allo: allo, heap: heap }
 
   fun slotToString (Var v) = concat ["[V]", LV.lvarName v]
     | slotToString (Code c) = concat ["[L]", LV.lvarName c]
@@ -68,10 +71,16 @@ structure ClosureDecision = struct
                  else (
                    p ["\n"];
                    EnvID.MonoSet.add (printed, e);
-                   printEnv ("  " ^ indent, EnvID.Map.lookup (heap, e),
-                             printed))))
-      and printEnv (indent, slots, printed) =
+                   printObject ("  " ^ indent, EnvID.Map.lookup (heap, e),
+                                printed))))
+      and printSlots (indent, slots, printed) =
         app (fn s => printSlot (indent, s, printed)) slots
+      and printObject (indent, obj, printed) =
+        (case obj
+           of Record slots => printSlots ("  " ^ indent, slots, printed)
+            | RawBlock (vs, _) =>
+                (p [indent, "RawBlock:\n"];
+                 app (fn v => p ["  ", indent, LV.lvarName v, "\n"]) vs))
 
       fun kindToS CPS.CONT = "std_cont"
         | kindToS CPS.KNOWN = "known"
@@ -95,7 +104,7 @@ structure ClosureDecision = struct
               let val slots = LCPS.FunMap.lookup (repr, f)
               in  p ["  ", LV.lvarName (#2 f), " represented as [",
                      cwm "," slotToString slots, "]:\n"];
-                  printEnv ("    ", slots, printed)
+                  printSlots ("    ", slots, printed)
               end) functions
         in  ()
         end

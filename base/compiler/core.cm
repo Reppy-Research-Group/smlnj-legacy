@@ -300,6 +300,7 @@ CPS/cfa-clos/labelled-cps.sml
              post: "Control.Elab.unusedWarn := w;"))
 CPS/cfa-clos/dot-lang.sml
 CPS/cfa-clos/web.sml
+CPS/cfa-clos/transform.sml
 
 CPS/convert/convert.sml
 CPS/convert/cpstrans.sml

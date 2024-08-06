@@ -27,6 +27,8 @@ structure LabelledCPS :> sig
              (lvar * cty) list * cexp
     withtype function = fun_kind * lvar * lvar list * cty list * cexp
 
+  val mkLabel : unit -> label
+
   val nameOfF : function -> lvar
 
   val label   : CPS.cexp -> cexp

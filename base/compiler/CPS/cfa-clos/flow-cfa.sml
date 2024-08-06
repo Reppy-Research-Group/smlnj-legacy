@@ -1,3 +1,7 @@
+(* TODO
+ * 1. FactSet should use a functional set.
+ * 2. Vector -> Tuple
+ *)
 structure FlowCFA :> sig
   type functions = { known: LabelledCPS.function list, unknown: bool }
   type variables = { known: LabelledCPS.lvar list, escape: bool }
@@ -313,7 +317,7 @@ end = struct
     val next    : t -> Fact.t option
     val length  : t -> int
   end = struct
-    type t = Fact.t list ref vector
+    type t = Fact.t list ref
 
     val numPriorities = 4
     fun mkQueue () : t = #[ref [], ref [], ref [], ref[]]
@@ -420,7 +424,6 @@ end = struct
        | --/ v =>
            LVS.member (sink, v)
 
-    (* TODO: Try uncurrying this *)
     fun forallValuesOf ({store, ...}: t) v f =
       (case LVT.find store v
          of SOME set => VS.app f set
@@ -434,18 +437,15 @@ end = struct
              | (SOME facts1, NONE) =>
                  let val facts2 = VS.copy facts1
                      val () = LVT.insert store (dst, facts2)
-                     val () = VS.app f facts2
-                 in  ()
+                 in  VS.app f facts2
                  end
              | (SOME facts1, SOME facts2) =>
-                 let fun insert (fact, diff) =
+                 let fun insert (fact, ()) =
                        if VS.member (facts2, fact) then
-                         diff
+                         ()
                        else
-                         (VS.add (facts2, fact); fact :: diff)
-                     val diff = VS.fold insert [] facts1
-                     val () = app f diff
-                 in  ()
+                         (f fact; VS.add (facts2, fact))
+                 in  VS.fold insert () facts1
                  end
       end
 
@@ -514,8 +514,8 @@ end = struct
             in  VS.fold v [] set
             end
           fun rowSizes (x, set, data) = LVS.bucketSizes set @ data
-          (* fun storeSizes (x, set, data) = VS.bucketSizes set @ data *)
-          fun storeSizes (x, set, data) = valueSetTally set @ data
+          fun storeSizes (x, set, data) = VS.numItems set :: data
+          (* fun storeSizes (x, set, data) = valueSetTally set @ data *)
           (* val () = histogram (LVT.foldi rowSizes [] row) *)
           val () = print "-----------------------------------------\n"
           val () = histogram (LVT.foldi storeSizes [] store)
@@ -995,8 +995,8 @@ end = struct
         val () = timeit "flow-cfa " (fn () => run ctx)
         (* val () = Context.dumpFlowGraph ctx *)
         val () = print ("num LVs :" ^ Int.toString (Syn.numVars syn) ^ "\n")
-        val () = Context.dump ctx
-        val () = Profiler.report ()
+        (* val () = Context.dump ctx *)
+        (* val () = Profiler.report () *)
         (* val () = Context.dumpClosureDependency ctx *)
     in  Context.result ctx
     end

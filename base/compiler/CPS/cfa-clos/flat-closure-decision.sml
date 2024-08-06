@@ -101,7 +101,8 @@ end = struct
           else
              let val boxedE = EnvID.new ()
                  val ufv = LV.Set.listItems ufv
-                 val heap = EnvID.Map.insert (heap, boxedE, map D.Var ufv)
+                 val heap = EnvID.Map.insert 
+                             (heap, boxedE, D.RawBlock (ufv, CPS.RK_RAW64BLOCK))
              in  (Env (boxedE, ufv) :: fv, [boxedE], heap)
              end
     in  case functions
@@ -115,7 +116,7 @@ end = struct
                        end
                    | (callees, spilled) =>
                        let val env = EnvID.new ()
-                           val heap = EnvID.Map.insert (heap, env, spilled)
+                           val heap = EnvID.Map.insert (heap, env, D.Record spilled)
                            val allo = Group.Map.insert (allo, group, envs@[env])
                            val repr = LCPS.FunMap.insert
                              (repr, f, D.Code name :: callees @ [D.EnvID env])
@@ -124,7 +125,7 @@ end = struct
            | #[f as (_, name, _, _, _)] =>
                let val envID = EnvID.new ()
                    val slots = D.Code name :: map embed fv
-                   val heap = EnvID.Map.insert (heap, envID, slots)
+                   val heap = EnvID.Map.insert (heap, envID, D.Record slots)
                    val allo = Group.Map.insert (allo, group, envs @ [envID])
                    val repr = LCPS.FunMap.insert (repr, f, [D.EnvID envID])
                in  (repr, allo, heap)
@@ -132,13 +133,13 @@ end = struct
            | _ => (* General mutual recursion *)
                let val sharedE = EnvID.new ()
                    val sharedV = map embed fv
-                   val heap = EnvID.Map.insert (heap, sharedE, sharedV)
+                   val heap = EnvID.Map.insert (heap, sharedE, D.Record sharedV)
                    fun clos (f as (_, name, _, _, _)) =
                      (f, EnvID.new (), [D.Code name, D.EnvID sharedE])
                    val closures = Vector.map clos functions
                    val (heap, repr) =
                      Vector.foldl (fn ((f, e, s), (heap, repr)) =>
-                       let val heap = EnvID.Map.insert (heap, e, s)
+                       let val heap = EnvID.Map.insert (heap, e, D.Record s)
                            val repr = LCPS.FunMap.insert (repr, f, [D.EnvID e])
                        in  (heap, repr)
                        end) (heap, repr) closures
