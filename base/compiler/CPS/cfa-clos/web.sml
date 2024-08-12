@@ -4,7 +4,7 @@ structure Web :> sig
 
   val calculate : FlowCFA.result * SyntacticInfo.t -> t
 
-  val webOfVar : t * LabelledCPS.lvar -> id
+  val webOfVar : t * LabelledCPS.lvar -> id option
   val webOfFun : t * LabelledCPS.function -> id
 
   datatype kind = User | Cont
@@ -17,6 +17,7 @@ structure Web :> sig
                             kind: kind }
   val polluted : t * id -> bool
   val kind : t * id -> kind
+  val kindOfCty : CPS.cty -> kind
 
   val dump : t -> unit
 end = struct
@@ -102,8 +103,16 @@ end = struct
       }
     end
 
-  fun webOfVar (T { varMap, ... }, v) = LV.Tbl.lookup varMap v
-  fun webOfFun (T { funMap, ... }, f) = LCPS.FunTbl.lookup funMap f
+  fun webOfVar (T { varMap, ... }, v) = LV.Tbl.find varMap v
+    (* (case LV.Tbl.find varMap v *)
+    (*    of SOME w => w *)
+    (*     | NONE => raise Fail ("No web info for " ^ LV.lvarName v)) *)
+
+  fun webOfFun (T { funMap, ... }, f) =
+    (case LCPS.FunTbl.find funMap f
+       of SOME w => w
+        | NONE => raise Fail ("No web info for " ^ LV.lvarName (#2 f)))
+
   fun content (T { webs, ... }, x) = Vector.sub (webs, x)
 
   fun mapL f vector = Vector.foldr (fn (v, xs) => f v :: xs) [] vector
@@ -113,6 +122,9 @@ end = struct
   val uses = #uses o content
   val polluted = #polluted o content
   val kind = #kind o content
+
+  fun kindOfCty CPS.CNTt = Cont
+    | kindOfCty _ = User
 
   fun webToS (id: int, { defs, uses, polluted, kind }: info) =
     let val fs = String.concatWith "," (mapL (LV.lvarName o #2) defs)

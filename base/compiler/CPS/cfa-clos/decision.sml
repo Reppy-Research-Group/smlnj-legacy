@@ -38,6 +38,9 @@ structure ClosureDecision = struct
   datatype object = Record   of slot list
                   | RawBlock of LV.lvar list * CPS.record_kind
 
+  (* datatype convention = Boxed of EnvID.t *)
+  (*                     | Flat  of LV.lvar * slot list *)
+
   type repr = slot    list LCPS.FunMap.map
   type allo = EnvID.t list Group.Map.map
   type heap = object       EnvID.Map.map

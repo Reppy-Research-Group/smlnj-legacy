@@ -173,6 +173,7 @@ end = struct
       CPS.FUNt
     else
       #ty (LV.Tbl.lookup varTbl v)
+      handle e => CPS.PTRt CPS.VPT
 
   fun enclosing (T { expTbl, ... }) e =
     #enclosing (LCPS.Tbl.lookup expTbl e)

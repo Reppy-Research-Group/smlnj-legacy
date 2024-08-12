@@ -85,7 +85,7 @@ end = struct
   fun trueFV (fv, syn, repr) =
     let fun require v =
           (case S.typeof syn v
-             of CPS.CNTt => [Var v, CS (v, 1), CS (v, 2), CS (v, 3)]
+             of CPS.CNTt => [Var v, CS (v, 0), CS (v, 1), CS (v, 2)]
               | _ => [Var v])
         fun collect (v, vs) = require v @ vs
     in  LV.Set.foldr collect [] fv
@@ -101,7 +101,7 @@ end = struct
           else
              let val boxedE = EnvID.new ()
                  val ufv = LV.Set.listItems ufv
-                 val heap = EnvID.Map.insert 
+                 val heap = EnvID.Map.insert
                              (heap, boxedE, D.RawBlock (ufv, CPS.RK_RAW64BLOCK))
              in  (Env (boxedE, ufv) :: fv, [boxedE], heap)
              end
