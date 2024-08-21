@@ -24,12 +24,29 @@ end = struct
     else
       Path { base=b2, selects=s2 }
 
+  datatype code = Direct of LCPS.function
+                | Pointer of LCPS.lvar
+                | Defun of LCPS.lvar * LCPS.function list
+
+  datatype protocol = Protocol of {
+    code: code,
+    slots: D.slot list,
+    pkg: LCPS.lvar option
+  }
+
+  fun slotsOfProtocol (Protocol { slots, ... }) = slots
+
+  fun protocolToS (Protocol { code, slots, pkg }) =
+    concat [codeToS code, "(", String.concatWithMap "," D.slotToString slots, "...)"]
+  and codeToS (Direct f) = LV.lvarName (#2 f)
+    | codeToS (Pointer p) = concat ["(*", pathToS p, ")"]
+    | codeToS (Defun (p, fs)) = concat ["#", pathToS p]
+
   fun tagInt i =
     CPS.NUM { ival=IntInf.fromInt i, ty={ sz=Target.defaultIntSz, tag=true }}
 
-
   fun freshLV lvar = LV.dupLvar lvar
-  fun freshNLV (lvar, n) = List.tabulate (n, fn _ => freshLV lvar)
+  fun freshNLV (lvar, n) = lvar :: List.tabulate (n - 1, fn _ => freshLV lvar)
 
   structure Context :> sig
     type t
@@ -37,19 +54,21 @@ end = struct
     val initial    : unit -> t
     val newContext : t * path LV.Map.map -> t
 
-    val addProtocol : t * LCPS.lvar * D.slot list -> t
+    val addProtocol : t * LCPS.lvar * protocol -> t
     val addInScope : t * LCPS.lvar -> t
 
-    val protocolOf : t * LCPS.lvar -> D.slot list
+    val protocolOf  : t * LCPS.lvar -> protocol
+    val protocolOf' : t * LCPS.lvar -> protocol option
     val expansionOf : t * LCPS.lvar * int -> D.slot
     val isInScope : t * LCPS.lvar -> bool
     val pathOf : t * LCPS.lvar -> path option
 
     val dump : t -> unit
   end = struct
+
     datatype t = T of {
       access: path LV.Map.map,
-      protocol: D.slot list LV.Map.map,
+      protocol: protocol LV.Map.map,
       inscope: LV.Set.set
     }
 
@@ -66,20 +85,24 @@ end = struct
     fun addInScope (T {access, protocol, inscope}, v) =
       T { access=access, protocol=protocol, inscope=LV.Set.add (inscope, v) }
 
-    fun protocolOf (T {protocol, ...}, v) =
-      case LV.Map.find (protocol, v)
-        of SOME slots => slots
-         | NONE => [D.Var v]
+    fun protocolOf' (T {protocol, ...}, v) = LV.Map.find (protocol, v)
          (* raise Fail ("No protocol for " ^ LV.lvarName v) *)
 
+    fun protocolOf (ctx, v) =
+      (case protocolOf' (ctx, v)
+         of SOME p => p
+          | NONE => raise Fail (LV.lvarName v ^ " is not a function "))
+
     fun expansionOf (t, v, i) =
-      let val proto = protocolOf (t, v)
-      in  List.sub (proto, i)
-          handle Subscript =>
-          raise Fail (concat ["Invalid expansion #", Int.toString i, " of ",
-                              LV.lvarName v, ": [",
-                              String.concatWithMap "," D.slotToString proto, "]"])
-      end
+      (case protocolOf' (t, v)
+         of SOME (Protocol { code, slots, pkg }) =>
+              (List.sub (slots, i)
+               handle Subscript =>
+               raise Fail (concat
+                 ["Invalid expansion #", Int.toString i, " of ", LV.lvarName v,
+                  ": [", String.concatWithMap "," D.slotToString slots, "]"]))
+          | NONE => raise Fail (concat ["Invalid expansion: ", LV.lvarName v,
+            " is not a function"]))
 
     fun isInScope (T {inscope, ...}, v) =
       LV.Set.member (inscope, v)
@@ -92,8 +115,8 @@ end = struct
         val cwm = String.concatWithMap
         fun paccess (v, path) =
           p ["  ", LV.lvarName v, " --> ", pathToS path, "\n"]
-        fun pprotocol (v, ss) =
-          p ["  ", LV.lvarName v, " --> [", cwm "," D.slotToString ss, "]\n"]
+        fun pprotocol (v, proto) =
+          p ["  ", LV.lvarName v, " --> [", protocolToS proto, "]\n"]
       in
         p ["== Access ==\n"];
         LV.Map.appi paccess access;
@@ -126,33 +149,43 @@ end = struct
     | slotToTy syn (D.Code   f) = (S.typeof syn f handle e => raise e)
     | slotToTy syn D.Null       = CPS.PTRt CPS.VPT
 
+  (* envcp:
+   * 1. polluted user: code is (#1).1
+   * 2. polluted cont: code is #1
+   * 3. singleton web: code is direct
+   * 4. otherwise web: code is .1 if boxed, and #1 if unboxed
+   *    FIXME: There really should be a way to communicate where the code is
+   *    from the decision.
+   *)
+
   fun envszUnchecked ((_, _, web, syn): env, repr, v) =
     (case Web.webOfVar (web, v)
        of SOME w =>
            (case Web.content (web, w)
               of { polluted=true, kind=Web.Cont, ... } =>
-                   [CPS.CNTt, bogusTy, bogusTy, bogusTy] (* FIXME: Magic number *)
+                   SOME [CPS.CNTt, bogusTy, bogusTy, bogusTy] (* FIXME: Magic number *)
                | { polluted=true, kind=Web.User, ... } =>
-                   [bogusTy]
+                   SOME [bogusTy]
                | { polluted=false, defs, ... } =>
                    let val f = Vector.sub (defs, 0)
                        (* A known web has to have at least one function *)
-                   in  map (slotToTy syn) (LCPS.FunMap.lookup (repr, f))
+                   in  SOME (map (slotToTy syn) (LCPS.FunMap.lookup (repr, f)))
                    end)
         | NONE =>
            (case S.typeof syn v
-              of CPS.CNTt => [CPS.CNTt, bogusTy, bogusTy, bogusTy]
-               | ty => [ty]))
+              of CPS.CNTt => SOME [CPS.CNTt, bogusTy, bogusTy, bogusTy]
+               | ty => NONE))
 
   fun envszChecked (env as (_, _, web, syn): env, repr, v) =
     let val w    = Web.webOfVar (web, v)
         val tys  = envszUnchecked (env, repr, v)
-        val size = List.length tys
-        fun sz f = List.length (LCPS.FunMap.lookup (repr, f))
-    in  case w
-          of NONE => tys
-           | SOME w =>
-               let val sizes = Vector.map sz (Web.defs (web, w))
+    in  case (w, tys)
+          of (NONE, _) => tys
+           | (_, NONE) => tys
+           | (SOME w, SOME tys') =>
+               let val size = List.length tys'
+                   fun sz f = List.length (LCPS.FunMap.lookup (repr, f))
+                   val sizes = Vector.map sz (Web.defs (web, w))
                in  if Vector.all (fn s => s = size) sizes then
                      tys
                    else
@@ -162,8 +195,37 @@ end = struct
 
   val envsz = envszChecked
 
-  (* fun tyOfEnv (ctx, env) : CPS.cty = *)
-  (*   let val (_, D.T { heap, ... }) = *)
+  fun envcp ((_, _, web, syn): env, repr, sub, v) : code =
+    (case Web.webOfVar (web, v)
+       of SOME w =>
+           (case Web.content (web, w)
+              of { defs= #[f], ... } =>
+                   Direct f
+               | { polluted=true, kind=Web.Cont, ... } =>
+                   (* [CPS.CNTt, bogusTy, bogusTy, bogusTy] *)
+                   Pointer (Path {base=sub 0, selects=[]})
+               | { polluted=true, kind=Web.User, ... } =>
+                   (* [bogusTy] *)
+                   Pointer (Path {base=sub 0, selects=[0]})
+               | { polluted=false, defs, ... } =>
+                   let val f = Vector.sub (defs, 0)
+                       val slots = LCPS.FunMap.lookup (repr, f)
+                   in  case slots
+                         of [] =>
+                              raise Fail "No code ptr for non-singleton web"
+                          | [D.EnvID _] =>
+                              Pointer (Path {base=sub 0, selects=[0]})
+                          | (D.Code _::_) =>
+                              Pointer (Path {base=sub 0, selects=[]})
+                          | _ =>
+                              raise Fail "Code ptr is not the first"
+                   end)
+        | NONE =>
+           (case S.typeof syn v
+              of CPS.CNTt =>
+                   Pointer (Path {base=sub 0, selects=[]})
+               | _ =>
+                   Pointer (Path {base=sub 0, selects=[0]})))
 
   val _ = slotToVar : D.slot -> CPS.lvar
   val _ = slotToVal : C.t -> D.slot -> CPS.value
@@ -195,7 +257,8 @@ end = struct
                            insert (access, varOfEnv e, path))
                   | D.Null => dfs (todo, access)
                   | D.Code _ => dfs (todo, access))
-        val names = map slotToVar (C.protocolOf (ctx, #2 f))
+        val Protocol { slots, ... } = C.protocolOf (ctx, #2 f)
+        val names = map slotToVar slots
         val slots = LCPS.FunMap.lookup (repr, f)
         val bases =
           ListPair.foldl (fn (name, slot, bases) =>
@@ -205,13 +268,15 @@ end = struct
 
   fun expandval (env: env, values: CPS.value list) : CPS.value list =
     let val (ctx, _, _, _) = env
-        fun cvt (CPS.VAR v) = map (slotToVal ctx) (C.protocolOf (ctx, v))
+        fun cvt (CPS.VAR v) =
+              (case C.protocolOf' (ctx, v)
+                 of SOME (Protocol { slots, ... }) => map (slotToVal ctx) slots
+                  | NONE => [CPS.VAR v])
           | cvt value       = [value]
     in  List.concatMap cvt values
     end
 
   type header = LCPS.cexp -> LCPS.cexp
-
 
   (* TODO: generate correct type for intermediate record selection *)
   (* TODO: CSE *)
@@ -283,14 +348,39 @@ end = struct
               in  (n :: names, ty :: tys)
               end
         fun expand (x, ty, (args, ts, ctx)) =
-              let val tys = envsz (env, repr, x)
-                  val (names, tys) = dupN (x, tys)
-                  val ctx = C.addProtocol (ctx, x, map D.Var names)
-              in  (names @ args, tys @ ts, ctx)
-              end
+          (case envsz (env, repr, x)
+             of NONE => (* this is not a function *)
+                  (x :: args, ty :: ts, ctx)
+              | SOME tys =>
+                  let val (names, tys) = dupN (x, tys)
+                      fun sub i = List.sub (names, i)
+                      val codeptr = envcp (env, repr, sub, x)
+                      val p = Protocol { code=codeptr, slots=map D.Var names,
+                                         pkg=NONE }
+                      val ctx = C.addProtocol (ctx, x, p)
+                  in  (names @ args, tys @ ts, ctx)
+                  end)
         val (args, tys, ctx) = ListPair.foldr expand ([], [], ctx) (args, tys)
     in  (args, tys, (ctx, dec, web, syn))
     end
+
+  fun addvar ((ctx, dec, web, syn): env, name: CPS.lvar, CPS.FUNt): env =
+        (* CNT is not going to be here *)
+        let val code = 
+              (case Web.webOfVar (web, name)
+                 of SOME w =>
+                      (case Web.content (web, w)
+                         of { defs= #[f], ... } =>
+                              Direct f
+                          | _ =>
+                              Pointer (Path {base=name, selects=[0]}))
+                  | NONE => Pointer (Path {base=name, selects=[0]}))
+            (* The slot really should be an EnvID *)
+            val p = Protocol { code=code, slots=[D.Var name], pkg=NONE }
+            val ctx = C.addProtocol (ctx, name, p)
+        in  (ctx, dec, web, syn)
+        end
+   | addvar (env, _, _) = env
 
   fun needLinkReg (web, w) =
     let val { defs, uses, polluted, kind } = W.content (web, w)
@@ -307,16 +397,18 @@ end = struct
     | formalArg (name, ctx, D.Code v) = v
     | formalArg (name, ctx, D.Null) = freshLV name
 
-  fun closefun (env: env, names) (f as (fk, name, args, tys, body)) =
+  fun closefun (env: env, functions) (f as (fk, name, args, tys, body)) =
     let val (ctx, dec as D.T {repr, ...}, web, syn) = env
         val reprs = LCPS.FunMap.lookup (repr, f)
         val (envs, envtys) =
           ListPair.unzipMap (fn s => (formalArg (name, ctx, s), slotToTy syn s))
                             reprs
         val envslots = map D.Var envs
-        val ctx =
-          List.foldl (fn (name, ctx) => C.addProtocol (ctx, name, envslots))
-            ctx names
+        fun addproto (f, ctx) =
+          let val p = Protocol { code=Direct f, slots=envslots, pkg=NONE }
+          in  C.addProtocol (ctx, #2 f, p)
+          end
+        val ctx = List.foldl addproto ctx functions
         val env = (ctx, dec, web, syn)
         val accessMap = buildAccessMap (env, f)
         val env = (C.newContext (ctx, accessMap), dec, web, syn)
@@ -332,54 +424,78 @@ end = struct
         let val group = G.fromExp cexp
             val D.T { allo, repr, ... } = #2 env
             val envs  = Option.getOpt (G.Map.find (allo, group), [])
-            val bindings = map (closefun (env, map #2 bindings)) bindings
+            val bindings = map (closefun (env, bindings)) bindings
             val (allocateHdr, env) = allocate (env, envs)
-            val env = foldl (fn (f, (ctx, env, syn, web)) =>
-              (C.addProtocol (ctx, #2 f, LCPS.FunMap.lookup (repr, f)), env,
-               syn, web)) env bindings
+            fun addproto (f, (ctx, env, syn, web)) =
+              let val slots = LCPS.FunMap.lookup (repr, f)
+                  val p = Protocol { code=Direct f, slots=slots, pkg=NONE }
+              in  (C.addProtocol (ctx, #2 f, p), env, syn, web)
+              end
+            val env = foldl addproto env bindings
             val () = app print ["AFTER FIX ", String.concatWithMap ","
             (LV.lvarName o #2) bindings, "\n"]
             val () = C.dump (#1 env)
             val () = print "\n"
         in  LCPS.FIX (label, bindings, allocateHdr (close (env, exp)))
         end
-    | close (env as (ctx, dec, web, syn), LCPS.APP (label, f, args)) =
+    | close (env as (ctx, dec, web, syn), LCPS.APP (label, CPS.VAR f, args)) =
         let val args = expandval (env, args)
             val (hdr, env) = fixaccess (env, args)
             val mklab = LCPS.mkLabel
-            val (ty, { defs, uses, polluted, kind }) =
-              (case f
-                 of CPS.VAR v =>
-                      (case W.webOfVar (web, v)
-                         of SOME w =>
-                              (S.typeof syn v, W.content (web, w))
-                          | NONE =>
-                              (S.typeof syn v,
-                               { defs= #[], uses= #[],
-                                 polluted=true, kind=W.User }))
-                  | _ =>
-                      (bogusTy,
-                       { defs= #[], uses= #[], polluted=true, kind=W.User }))
-        in  if polluted then
-              let val l = LV.mkLvar ()
-                  val (hdr', env) = fixaccess1 (env, f)
-                  val call =
-                    LCPS.SELECT (mklab (), 0, f, l, ty,
-                      (LCPS.APP (label, CPS.VAR l, CPS.VAR l::f::args)))
-              in  hdr (hdr' call)
-              end
-            else
-              let val (f, envs) = valOf (List.getItem (expandval (env, [f])))
-                  val (hdr', env) = fixaccess (env, f :: envs)
-              in  hdr (hdr' (LCPS.APP (label, f, envs @ args)))
-              end
+            val Protocol { code, slots, ... } = C.protocolOf (ctx, f)
+            val slots = map (slotToVal ctx) slots
+            val (hdr', env) = fixaccess (env, slots)
+            val args = slots @ args
+        in  case code
+              of Direct f =>
+                   hdr (hdr' (LCPS.APP (mklab (), CPS.LABEL (#2 f), CPS.LABEL (#2 f) :: args)))
+               | Pointer (Path {base, selects=[]}) =>
+                   hdr (hdr' (LCPS.APP (mklab (), CPS.VAR base, args)))
+               | Pointer p =>
+                   let val name = freshLV f
+                       val ty = S.typeof syn f
+                       val hdr'' = pathToHdr (SOME p, name, ty)
+                       val call = LCPS.APP (mklab (), CPS.VAR name, CPS.VAR name :: args)
+                   in  hdr (hdr' (hdr'' call))
+                   end
+               | Defun _ => raise Fail "unimp"
         end
+    | close (env as (ctx, dec, web, syn), LCPS.APP (label, _, args)) =
+        raise Fail "calling non-var functions"
+            (* val (ty, { defs, uses, polluted, kind }) = *)
+            (*   (case f *)
+            (*      of CPS.VAR v => *)
+            (*           (case W.webOfVar (web, v) *)
+            (*              of SOME w => *)
+            (*                   (S.typeof syn v, W.content (web, w)) *)
+            (*               | NONE => *)
+            (*                   (S.typeof syn v, *)
+            (*                    { defs= #[], uses= #[], *)
+            (*                      polluted=true, kind=W.User })) *)
+            (*       | _ => *)
+            (*           (bogusTy, *)
+            (*            { defs= #[], uses= #[], polluted=true, kind=W.User })) *)
+        (* in  if polluted then *)
+            (*   let val l = LV.mkLvar () *)
+            (*       val (hdr', env) = fixaccess1 (env, f) *)
+            (*       val call = *)
+            (*         LCPS.SELECT (mklab (), 0, f, l, ty, *)
+            (*           (LCPS.APP (label, CPS.VAR l, CPS.VAR l::f::args))) *)
+            (*   in  hdr (hdr' call) *)
+            (*   end *)
+            (* else *)
+            (*   let val (f, envs) = valOf (List.getItem (expandval (env, [f]))) *)
+            (*       val (hdr', env) = fixaccess (env, f :: envs) *)
+            (*   in  hdr (hdr' (LCPS.APP (label, f, envs @ args))) *)
+            (*   end *)
+        (* end *)
     | close (env, LCPS.RECORD (label, rk, fields, x, exp)) =
         let val (hdr, env) = fixaccess (env, map #2 fields)
         in  hdr (LCPS.RECORD (label, rk, fields, x, close (env, exp)))
         end
     | close (env, LCPS.SELECT (label, i, v, x, ty, exp)) =
         let val (hdr, env) = fixaccess1 (env, v)
+            val env = addvar (env, x, ty)
         in  hdr (LCPS.SELECT (label, i, v, x, ty, close (env, exp)))
         end
     | close (env, LCPS.OFFSET _) = raise Fail "Offset"
@@ -398,14 +514,17 @@ end = struct
         end
     | close (env, LCPS.LOOKER (label, lk, args, x, ty, exp)) =
         let val (hdr, env) = fixaccess (env, args)
+            val env = addvar (env, x, ty)
         in  hdr (LCPS.LOOKER (label, lk, args, x, ty, close (env, exp)))
         end
     | close (env, LCPS.ARITH (label, ar, args, x, ty, exp)) =
         let val (hdr, env) = fixaccess (env, args)
+            val env = addvar (env, x, ty)
         in  hdr (LCPS.ARITH (label, ar, args, x, ty, close (env, exp)))
         end
     | close (env, LCPS.PURE (label, pr, args, x, ty, exp)) =
         let val (hdr, env) = fixaccess (env, args)
+            val env = addvar (env, x, ty)
         in  hdr (LCPS.PURE (label, pr, args, x, ty, close (env, exp)))
         end
     | close (env, LCPS.RCC (label, b, name, ty, args, rets, exp)) =
@@ -419,10 +538,15 @@ end = struct
           (case (args, tys)
              of (ret::args, CPS.CNTt::tys) =>
                   let val link = freshLV name
-                      val rets = freshNLV (name, 4)
-                      val ctx = C.addProtocol (ctx, ret, map D.Var rets)
-                  in  (ctx, link :: rets @ args,
-                            bogusTy :: (map (fn _ => bogusTy) rets) @ tys)
+                      val clos = freshLV name
+                      val rets = freshNLV (ret, 4)
+                      val rettys = [CPS.CNTt, bogusTy, bogusTy, bogusTy]
+                      val p = Protocol {
+                        code=Pointer (Path {base=ret, selects=[]}),
+                        slots=D.Var ret :: map D.Var (List.tl rets),
+                        pkg=NONE} 
+                      val ctx = C.addProtocol (ctx, ret, p)
+                  in  (ctx, link::clos::rets@args, bogusTy::bogusTy::rettys@tys)
                   end
               | _ => raise Fail "no return in top level")
           val () = print (Int.toString (List.length args) ^ "\n")

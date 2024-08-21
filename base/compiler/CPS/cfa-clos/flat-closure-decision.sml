@@ -27,10 +27,12 @@ end = struct
 
   datatype fv = Var of LV.lvar
               | CS  of LV.lvar * int
+              | Code of LV.lvar
               | Env of D.EnvID.t * LV.lvar list
 
   fun embed (Var v) = D.Var v
     | embed (CS (v, i)) = D.Expand (v, i)
+    | embed (Code v) = D.Code v
     | embed (Env (e, _)) = D.EnvID e
 
   val fvToS = D.slotToString o embed
@@ -51,7 +53,7 @@ end = struct
             let val depth = S.depthOf syn f
             in  SOME (Int.min (fut, depth), Int.max (lut, depth))
             end
-      fun lifetimeOf (Var v) =
+      fun lifetimeOf (Var v | Code v) =
             let val fs = S.useSites syn v
                 val lifetime = LCPS.FunSet.foldl mergeLT NONE fs
             in  Option.valOf lifetime

@@ -20,6 +20,10 @@ structure Web :> sig
   val kindOfCty : CPS.cty -> kind
 
   val dump : t -> unit
+
+  structure Map : ORD_MAP where type Key.ord_key = id
+  structure Set : ORD_SET where type Key.ord_key = id
+  structure Tbl : MONO_HASH_TABLE where type Key.hash_key = id
 end = struct
 
   structure S = SyntacticInfo
@@ -27,6 +31,9 @@ end = struct
   structure LV = LambdaVar
 
   type id = int
+  structure Map = IntRedBlackMap
+  structure Set = IntRedBlackSet
+  structure Tbl = IntHashTable
 
   datatype kind = User | Cont
 

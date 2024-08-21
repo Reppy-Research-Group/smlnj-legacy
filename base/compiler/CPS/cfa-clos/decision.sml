@@ -40,8 +40,38 @@ structure ClosureDecision = struct
 
   (* datatype convention = Boxed of EnvID.t *)
   (*                     | Flat  of LV.lvar * slot list *)
+  (*
+   * 2 x 3 situations
+   * Code:
+   *  - No need: whenever the function is called, it is the only function
+   *  - Pointer
+   *  - Defun (future)
+   *
+   * Environment:
+   *  - Boxed
+   *  - Flat
+   *  - No environment
+   *
+   * - No code, boxed environment:
+   *   f replaced with envid --> { fvs }
+   * - No code, flat environment:
+   *   f replaced with slots
+   * - No code, no environment:
+   *   remove (arity is 0)
+   *
+   * - Pointer/defun, boxed environment
+   *   f replaced with envid --> {f @ fvs}
+   * - Pointer/defun, flat environment:
+   *   f replaced with f and slots
+   * - Pointer/defun, no environment:
+   *   f replaced with f
+   *
+   * Protocol:
+   * - A template describing the ``type'' of the closure representation.
+   *   { code: Pointer, Defun, Omitted, slot: cty list }
+   *)
 
-  type repr = slot    list LCPS.FunMap.map
+  type repr = protocol     LCPS.FunMap.map
   type allo = EnvID.t list Group.Map.map
   type heap = object       EnvID.Map.map
 
