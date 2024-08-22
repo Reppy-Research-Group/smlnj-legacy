@@ -506,7 +506,7 @@ end = struct
             (case EnvID.Map.lookup (heap, box)
                of D.Record (D.Code function::slots) => (function, slots)
                 | _ => raise Fail "mut rec box does not have a code pointer")
-          val values = map (slotToVal ctx) slots
+          val values = CPS.LABEL (#2 function) :: map (slotToVal ctx) slots
           val (hdr, (ctx, dec, web, syn)) = fixaccess (e, values)
           val fields = map (fn f => (LCPS.mkLabel (), f, CPS.OFFp 0)) values
           val name = varOfEnv box
@@ -519,32 +519,32 @@ end = struct
   fun expandval (env: env, values: CPS.value list) : CPS.value list * header * env =
     let fun samef (f: LCPS.function) (g: LCPS.function) = LV.same (#2 f, #2 g)
         fun cvt (CPS.VAR v, (ctx, dec, web, syn)) =
-              (case C.protocolOf (ctx, v)
-                 of Function { code, env, knowncode, ... } =>
-                      let val (slots, hdr, env) =
-                            (case env
-                               of D.Boxed e =>
-                                    ([CPS.VAR (varOfEnv e)], Fn.id,
-                                      (ctx, dec, web, syn))
-                                | D.MutRecBox e =>
-                                    let val (hdr, env) =
-                                       allocateMutRecBox ((ctx, dec, web, syn),e)
-                                    in  ([CPS.VAR (varOfEnv e)], hdr, env)
-                                    end
-                                | D.Flat slots =>
-                                    (map (slotToVal ctx) slots, Fn.id,
-                                     (ctx, dec, web, syn)))
-                          val cd =
-                            (case (code, knowncode)
-                               of (D.Pointer _, SOME f) => [CPS.LABEL (#2 f)]
-                                | (D.Pointer v, NONE) => [CPS.VAR v]
-                                | (D.Defun (_, fs), SOME f) =>
-                                    [tagInt (indexOf (samef f) fs)]
-                                | (D.Defun (f, fs), NONE) => [CPS.VAR f]
-                                | _ => [])
-                      in  (cd @ slots, hdr, env)
-                      end
-                  | Value ty => ([CPS.VAR v], Fn.id, env))
+          (case C.protocolOf (ctx, v)
+             of Function { code, env, knowncode, ... } =>
+                  let val (slots, hdr, env) =
+                        (case env
+                           of D.Boxed e =>
+                                ([CPS.VAR (varOfEnv e)], Fn.id,
+                                  (ctx, dec, web, syn))
+                            | D.MutRecBox e =>
+                                let val (hdr, env) =
+                                   allocateMutRecBox ((ctx, dec, web, syn),e)
+                                in  ([CPS.VAR (varOfEnv e)], hdr, env)
+                                end
+                            | D.Flat slots =>
+                                (map (slotToVal ctx) slots, Fn.id,
+                                 (ctx, dec, web, syn)))
+                      val cd =
+                        (case (code, knowncode)
+                           of (D.Pointer _, SOME f) => [CPS.LABEL (#2 f)]
+                            | (D.Pointer v, NONE) => [CPS.VAR v]
+                            | (D.Defun (_, fs), SOME f) =>
+                                [tagInt (indexOf (samef f) fs)]
+                            | (D.Defun (f, fs), NONE) => [CPS.VAR f]
+                            | _ => [])
+                  in  (cd @ slots, hdr, env)
+                  end
+              | Value ty => ([CPS.VAR v], Fn.id, env))
           | cvt (value, env) = ([value], Fn.id, env)
         fun collect (v, (vs, hdr, env)) =
           let val (vs', hdr', env) = cvt (v, env)
@@ -553,6 +553,21 @@ end = struct
     in  foldr collect ([], Fn.id, env) values
     end
 
+  fun fixaccess' (env: env, values: CPS.value list)
+    : CPS.value list * header * env =
+    let val (args, hdr, env) = expandval (env, values)
+        val () = if List.length args <> List.length values then
+                   raise Fail "Expansion different length"
+                 else
+                   ()
+        val (hdr', env) = fixaccess (env, args)
+    in  (args, hdr o hdr', env)
+    end
+
+  fun fixaccess1' (env: env, value: CPS.value) =
+    let val (values, hdr, env) = fixaccess' (env, [value])
+    in  (List.hd values, hdr, env)
+    end
 
   fun addvar (e as (ctx, dec, web, syn): env, name: CPS.lvar, CPS.FUNt): env =
         (* CNT is not going to be here *)
@@ -607,11 +622,17 @@ end = struct
                                          | (s, _) => s) (slots, envs)
                   in  D.Flat slots
                   end)
-        fun addproto (f, ctx) = C.addfun (ctx, #2 f, code, insideenv, SOME f)
-        val ctx = List.foldl addproto ctx functions
-        val env = (ctx, dec, web, syn)
-        val accessMap = buildAccessMap (env, f)
-        val env = (C.newContext (ctx, accessMap), dec, web, syn)
+        (* val ctx = List.foldl addproto ctx functions *)
+        (* val env = (ctx, dec, web, syn) *)
+        (* val accessMap = buildAccessMap (env, f) *)
+        val env =
+          let val ctx =  C.addfun (ctx, #2 f, code, insideenv, SOME f)
+              val accessMap = buildAccessMap ((ctx, dec, web, syn), f)
+              val ctx = C.newContext (ctx, accessMap)
+              val ctx = foldl (fn (v, ctx) => C.addInScope (ctx, v)) ctx envs
+              (* val ctx = List.foldl addproto ctx functions *)
+          in  (ctx, dec, web, syn)
+          end
         val (args, tys, env) = expandargs (env, args, tys)
         (* LINK *)
         val (args, tys) = (freshLV name :: envs @ args, bogusTy :: envtys @ tys)
@@ -624,13 +645,13 @@ end = struct
         let val group = G.fromExp cexp
             val D.T { allo, repr, ... } = #2 env
             val envs  = Option.getOpt (G.Map.find (allo, group), [])
-            val bindings = map (closefun (env, bindings)) bindings
             val (allocateHdr, env) = allocate (env, envs)
             fun addproto (f, (ctx, dec, syn, web)) =
               let val D.Closure { code, env } = LCPS.FunMap.lookup (repr, f)
               in  (C.addfun (ctx, #2 f, code, env, SOME f), dec, syn, web)
               end
             val env = foldl addproto env bindings
+            val bindings = map (closefun (env, bindings)) bindings
             val () = app print ["AFTER FIX ", String.concatWithMap ","
             (LV.lvarName o #2) bindings, "\n"]
             val () = C.dump (#1 env)
@@ -678,7 +699,7 @@ end = struct
                                     (SOME (Path {base=clos, selects=selects}),
                                      name, ty)
                        val call = LCPS.APP (mklab (), var name, var name::args)
-                   in  hdr (hdr'' call)
+                   in  hdr (hdr' call)
                    end
                | (D.SelectFrom _, SOME f) =>
                    let val call = LCPS.APP (mklab (), label f, label f :: args)
@@ -689,74 +710,49 @@ end = struct
         end
     | close (env as (ctx, dec, web, syn), LCPS.APP (label, _, args)) =
         raise Fail "calling non-var functions"
-            (* val (ty, { defs, uses, polluted, kind }) = *)
-            (*   (case f *)
-            (*      of CPS.VAR v => *)
-            (*           (case W.webOfVar (web, v) *)
-            (*              of SOME w => *)
-            (*                   (S.typeof syn v, W.content (web, w)) *)
-            (*               | NONE => *)
-            (*                   (S.typeof syn v, *)
-            (*                    { defs= #[], uses= #[], *)
-            (*                      polluted=true, kind=W.User })) *)
-            (*       | _ => *)
-            (*           (bogusTy, *)
-            (*            { defs= #[], uses= #[], polluted=true, kind=W.User })) *)
-        (* in  if polluted then *)
-            (*   let val l = LV.mkLvar () *)
-            (*       val (hdr', env) = fixaccess1 (env, f) *)
-            (*       val call = *)
-            (*         LCPS.SELECT (mklab (), 0, f, l, ty, *)
-            (*           (LCPS.APP (label, CPS.VAR l, CPS.VAR l::f::args))) *)
-            (*   in  hdr (hdr' call) *)
-            (*   end *)
-            (* else *)
-            (*   let val (f, envs) = valOf (List.getItem (expandval (env, [f]))) *)
-            (*       val (hdr', env) = fixaccess (env, f :: envs) *)
-            (*   in  hdr (hdr' (LCPS.APP (label, f, envs @ args))) *)
-            (*   end *)
-        (* end *)
     | close (env, LCPS.RECORD (label, rk, fields, x, exp)) =
-        let val (hdr, env) = fixaccess (env, map #2 fields)
+        let val (values, hdr, env) = fixaccess' (env, map #2 fields)
+            val fields = ListPair.mapEq (fn (v, (l, _, p)) => (l, v, p))
+                                        (values, fields)
             val env = addvar (env, x, CPS.PTRt (CPS.RPT (List.length fields)))
         in  hdr (LCPS.RECORD (label, rk, fields, x, close (env, exp)))
         end
     | close (env, LCPS.SELECT (label, i, v, x, ty, exp)) =
-        let val (hdr, env) = fixaccess1 (env, v)
+        let val (v, hdr, env) = fixaccess1' (env, v)
             val env = addvar (env, x, ty)
         in  hdr (LCPS.SELECT (label, i, v, x, ty, close (env, exp)))
         end
     | close (env, LCPS.OFFSET _) = raise Fail "Offset"
     | close (env, LCPS.SWITCH (label, v, x, exps)) =
-        let val (hdr, env) = fixaccess1 (env, v)
+        let val (v, hdr, env) = fixaccess1' (env, v)
         in  hdr (LCPS.SWITCH (label, v, x, map (fn e => close (env, e)) exps))
         end
     | close (env, LCPS.BRANCH (label, br, args, x, exp1, exp2)) =
-        let val (hdr, env) = fixaccess (env, args)
+        let val (args, hdr, env) = fixaccess' (env, args)
         in  hdr (LCPS.BRANCH (label, br, args, x,
                    close (env, exp1), close (env, exp2)))
         end
     | close (env, LCPS.SETTER (label, st, args, exp)) =
-        let val (hdr, env) = fixaccess (env, args)
+        let val (args, hdr, env) = fixaccess' (env, args)
         in  hdr (LCPS.SETTER (label, st, args, close (env, exp)))
         end
     | close (env, LCPS.LOOKER (label, lk, args, x, ty, exp)) =
-        let val (hdr, env) = fixaccess (env, args)
+        let val (args, hdr, env) = fixaccess' (env, args)
             val env = addvar (env, x, ty)
         in  hdr (LCPS.LOOKER (label, lk, args, x, ty, close (env, exp)))
         end
     | close (env, LCPS.ARITH (label, ar, args, x, ty, exp)) =
-        let val (hdr, env) = fixaccess (env, args)
+        let val (args, hdr, env) = fixaccess' (env, args)
             val env = addvar (env, x, ty)
         in  hdr (LCPS.ARITH (label, ar, args, x, ty, close (env, exp)))
         end
     | close (env, LCPS.PURE (label, pr, args, x, ty, exp)) =
-        let val (hdr, env) = fixaccess (env, args)
+        let val (args, hdr, env) = fixaccess' (env, args)
             val env = addvar (env, x, ty)
         in  hdr (LCPS.PURE (label, pr, args, x, ty, close (env, exp)))
         end
     | close (env, LCPS.RCC (label, b, name, ty, args, rets, exp)) =
-        let val (hdr, env) = fixaccess (env, args)
+        let val (args, hdr, env) = fixaccess' (env, args)
         in  hdr (LCPS.RCC (label, b, name, ty, args, rets, close (env, exp)))
         end
 
@@ -772,6 +768,9 @@ end = struct
                       val ctx = C.addfun
                         (ctx, ret, D.Pointer ret,
                          D.Flat (ListPair.mapEq D.Var (cs, cstys)), NONE)
+                      val ctx = ListPair.foldlEq 
+                        (fn (v, ty, ctx) => C.addval (ctx, v, ty))
+                        ctx (args, tys)
                   in  (ctx, link::clos::ret::cs@args,
                             bogusTy::bogusTy::CPS.CNTt::cstys@tys)
                   end
