@@ -1,23 +1,28 @@
 structure Web :> sig
   type id
   type t
+  datatype kind = User | Cont
+
+  type info = {
+    defs: LabelledCPS.function vector,
+    uses: LabelledCPS.lvar vector,
+    polluted: bool,
+    kind: kind
+  }
 
   val calculate : FlowCFA.result * SyntacticInfo.t -> t
 
   val webOfVar : t * LabelledCPS.lvar -> id option
   val webOfFun : t * LabelledCPS.function -> id
 
-  datatype kind = User | Cont
-
   val defs : t * id -> LabelledCPS.function vector
   val uses : t * id -> LabelledCPS.lvar vector
-  val content : t * id -> { defs: LabelledCPS.function vector,
-                            uses: LabelledCPS.lvar vector,
-                            polluted: bool,
-                            kind: kind }
+  val content : t * id -> info
   val polluted : t * id -> bool
   val kind : t * id -> kind
   val kindOfCty : CPS.cty -> kind
+
+  val toString : info -> string
 
   val dump : t -> unit
 
@@ -132,6 +137,18 @@ end = struct
 
   fun kindOfCty CPS.CNTt = Cont
     | kindOfCty _ = User
+
+  fun toString ({defs, uses, polluted, kind}: info) =
+    let val fs = String.concatWith "," (mapL (LV.lvarName o #2) defs)
+        val vs = String.concatWith "," (mapL LV.lvarName uses)
+        val polluted = if polluted then " (polluted)" else ""
+        val kind = case kind of User => "user" | Cont => "cont"
+    in  concat [
+          "Web ", kind, polluted, "\n",
+          "  defs: [", fs, "]\n",
+          "  uses: [", vs, "]\n"
+        ]
+    end
 
   fun webToS (id: int, { defs, uses, polluted, kind }: info) =
     let val fs = String.concatWith "," (mapL (LV.lvarName o #2) defs)

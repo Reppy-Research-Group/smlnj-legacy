@@ -25,14 +25,12 @@ end = struct
   fun isMLValue syn v =
     (not (isUntaggedInt syn v)) andalso (not (isFloat syn v))
 
-  datatype fv = Var of LV.lvar
+  datatype fv = Var of LV.lvar * CPS.cty
               | CS  of LV.lvar * int
-              | Code of LV.lvar
               | Env of D.EnvID.t * LV.lvar list
 
-  fun embed (Var v) = D.Var v
+  fun embed (Var (v, ty)) = D.Var (v, ty)
     | embed (CS (v, i)) = D.Expand (v, i)
-    | embed (Code v) = D.Code v
     | embed (Env (e, _)) = D.EnvID e
 
   val fvToS = D.slotToString o embed
@@ -53,7 +51,7 @@ end = struct
             let val depth = S.depthOf syn f
             in  SOME (Int.min (fut, depth), Int.max (lut, depth))
             end
-      fun lifetimeOf (Var v | Code v) =
+      fun lifetimeOf (Var (v, _)) =
             let val fs = S.useSites syn v
                 val lifetime = LCPS.FunSet.foldl mergeLT NONE fs
             in  Option.valOf lifetime
@@ -64,8 +62,8 @@ end = struct
                of SOME c => if LV.same (v, c) then
                               (~1, ~1) (* Top priority *)
                             else
-                              lifetimeOf (Var v)
-                | NONE => lifetimeOf (Var v))
+                              lifetimeOf (Var (v, CPS.CNTt))
+                | NONE => lifetimeOf (Var (v, CPS.CNTt)))
         | lifetimeOf (Env (e, vs)) =
             let val fs = foldl
                   (fn (v, fs) => LCPS.FunSet.union (S.useSites syn v, fs))
@@ -87,8 +85,8 @@ end = struct
   fun trueFV (fv, syn, repr) =
     let fun require v =
           (case S.typeof syn v
-             of CPS.CNTt => [Var v, CS (v, 0), CS (v, 1), CS (v, 2)]
-              | _ => [Var v])
+             of CPS.CNTt => [Var (v, CPS.CNTt), CS (v, 0), CS (v, 1), CS (v, 2)]
+              | ty => [Var (v, ty)])
         fun collect (v, vs) = require v @ vs
     in  LV.Set.foldr collect [] fv
     end
@@ -111,8 +109,9 @@ end = struct
           of #[f as ((CPS.CONT | CPS.KNOWN_CONT), name, _, _, _)] =>
                (case spill syn (group, fv)
                   of (callees, []) =>
-                       let val slots = D.Code name :: callees
-                           val repr = LCPS.FunMap.insert (repr, f, slots)
+                       let val cl = D.Closure
+                             { code=D.Pointer name, env=D.Flat callees }
+                           val repr = LCPS.FunMap.insert (repr, f, cl)
                            val allo = Group.Map.insert (allo, group, envs)
                        in  (repr, allo, heap)
                        end
@@ -120,16 +119,21 @@ end = struct
                        let val env = EnvID.new ()
                            val heap = EnvID.Map.insert (heap, env, D.Record spilled)
                            val allo = Group.Map.insert (allo, group, envs@[env])
-                           val repr = LCPS.FunMap.insert
-                             (repr, f, D.Code name :: callees @ [D.EnvID env])
+                           val cl = D.Closure
+                             { code=D.Pointer name,
+                               env=D.Flat (callees@[D.EnvID env]) }
+                           val repr = LCPS.FunMap.insert (repr, f, cl)
                        in  (repr, allo, heap)
                        end)
            | #[f as (_, name, _, _, _)] =>
-               let val envID = EnvID.new ()
-                   val slots = D.Code name :: map embed fv
+               let val envID = EnvID.wrap name
+                   val slots = D.Code f :: map embed fv
                    val heap = EnvID.Map.insert (heap, envID, D.Record slots)
                    val allo = Group.Map.insert (allo, group, envs @ [envID])
-                   val repr = LCPS.FunMap.insert (repr, f, [D.EnvID envID])
+                   val cl = D.Closure
+                     { code=D.SelectFrom {env=0, selects=[0]},
+                       env=D.Boxed envID }
+                   val repr = LCPS.FunMap.insert (repr, f, cl)
                in  (repr, allo, heap)
                end
            | _ => (* General mutual recursion *)
@@ -137,12 +141,15 @@ end = struct
                    val sharedV = map embed fv
                    val heap = EnvID.Map.insert (heap, sharedE, D.Record sharedV)
                    fun clos (f as (_, name, _, _, _)) =
-                     (f, EnvID.new (), [D.Code name, D.EnvID sharedE])
+                     (f, EnvID.wrap name, [D.Code f, D.EnvID sharedE])
                    val closures = Vector.map clos functions
                    val (heap, repr) =
                      Vector.foldl (fn ((f, e, s), (heap, repr)) =>
                        let val heap = EnvID.Map.insert (heap, e, D.Record s)
-                           val repr = LCPS.FunMap.insert (repr, f, [D.EnvID e])
+                           val cl = D.Closure
+                             { code=D.SelectFrom { env=0, selects=[0] },
+                               env=D.MutRecBox e }
+                           val repr = LCPS.FunMap.insert (repr, f, cl)
                        in  (heap, repr)
                        end) (heap, repr) closures
                    val allo = Group.Map.insert

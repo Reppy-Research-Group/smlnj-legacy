@@ -61,8 +61,8 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       (* val () = DotLanguage.dump cg *)
       (* val () = dumpSCC scc *)
     in
-      (* UnRebind.unrebind (LCPS.unlabelF f) *)
-      Cheat.closeCPS cps
+      UnRebind.unrebind (LCPS.unlabelF lcps)
+      (* Cheat.closeCPS cps *)
     end
 
   (* fun closeFix *)
