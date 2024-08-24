@@ -89,7 +89,6 @@ end = struct
              of SOME f =>
                   let val D.Closure {code, env} = LCPS.FunMap.lookup (repr, f)
                       handle e => (print (LV.lvarName v ^ " trying\n"); raise e)
-                    val () = print (LV.lvarName v ^ "known fun\n")
                       val funty = (case #1 f
                                      of (CPS.KNOWN_CONT | CPS.CONT) => CPS.CNTt
                                       | _ => CPS.FUNt)

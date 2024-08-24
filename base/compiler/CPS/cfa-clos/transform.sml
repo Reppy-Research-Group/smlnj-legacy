@@ -244,12 +244,6 @@ end = struct
                        val tys = (case env
                                     of (D.Boxed _ | D.MutRecBox _) => [bogusTy]
                                      | D.Flat slots => map slotToTy slots)
-                       (* val tys = *)
-                       (*   (case code *)
-                       (*      of D.Pointer f => funty :: tys *)
-                       (*       | D.Defun _ => defunTy :: tys *)
-                       (*       | _ => tys) *)
-                       (* A known web has to have at least one function *)
                    in  SOME tys
                    end)
         | NONE =>
@@ -294,9 +288,9 @@ end = struct
                              | D.MutRecBox e =>
                                  D.MutRecBox (EnvID.wrap v)
                              | D.Flat slots =>
-                                 D.Flat (map (fn s =>
-                                             D.Var (freshLV v, slotToTy s))
-                                           slots))
+                                 D.Flat
+                                   (map (fn s => D.Var (freshLV v, slotToTy s))
+                                        slots))
                    in  (kind, code, env, singlevec defs)
                    end)
         | NONE =>
@@ -328,90 +322,6 @@ end = struct
               | CPS.CONT => CPS.CONT
               | _ => CPS.ESCAPE)
     end
-
-  (* fun envszChecked (env as (_, _, web, syn): env, repr, v) = *)
-  (*   let val w    = Web.webOfVar (web, v) *)
-  (*       val tys  = envszUnchecked (env, repr, v) *)
-  (*   in  case (w, tys) *)
-  (*         of (NONE, _) => tys *)
-  (*          | (_, NONE) => tys *)
-  (*          | (SOME w, SOME tys') => *)
-  (*              let val size = List.length tys' *)
-  (*                  fun sz f = List.length (LCPS.FunMap.lookup (repr, f)) *)
-  (*                  val sizes = Vector.map sz (Web.defs (web, w)) *)
-  (*              in  if Vector.all (fn s => s = size) sizes then *)
-  (*                    tys *)
-  (*                  else *)
-  (*                    (Web.dump web; raise Fail "Web constraint failed") *)
-  (*              end *)
-  (*   end *)
-
-  (* val envsz = envszUnchecked *)
-
-  (* fun envcp ((_, _, web, syn): env, repr, v) : *)
-  (*   D.code * LCPS.function option * (CPS.lvar * CPS.cty) option = *)
-  (*   (case Web.webOfVar (web, v) *)
-  (*      of SOME w => *)
-  (*          (case Web.content (web, w) *)
-  (*             of { polluted=true, kind=Web.Cont, defs, ... } => *)
-  (*                  (D.Pointer v, singlevec defs, SOME (v, CPS.CNTt)) *)
-  (*              | { polluted=true, kind=Web.User, defs, ... } => *)
-  (*                  (D.SelectFrom { env=0, selects=[0] }, singlevec defs, NONE) *)
-  (*              | { polluted=false, defs, kind, ... } => *)
-  (*                  let val f = Vector.sub (defs, 0) *)
-  (*                      val D.Closure {code, env} = LCPS.FunMap.lookup (repr, f) *)
-  (*                      val funty = (case kind *)
-  (*                                     of Web.Cont => CPS.CNTt *)
-  (*                                      | Web.User => CPS.FUNt) *)
-  (*                      (1* val tys = *1) *)
-  (*                      (1*   (case code *1) *)
-  (*                      (1*      of D.Pointer f => funty :: tys *1) *)
-  (*                      (1*       | D.Defun _ => defunTy :: tys *1) *)
-  (*                      (1*       | _ => tys) *1) *)
-  (*                      (1* A known web has to have at least one function *1) *)
-  (*                  in  case code *)
-  (*                        of D.Pointer _ => *)
-  (*                             (D.Pointer v, singlevec defs, SOME (v, funty)) *)
-  (*                         | D.Direct _ => *)
-  (*                             (D.Direct f, SOME f, SOME (v, funty)) *)
-  (*                  end) *)
-  (*       | NONE => *)
-  (*          (case S.typeof syn v *)
-  (*             of CPS.CNTt => *)
-  (*                  (D.Pointer v, NONE, SOME (v, CPS.CNTt)) *)
-  (*              | CPS.FUNt => *)
-  (*                  (D.SelectFrom { env=0, selects=[0] }, NONE, NONE) *)
-  (*              | _ => raise Fail "envcp: Non function")) *)
-    (* (case Web.webOfVar (web, v) *)
-    (*    of SOME w => *)
-    (*        (case Web.content (web, w) *)
-    (*           of { defs= #[f], ... } => *)
-    (*                Direct f *)
-    (*            | { polluted=true, kind=Web.Cont, ... } => *)
-    (*                (1* [CPS.CNTt, bogusTy, bogusTy, bogusTy] *1) *)
-    (*                Pointer (Path {base=sub 0, selects=[]}) *)
-    (*            | { polluted=true, kind=Web.User, ... } => *)
-    (*                (1* [bogusTy] *1) *)
-    (*                Pointer (Path {base=sub 0, selects=[0]}) *)
-    (*            | { polluted=false, defs, ... } => *)
-    (*                let val f = Vector.sub (defs, 0) *)
-    (*                    val slots = LCPS.FunMap.lookup (repr, f) *)
-    (*                in  case slots *)
-    (*                      of [] => *)
-    (*                           raise Fail "No code ptr for non-singleton web" *)
-    (*                       | [D.EnvID _] => *)
-    (*                           Pointer (Path {base=sub 0, selects=[0]}) *)
-    (*                       | (D.Code _::_) => *)
-    (*                           Pointer (Path {base=sub 0, selects=[]}) *)
-    (*                       | _ => *)
-    (*                           raise Fail "Code ptr is not the first" *)
-    (*                end) *)
-    (*     | NONE => *)
-    (*        (case S.typeof syn v *)
-    (*           of CPS.CNTt => *)
-    (*                Pointer (Path {base=sub 0, selects=[]}) *)
-    (*            | _ => *)
-    (*                Pointer (Path {base=sub 0, selects=[0]}))) *)
 
   val _ = slotToVar : D.slot -> CPS.lvar
   val _ = slotToVal : C.t -> D.slot -> CPS.value
@@ -509,6 +419,7 @@ end = struct
   fun allocate1 (env as (ctx, dec, _, syn): env, e: EnvID.t) : header * env =
     let val D.T { heap, ... } = dec
         val object = EnvID.Map.lookup (heap, e)
+        (* FIXME: if there is mutbox to allocate, need to allocate here *)
         val (fields, recKind) =
           (case object
              of D.Record slots => (map (slotToVal ctx) slots, CPS.RK_ESCAPE)
