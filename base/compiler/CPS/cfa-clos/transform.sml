@@ -94,16 +94,6 @@ end = struct
     fun protocolOf (T {protocol, ...}, v) = LV.Map.lookup (protocol, v)
          handle NotFound => raise Fail ("Not in scope: " ^ LV.lvarName v)
 
-    fun expansionOf (t, v, i) =
-      (case protocolOf (t, v)
-         of Function { code=_, env=D.Flat slots, knowncode=_, pkg=_ } =>
-              (List.sub (slots, i)
-               handle Subscript =>
-               raise Fail (concat
-                 ["Invalid expansion #", Int.toString i, " of ", LV.lvarName v,
-                  ": [", String.concatWithMap "," D.slotToString slots, "]"]))
-          | _ => raise Fail (concat ["Invalid expansion: ", LV.lvarName v,
-            " is not a function"]))
 
     fun isInScope (T {inscope, ...}, v) =
       LV.Set.member (inscope, v)
@@ -126,7 +116,56 @@ end = struct
         p ["== InScope ==\n"];
         p ["[", cwm "," LV.lvarName (LV.Set.listItems inscope), "]"]
       end
+
+    fun expansionOf (t, v, i) =
+      (case protocolOf (t, v)
+         of Function { code=_, env=D.Flat slots, knowncode=_, pkg=_ } =>
+              (List.sub (slots, i)
+               handle Subscript =>
+               raise Fail (concat
+                 ["Invalid expansion #", Int.toString i, " of ", LV.lvarName v,
+                  ": [", String.concatWithMap "," D.slotToString slots, "]"]))
+          | _ => raise Fail (concat ["Invalid expansion: ", LV.lvarName v,
+            " is not a function"]))
+      handle e => (dump t; raise e)
   end
+
+  (* structure WebType = struct *)
+  (*   datatype ty = MLValue *)
+  (*               | UInt of int *)
+  (*               | UFloat of int *)
+
+  (*   fun ctyToTy (CPS.NUMt { tag=false, sz }) = UInt sz *)
+  (*     | ctyToTy (CPS.FLTt sz) = UFloat sz (1* FIXME: arch dependent *1) *)
+  (*     | ctyToTy _ = MLValue *)
+
+  (*   fun tyToCty MLValue = bogusTy *)
+  (*     | tyToCty (UInt sz) = NUMt { sz=sz, tag=false } *)
+  (*     | tyToCty (UFloat sz) = FLT sz *)
+
+  (*   type stencil = { expand: ty list } *)
+  (*   type t = { web: Web.t, stencil: stencil Web.Map.map } *)
+
+  (*   fun make (D.T { repr, allo, heap }, web: Web.t, syn: S.t) = *)
+  (*     let *)
+  (*       datatype ty' = Ty  of ty *)
+  (*                    | Var of int *)
+
+  (*       datatype con = Eq of ty' * ty' *)
+  (*                    | /\ of con * con *)
+  (*                    | Tr *)
+
+  (*       val count = ref 0 *)
+  (*       fun freshVar () = Var (!ref before ref := !ref + 1) *)
+
+  (*       fun initialize (webid, {defs, uses, polluted, kind}, *)
+  (*                       webmap: ty' vector Web.Map.map) = *)
+  (*         (case (polluted, kind) *)
+  (*            of (true, Web.User) => *)
+  (*                 let val types = #[Ty MLValue] *)
+  (*         let val f = Vector.sub (defs, 0) (1* should have at least 1 f *1) *)
+  (*             val Closure { code, env } = LCPS.FunMap.lookup (repr, f) *)
+  (* end *)
 
   structure C = Context
 
@@ -143,18 +182,9 @@ end = struct
   fun slotToVal ctx (D.EnvID e) = CPS.VAR (varOfEnv e)
     | slotToVal ctx (D.Var (v, _)) = CPS.VAR v
     | slotToVal ctx (D.Code f) = CPS.LABEL (#2 f)
-    | slotToVal ctx (D.Expand (v, i)) =
-        slotToVal ctx (C.expansionOf (ctx, v, i))
+    | slotToVal ctx (D.Expand (v, i, ty)) =
+        slotToVal ctx (C.expansionOf (ctx, v, i) handle e => raise e)
     | slotToVal ctx D.Null = tagInt 0
-
-  fun slotToTy ctx (D.EnvID _)  = CPS.PTRt CPS.VPT
-    | slotToTy ctx (D.Var   (v, ty)) = ty
-    | slotToTy ctx (D.Expand (v, i)) = slotToTy ctx (C.expansionOf (ctx, v, i))
-    | slotToTy ctx (D.Code   f) =
-        (case #1 f
-           of (CPS.CONT | CPS.KNOWN_CONT) => CPS.CNTt
-            | _ => CPS.FUNt)
-    | slotToTy ctx D.Null       =  CPS.NUMt { sz=Target.defaultIntSz, tag=true }
 
   (* envcp:
    * 1. polluted user: code is (#1).1
@@ -164,6 +194,38 @@ end = struct
    *    FIXME: There really should be a way to communicate where the code is
    *    from the decision.
    *)
+
+  fun slotToArg ctx (D.EnvID v) = (varOfEnv v, bogusTy)
+    | slotToArg ctx (D.Var (v, ty)) = (v, ty)
+    | slotToArg ctx (D.Expand (v, i, ty)) =
+        slotToArg ctx (C.expansionOf (ctx, v, i) handle e => raise e)
+    | slotToArg ctx (D.Code f) = (#2 f, funkindToTy (#1 f))
+    | slotToArg ctx D.Null = (LV.mkLvar (), bogusTy)
+
+  fun envargs (ctx: C.t, code: D.code, env: D.environment, kind)
+    : (CPS.lvar * CPS.cty) list =
+    let val slots =
+          (case env
+             of D.Flat slots => map (slotToArg ctx) slots
+              | (D.Boxed e | D.MutRecBox e) => [(varOfEnv e, bogusTy)])
+        val funty = (case kind of Web.Cont => CPS.CNTt | Web.User => CPS.FUNt)
+        val codep =
+          (case code
+             of D.Pointer v => [(v, funty)]
+              | D.SelectFrom _ => []
+              | D.Defun (v, _) => [(v, defunTy)]
+              | D.Direct _ => [])
+    in  codep @ slots
+    end
+
+  fun slotToTy (D.EnvID _)  = CPS.PTRt CPS.VPT
+    | slotToTy (D.Var   (v, ty)) = ty
+    | slotToTy (D.Expand (v, i, ty)) = ty
+    | slotToTy (D.Code   f) =
+        (case #1 f
+           of (CPS.CONT | CPS.KNOWN_CONT) => CPS.CNTt
+            | _ => CPS.FUNt)
+    | slotToTy D.Null       =  CPS.NUMt { sz=Target.defaultIntSz, tag=true }
 
   fun envszUnchecked ((ctx, _, web, syn): env, repr, v) =
     (case Web.webOfVar (web, v)
@@ -181,7 +243,7 @@ end = struct
                                        | Web.User => CPS.FUNt)
                        val tys = (case env
                                     of (D.Boxed _ | D.MutRecBox _) => [bogusTy]
-                                     | D.Flat slots => map (slotToTy ctx) slots)
+                                     | D.Flat slots => map slotToTy slots)
                        (* val tys = *)
                        (*   (case code *)
                        (*      of D.Pointer f => funty :: tys *)
@@ -233,7 +295,7 @@ end = struct
                                  D.MutRecBox (EnvID.wrap (freshLV v))
                              | D.Flat slots =>
                                  D.Flat (map (fn s =>
-                                             D.Var (freshLV v, slotToTy ctx s))
+                                             D.Var (freshLV v, slotToTy s))
                                            slots))
                    in  (kind, code, env, singlevec defs)
                    end)
@@ -253,28 +315,6 @@ end = struct
                     NONE)
                | _ => raise Fail "Not a function" (* Not a function *)))
 
-  fun slotToArg ctx (D.EnvID v) = (varOfEnv v, bogusTy)
-    | slotToArg ctx (D.Var (v, ty)) = (v, ty)
-    | slotToArg ctx (D.Expand (v, i)) =
-        slotToArg ctx (C.expansionOf (ctx, v, i))
-    | slotToArg ctx (D.Code f) = (#2 f, funkindToTy (#1 f))
-    | slotToArg ctx D.Null = (LV.mkLvar (), bogusTy)
-
-  fun envargs (ctx: C.t, code: D.code, env: D.environment, kind)
-    : (CPS.lvar * CPS.cty) list =
-    let val slots =
-          (case env
-             of D.Flat slots => map (slotToArg ctx) slots
-              | (D.Boxed e | D.MutRecBox e) => [(varOfEnv e, bogusTy)])
-        val funty = (case kind of Web.Cont => CPS.CNTt | Web.User => CPS.FUNt)
-        val codep =
-          (case code
-             of D.Pointer v => [(v, funty)]
-              | D.SelectFrom _ => []
-              | D.Defun (v, _) => [(v, defunTy)]
-              | D.Direct _ => [])
-    in  codep @ slots
-    end
 
   (* fun envszChecked (env as (_, _, web, syn): env, repr, v) = *)
   (*   let val w    = Web.webOfVar (web, v) *)
@@ -383,8 +423,8 @@ end = struct
           | dfs ((s, path) :: todo, access) =
               (case s
                  of D.Var (v, ty) => dfs (todo, insert (access, v, path))
-                  | D.Expand (v, i) =>
-                      dfs ((C.expansionOf (ctx, v, i), path) :: todo,
+                  | D.Expand (v, i, ty) =>
+                      dfs ((C.expansionOf (ctx, v, i) handle e => raise e, path) :: todo,
                            access)
                   | D.EnvID e =>
                       dfs (nexts (e, path, todo),
@@ -398,6 +438,7 @@ end = struct
                      of (D.Boxed e | D.MutRecBox e) => [D.EnvID e]
                       | D.Flat slots => slots)
               | Value _ => raise Fail "impossible")
+          handle e => raise e
         val names = #1 (ListPair.unzipMap (slotToArg ctx) slots)
         (* val slots = LCPS.FunMap.lookup (repr, f) *)
         val bases =
@@ -519,7 +560,7 @@ end = struct
   fun expandval (env: env, values: CPS.value list) : CPS.value list * header * env =
     let fun samef (f: LCPS.function) (g: LCPS.function) = LV.same (#2 f, #2 g)
         fun cvt (CPS.VAR v, (ctx, dec, web, syn)) =
-          (case C.protocolOf (ctx, v)
+          (case C.protocolOf (ctx, v) handle e => raise e
              of Function { code, env, knowncode, ... } =>
                   let val (slots, hdr, env) =
                         (case env
@@ -669,6 +710,7 @@ end = struct
                  of Value _ => raise Fail "calling a non-function"
                   | Function { code, env, knowncode, pkg } =>
                       (code, env, knowncode, pkg))
+              handle e => raise e
             val envargs =
               (case environ
                  of (D.Boxed e | D.MutRecBox e) => [var (varOfEnv e)]
@@ -768,7 +810,7 @@ end = struct
                       val ctx = C.addfun
                         (ctx, ret, D.Pointer ret,
                          D.Flat (ListPair.mapEq D.Var (cs, cstys)), NONE)
-                      val ctx = ListPair.foldlEq 
+                      val ctx = ListPair.foldlEq
                         (fn (v, ty, ctx) => C.addval (ctx, v, ty))
                         ctx (args, tys)
                   in  (ctx, link::clos::ret::cs@args,

@@ -26,11 +26,11 @@ end = struct
     (not (isUntaggedInt syn v)) andalso (not (isFloat syn v))
 
   datatype fv = Var of LV.lvar * CPS.cty
-              | CS  of LV.lvar * int
+              | CS  of LV.lvar * int * CPS.cty
               | Env of D.EnvID.t * LV.lvar list
 
   fun embed (Var (v, ty)) = D.Var (v, ty)
-    | embed (CS (v, i)) = D.Expand (v, i)
+    | embed (CS (v, i, ty)) = D.Expand (v, i, ty)
     | embed (Env (e, _)) = D.EnvID e
 
   val fvToS = D.slotToString o embed
@@ -57,7 +57,7 @@ end = struct
             in  Option.valOf lifetime
                 (* v is free in a function, so useSite cannot be empty. *)
             end
-        | lifetimeOf (CS (v, _)) =
+        | lifetimeOf (CS (v, _, _)) =
             (case returnCont
                of SOME c => if LV.same (v, c) then
                               (~1, ~1) (* Top priority *)
@@ -83,10 +83,31 @@ end = struct
   val _ = mapL : ('a -> 'b) -> 'a vector -> 'b list
 
   fun trueFV (fv, syn, repr) =
-    let fun require v =
-          (case S.typeof syn v
-             of CPS.CNTt => [Var (v, CPS.CNTt), CS (v, 0), CS (v, 1), CS (v, 2)]
-              | ty => [Var (v, ty)])
+    let val ty = CPS.PTRt CPS.VPT
+        fun require v =
+          (case S.knownFun syn v
+             of SOME f =>
+                  let val D.Closure {code, env} = LCPS.FunMap.lookup (repr, f)
+                      handle e => (print (LV.lvarName v ^ " trying\n"); raise e)
+                    val () = print (LV.lvarName v ^ "known fun\n")
+                      val funty = (case #1 f
+                                     of (CPS.KNOWN_CONT | CPS.CONT) => CPS.CNTt
+                                      | _ => CPS.FUNt)
+                      val fields =
+                        (case env
+                           of (D.Boxed _ | D.MutRecBox _) => [Var (v, ty)]
+                            | D.Flat slots =>
+                                List.mapPartiali
+                                  (fn (_, (D.Code _ | D.Null)) => NONE
+                                    | (i, slot) => SOME (CS (v, i, ty))) slots)
+                  in  fields
+                  end
+              | NONE =>
+                  (case S.typeof syn v
+                     of CPS.CNTt =>
+                          [Var (v, CPS.CNTt),
+                           CS (v, 0, ty), CS (v, 1, ty), CS (v, 2, ty)]
+                      | ty => [Var (v, ty)]))
         fun collect (v, vs) = require v @ vs
     in  LV.Set.foldr collect [] fv
     end
@@ -95,6 +116,8 @@ end = struct
     let val functions = S.groupFun syn group
         val (fv, ufv) = LV.Set.partition (isMLValue syn) (S.groupFV syn group)
         val fv = trueFV (fv, syn, repr)
+        handle e => (print ("In " ^( String.concatWithMap "," (LV.lvarName o #2)
+        (Vector.toList functions)) ^ "\n");raise  e)
         val (fv, envs, heap) =
           if LV.Set.isEmpty ufv then
              (fv, [], heap)

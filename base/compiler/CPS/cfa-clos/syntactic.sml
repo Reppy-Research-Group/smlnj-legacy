@@ -78,8 +78,7 @@ end = struct
         | useVar _ _ = ()
 
       fun newGrp (label, bindings, fv, exp) =
-        (prependGrp (Group.wrap label);
-         Group.Tbl.insert grpTbl
+        (Group.Tbl.insert grpTbl
            (Group.wrap label,
             { functions=Vector.fromList bindings, fv=fv, exp=exp }))
 
@@ -104,6 +103,7 @@ end = struct
                         val () = app (fn (kind, name, _, _, _) =>
                                         newVar' (name, kindToCty kind))
                                      bindings
+                        val () = prependGrp (Group.wrap label)
                         val fvs = map (walkF (currF, label, depth)) bindings
                         val fv = foldr LV.Set.union LV.Set.empty fvs
                         val () =

@@ -22,6 +22,8 @@ structure Web :> sig
   val kind : t * id -> kind
   val kindOfCty : CPS.cty -> kind
 
+  val fold : (id * info * 'a -> 'a) -> 'a -> t -> 'a
+
   val toString : info -> string
 
   val dump : t -> unit
@@ -134,6 +136,8 @@ end = struct
   val uses = #uses o content
   val polluted = #polluted o content
   val kind = #kind o content
+
+  fun fold f zero (T { webs, funMap, varMap }) = Vector.foldli f zero webs
 
   fun kindOfCty CPS.CNTt = Cont
     | kindOfCty _ = User

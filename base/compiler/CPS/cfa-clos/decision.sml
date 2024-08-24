@@ -66,7 +66,7 @@ structure ClosureDecision = struct
 
   datatype slot = EnvID  of EnvID.t
                 | Var    of LV.lvar * CPS.cty
-                | Expand of LV.lvar * int
+                | Expand of LV.lvar * int * CPS.cty
                 | Code   of LCPS.function
                 | Null
 
@@ -93,8 +93,9 @@ structure ClosureDecision = struct
   fun slotToString (Var (v, ty)) =
         concat ["[V(", CPSUtil.ctyToString ty, ")]", LV.lvarName v]
     | slotToString (Code c) = concat ["[L]", LV.lvarName (#2 c)]
-    | slotToString (Expand (v, i)) =
-        concat ["[CS]", LV.lvarName v, "#", Int.toString i]
+    | slotToString (Expand (v, i, ty)) =
+        concat ["[CS(", CPSUtil.ctyToString ty, ")]", LV.lvarName v,
+                "#", Int.toString i]
     | slotToString Null = "Null"
     | slotToString (EnvID e) = concat ["[E]", EnvID.toString e]
 
@@ -116,7 +117,6 @@ structure ClosureDecision = struct
   fun closureToS (Closure {code, env}) =
     concat [codeToS code, "(", envToS env, "...)"]
 
-
   fun dump (T { repr, allo, heap }, syn) =
     let
       val p = app print
@@ -126,8 +126,9 @@ structure ClosureDecision = struct
         (case slot
            of Var (v, ty) => p [indent, "Var ", LV.lvarName v, tyToS ty, "\n"]
             | Code c => p [indent, "Lab ", LV.lvarName (#2 c), "\n"]
-            | Expand (v, i) => p [indent, "Expand #", Int.toString i, " of ",
-                                  LV.lvarName v, "\n"]
+            | Expand (v, i, ty) =>
+                p [indent, "Expand #", Int.toString i, " of ", LV.lvarName v,
+                   "(", tyToS ty, ")\n"]
             | Null   => p [indent, "Null\n"]
             | EnvID e =>
                 (p [indent, "Env ", EnvID.toString e, ":"];
