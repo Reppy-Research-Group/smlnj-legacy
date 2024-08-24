@@ -39,7 +39,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       val decision = FlatClosureDecision.produce (lcps, syntactic)
       val () = ClosureDecision.dump (decision, syntactic)
       val web = Web.calculate (result, syntactic)
-      (* val () = Web.dump web *)
+      val () = Web.dump web
 
       val lcps = Transform.transform (lcps, decision, web, syntactic)
 

@@ -290,9 +290,9 @@ end = struct
                        val env =
                          (case env
                             of D.Boxed e =>
-                                 D.Boxed (EnvID.wrap (freshLV v))
+                                 D.Boxed (EnvID.wrap v)
                              | D.MutRecBox e =>
-                                 D.MutRecBox (EnvID.wrap (freshLV v))
+                                 D.MutRecBox (EnvID.wrap v)
                              | D.Flat slots =>
                                  D.Flat (map (fn s =>
                                              D.Var (freshLV v, slotToTy s))
