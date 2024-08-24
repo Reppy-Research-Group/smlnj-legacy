@@ -97,9 +97,7 @@ end = struct
                 maximize ([INR f], LCPS.FunSet.empty, LV.Set.empty, false)
               val defs = LCPS.FunSet.toList defs and uses = LV.Set.toList uses
               val kind =
-                (case #1 (List.hd defs)
-                   of (CPS.CONT | CPS.KNOWN_CONT) => Cont
-                    | _ => User)
+                (case #1 (List.hd defs) of CPS.CONT => Cont | _ => User)
               val id = length
               val () = List.app (fn f => LCPS.FunTbl.insert funMap (f, id)) defs
               val () = List.app (fn v => LV.Tbl.insert varMap (v, id)) uses

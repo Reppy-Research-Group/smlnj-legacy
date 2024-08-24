@@ -99,6 +99,7 @@ end = struct
                                 List.mapPartiali
                                   (fn (_, (D.Code _ | D.Null)) => NONE
                                     | (i, slot) => SOME (CS (v, i, ty))) slots)
+                      (* NEVER needs to close over the code for a known fun *)
                   in  fields
                   end
               | NONE =>
@@ -162,9 +163,17 @@ end = struct
                        (D.Direct f, slots)
                      else
                        (D.SelectFrom {env=0, selects=[0]}, D.Code f :: slots)
-                   val heap = EnvID.Map.insert (heap, envID, D.Record slots)
-                   val allo = Group.Map.insert (allo, group, envs @ [envID])
-                   val cl = D.Closure { code=code, env=D.Boxed envID }
+                   val (heap, allo, env) =
+                     (case slots
+                        of [] => (heap, allo, D.Flat [])
+                         | _ =>
+                             let val heap =
+                                  EnvID.Map.insert (heap, envID, D.Record slots)
+                                 val allo =
+                                  Group.Map.insert (allo, group, envs @ [envID])
+                             in  (heap, allo, D.Boxed envID)
+                             end)
+                   val cl = D.Closure { code=code, env=env }
                    val repr = LCPS.FunMap.insert (repr, f, cl)
                in  (repr, allo, heap)
                end

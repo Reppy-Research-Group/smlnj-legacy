@@ -311,13 +311,10 @@ end = struct
 
   fun funkind (env as (_, dec, _, syn): env, function: LCPS.function) =
     let val (kind, name, _, _, _) = function
-        val D.T {repr, ...} = dec
-        fun isCall (LCPS.APP (_, CPS.VAR v, _)) = LV.same (v, name)
-          | isCall _ = false
+        val D.T { repr, ... } = dec
         val D.Closure { code, ... } = LCPS.FunMap.lookup (repr, function)
         fun directCall (D.Direct _) = true
           | directCall _ = false
-        val uses = S.usePoints syn name
     in  if directCall code (* orelse LCPS.Set.all isCall uses *) then
           CPS.KNOWN
         else
@@ -431,6 +428,8 @@ end = struct
         val (hdr, env as (ctx, dec, web, syn)) = fixaccess (env, fields)
         val name = varOfEnv e
         val fields = map (fn f => (LCPS.mkLabel (), f, CPS.OFFp 0)) fields
+        val () = if List.null fields then raise Fail "GC is not gonna like this"
+                                     else ()
         val hdr = fn cexp =>
           hdr (LCPS.RECORD (LCPS.mkLabel (), recKind, fields, name, cexp))
     in  (hdr, (C.addInScope (ctx, name), dec, web, syn))
