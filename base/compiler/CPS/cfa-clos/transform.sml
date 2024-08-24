@@ -309,12 +309,16 @@ end = struct
                     NONE)
                | _ => raise Fail "Not a function" (* Not a function *)))
 
-  fun funkind (env as (_, _, _, syn): env, function: LCPS.function) =
+  fun funkind (env as (_, dec, _, syn): env, function: LCPS.function) =
     let val (kind, name, _, _, _) = function
+        val D.T {repr, ...} = dec
         fun isCall (LCPS.APP (_, CPS.VAR v, _)) = LV.same (v, name)
           | isCall _ = false
+        val D.Closure { code, ... } = LCPS.FunMap.lookup (repr, function)
+        fun directCall (D.Direct _) = true
+          | directCall _ = false
         val uses = S.usePoints syn name
-    in  if LCPS.Set.all isCall uses then
+    in  if directCall code (* orelse LCPS.Set.all isCall uses *) then
           CPS.KNOWN
         else
           (case kind
@@ -600,11 +604,15 @@ end = struct
           end
         val (args, tys, env) = expandargs (env, args, tys)
         (* LINK *)
-        val (args, tys) = (freshLV name :: envs @ args, bogusTy :: envtys @ tys)
+        val fk = funkind (env, f)
+        val (args, tys) =
+          (case funkind (env, f)
+             of CPS.KNOWN => (envs @ args, envtys @ tys)
+              | _ => (freshLV name :: envs @ args, bogusTy :: envtys @ tys))
+(*         val (args, tys) = (freshLV name :: envs @ args, bogusTy :: envtys @ tys) *)
         val () = app print ["IN FUNCTION ", LV.lvarName name, "\n"]
         val () = C.dump (#1 env)
         val () = print "\n"
-        val fk = funkind (env, f)
     in  (fk, name, args, tys, close (env, body))
     end
   and close (env, cexp as LCPS.FIX (label, bindings, exp)) =
@@ -645,7 +653,7 @@ end = struct
             val hdr = hdr o hdr' o hdr''
         in  case (code, knowncode)
               of (D.Direct f, _) =>
-                   hdr (LCPS.APP (mklab (), label f, label f :: args))
+                   hdr (LCPS.APP (mklab (), label f, args))
                | (D.Pointer f, NONE) =>
                    let val (hdr', env) = fixaccess1 (env, var f)
                        val call = LCPS.APP (mklab (), var f, var f :: args)

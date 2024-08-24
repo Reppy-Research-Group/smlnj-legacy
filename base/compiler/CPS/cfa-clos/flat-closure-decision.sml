@@ -127,10 +127,17 @@ end = struct
                              (heap, boxedE, D.RawBlock (ufv, CPS.RK_RAW64BLOCK))
              in  (Env (boxedE, ufv) :: fv, [boxedE], heap)
              end
+        fun isKnown (f: LCPS.function) =
+          let val name = #2 f
+              fun isCall (LCPS.APP (_, CPS.VAR v, _)) = LV.same (v, name)
+                | isCall _ = false
+              val uses = S.usePoints syn name
+          in  LCPS.Set.all isCall uses
+          end
+
     in  case functions
-          of #[f as ((CPS.CONT | CPS.KNOWN_CONT), name, _, _, _)] =>
-               (case spill syn (group, fv)
-                  of (callees, []) =>
+          of #[f as (CPS.CONT, name, _, _, _)] =>
+               (case spill syn (group, fv) of (callees, []) =>
                        let val cl = D.Closure
                              { code=D.Pointer name, env=D.Flat callees }
                            val repr = LCPS.FunMap.insert (repr, f, cl)
@@ -149,12 +156,15 @@ end = struct
                        end)
            | #[f as (_, name, _, _, _)] =>
                let val envID = EnvID.wrap name
-                   val slots = D.Code f :: map embed fv
+                   val slots = map embed fv
+                   val (code, slots) =
+                     if isKnown f then
+                       (D.Direct f, slots)
+                     else
+                       (D.SelectFrom {env=0, selects=[0]}, D.Code f :: slots)
                    val heap = EnvID.Map.insert (heap, envID, D.Record slots)
                    val allo = Group.Map.insert (allo, group, envs @ [envID])
-                   val cl = D.Closure
-                     { code=D.SelectFrom {env=0, selects=[0]},
-                       env=D.Boxed envID }
+                   val cl = D.Closure { code=code, env=D.Boxed envID }
                    val repr = LCPS.FunMap.insert (repr, f, cl)
                in  (repr, allo, heap)
                end
