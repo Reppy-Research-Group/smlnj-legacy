@@ -315,6 +315,19 @@ end = struct
                     NONE)
                | _ => raise Fail "Not a function" (* Not a function *)))
 
+  fun funkind (env as (_, _, _, syn): env, function: LCPS.function) =
+    let val (kind, name, _, _, _) = function
+        fun isCall (LCPS.APP (_, CPS.VAR v, _)) = LV.same (v, name)
+          | isCall _ = false
+        val uses = S.usePoints syn name
+    in  if LCPS.Set.all isCall uses then
+          CPS.KNOWN
+        else
+          (case kind
+             of CPS.KNOWN_CONT => CPS.KNOWN
+              | CPS.CONT => CPS.CONT
+              | _ => CPS.ESCAPE)
+    end
 
   (* fun envszChecked (env as (_, _, web, syn): env, repr, v) = *)
   (*   let val w    = Web.webOfVar (web, v) *)
@@ -680,6 +693,7 @@ end = struct
         val () = app print ["IN FUNCTION ", LV.lvarName name, "\n"]
         val () = C.dump (#1 env)
         val () = print "\n"
+        val fk = funkind (env, f)
     in  (fk, name, args, tys, close (env, body))
     end
   and close (env, cexp as LCPS.FIX (label, bindings, exp)) =
