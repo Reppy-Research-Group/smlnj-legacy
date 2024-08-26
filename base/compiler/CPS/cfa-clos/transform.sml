@@ -15,15 +15,21 @@ end = struct
   val defunTy = CPS.NUMt { sz=Target.defaultIntSz, tag=true }
 
   datatype path = Path of { base: LV.lvar, selects: int list }
+                | Create of { function: LCPS.function, env: LV.lvar }
 
   fun pathToS (Path {base, selects}) =
         concat (LV.lvarName base :: map (fn i => "." ^ Int.toString i) selects)
+    | pathToS (Create {function, env}) =
+        concat ["{", LV.lvarName (#2 function), ",", LV.lvarName env, "}"]
 
   fun mergePath (Path { base=b1, selects=s1 }, Path { base=b2, selects=s2 }) =
-    if List.length s1 <= List.length s2 then
-      Path { base=b1, selects=s1 }
-    else
-      Path { base=b2, selects=s2 }
+        if List.length s1 <= List.length s2 then
+          Path { base=b1, selects=s1 }
+        else
+          Path { base=b2, selects=s2 }
+    | mergePath ((Create _, p as Path _) | (p as Path _, Create _)) = p
+    | mergePath (Create _, Create _) =
+        raise Fail "There can't be two ways to get to a mut rec func"
 
   datatype value = Function of {
                      code: D.code,
@@ -38,6 +44,8 @@ end = struct
 
   fun freshLV lvar = LV.dupLvar lvar
   fun freshNLV (lvar, n) = lvar :: List.tabulate (n - 1, fn _ => freshLV lvar)
+
+  fun sameF (f: LCPS.function) (g: LCPS.function) = LV.same (#2 f, #2 g)
 
   fun valueToS (Function { code, env, knowncode, pkg }) =
         concat [D.codeToS code, "(", D.envToS env, "...) pkg: ",
@@ -207,7 +215,7 @@ end = struct
     let val slots =
           (case env
              of D.Flat slots => map (slotToArg ctx) slots
-              | (D.Boxed e | D.MutRecBox e) => [(varOfEnv e, bogusTy)])
+              | D.Boxed e => [(varOfEnv e, bogusTy)])
         val funty = (case kind of Web.Cont => CPS.CNTt | Web.User => CPS.FUNt)
         val codep =
           (case code
@@ -242,7 +250,7 @@ end = struct
                                       of Web.Cont => CPS.CNTt
                                        | Web.User => CPS.FUNt)
                        val tys = (case env
-                                    of (D.Boxed _ | D.MutRecBox _) => [bogusTy]
+                                    of D.Boxed _ => [bogusTy]
                                      | D.Flat slots => map slotToTy slots)
                    in  SOME tys
                    end)
@@ -285,8 +293,6 @@ end = struct
                          (case env
                             of D.Boxed e =>
                                  D.Boxed (EnvID.wrap v)
-                             | D.MutRecBox e =>
-                                 D.MutRecBox (EnvID.wrap v)
                              | D.Flat slots =>
                                  D.Flat
                                    (map (fn s => D.Var (freshLV v, slotToTy s))
@@ -327,39 +333,39 @@ end = struct
   val _ = slotToVar : D.slot -> CPS.lvar
   val _ = slotToVal : C.t -> D.slot -> CPS.value
 
-  fun buildAccessMap (env: env, f: LCPS.function) : path LV.Map.map =
+  fun buildAccessMap (env: env, f: LCPS.function, muts) : path LV.Map.map =
     let val (ctx, D.T { repr, heap, ... }, _, _) = env
         val roots  = LCPS.FunMap.lookup (repr, f)
         val insert = LV.Map.insertWith mergePath
-        fun nexts (e, Path { base, selects }, todo) =
+        fun nexts (e, { base, selects }, todo) =
           (case EnvID.Map.find (heap, e)
              of SOME (D.Record slots) =>
                   List.foldli (fn (i, s, todo) =>
-                    ((s, Path { base=base, selects=selects@[i] }) :: todo))
+                    ((s, { base=base, selects=selects@[i] }) :: todo))
                     todo slots
               | SOME (D.RawBlock (vars, _)) =>
                   List.foldli (fn (i, v, todo) =>
                     ((D.Var (v, bogusTy),
-                      Path { base=base, selects=selects@[i] })::todo))
+                      { base=base, selects=selects@[i] })::todo))
                     todo vars
               | NONE => raise Fail "nexts")
         fun dfs ([], access) = access
           | dfs ((s, path) :: todo, access) =
               (case s
-                 of D.Var (v, ty) => dfs (todo, insert (access, v, path))
+                 of D.Var (v, ty) => dfs (todo, insert (access, v, Path path))
                   | D.Expand (v, i, ty) =>
                       dfs ((C.expansionOf (ctx, v, i) handle e => raise e, path) :: todo,
                            access)
                   | D.EnvID e =>
                       dfs (nexts (e, path, todo),
-                           insert (access, varOfEnv e, path))
+                           insert (access, varOfEnv e, Path path))
                   | D.Null => dfs (todo, access)
                   | D.Code _ => dfs (todo, access))
         val slots =
           (case C.protocolOf (ctx, #2 f)
              of Function {code, env, pkg, knowncode} =>
                   (case env
-                     of (D.Boxed e | D.MutRecBox e) => [D.EnvID e]
+                     of D.Boxed e => [D.EnvID e]
                       | D.Flat slots => slots)
               | Value _ => raise Fail "impossible")
           handle e => raise e
@@ -367,8 +373,24 @@ end = struct
         (* val slots = LCPS.FunMap.lookup (repr, f) *)
         val bases =
           ListPair.foldl (fn (name, slot, bases) =>
-            (slot, Path { base=name, selects=[] }) :: bases) [] (names, slots)
-    in  dfs (bases, LV.Map.empty)
+            (slot, { base=name, selects=[] }) :: bases) [] (names, slots)
+        val initial =
+          foldl (fn (g, access) =>
+            if sameF f g then
+              access
+            else
+              let val D.Closure { code, env } = LCPS.FunMap.lookup (repr, g)
+              in  case (code, env)
+                    of (D.SelectFrom _, D.Boxed e) =>
+                         (* If the mutually recursive functions need a pointer,
+                          * we create one from. *)
+                         LV.Map.insert (access, varOfEnv e,
+                           Create { function=f, env=List.hd names })
+                     | (_, D.Boxed e) => raise Fail "Check this"
+                     | _ => access
+              end) LV.Map.empty muts
+
+    in  dfs (bases, initial)
     end
 
   fun indexOf (pred: 'a -> bool) (xs: 'a list) : int =
@@ -396,6 +418,14 @@ end = struct
                                      select selects name' cexp)
                   end
         in  select selects base
+        end
+    | pathToHdr (SOME (Create { function, env=base }), name, cty) =
+        let val fields = [
+              (LCPS.mkLabel (), CPS.LABEL (#2 function), CPS.OFFp 0),
+              (LCPS.mkLabel (), CPS.VAR base, CPS.SELp (1, CPS.OFFp 0))
+            ]
+        in  fn cexp =>
+              LCPS.RECORD (LCPS.mkLabel (), CPS.RK_ESCAPE, fields, name, cexp)
         end
     | pathToHdr (NONE, name, cty) : header = fn x => x
 
@@ -465,71 +495,59 @@ end = struct
     in  (args, tys, (ctx, dec, web, syn))
     end
 
-  fun allocateMutRecBox (e as (ctx, D.T {heap, ...}, web, syn): env, box)
-    : header * env =
-    if C.isInScope (ctx, varOfEnv box) then
-      (fn cexp => cexp, e)
-    else
-      let val (function, slots) =
-            (case EnvID.Map.lookup (heap, box)
-               of D.Record (D.Code function::slots) => (function, slots)
-                | _ => raise Fail "mut rec box does not have a code pointer")
-          val values = CPS.LABEL (#2 function) :: map (slotToVal ctx) slots
-          val (hdr, (ctx, dec, web, syn)) = fixaccess (e, values)
-          val fields = map (fn f => (LCPS.mkLabel (), f, CPS.OFFp 0)) values
-          val name = varOfEnv box
-          val hdr = fn cexp => hdr
-            (LCPS.RECORD (LCPS.mkLabel (), CPS.RK_ESCAPE, fields, name, cexp))
-          val env = (C.addInScope (ctx, name), dec, web, syn)
-      in  (hdr, env)
-      end
+  (* fun allocateMutRecBox (e as (ctx, D.T {heap, ...}, web, syn): env, box) *)
+  (*   : header * env = *)
+  (*   if C.isInScope (ctx, varOfEnv box) then *)
+  (*     (fn cexp => cexp, e) *)
+  (*   else *)
+  (*     let val (function, slots) = *)
+  (*           (case EnvID.Map.lookup (heap, box) *)
+  (*              of D.Record (D.Code function::slots) => (function, slots) *)
+  (*               | _ => raise Fail "mut rec box does not have a code pointer") *)
+  (*         val values = CPS.LABEL (#2 function) :: map (slotToVal ctx) slots *)
+  (*         val (hdr, (ctx, dec, web, syn)) = fixaccess (e, values) *)
+  (*         val fields = map (fn f => (LCPS.mkLabel (), f, CPS.OFFp 0)) values *)
+  (*         val name = varOfEnv box *)
+  (*         val hdr = fn cexp => hdr *)
+  (*           (LCPS.RECORD (LCPS.mkLabel (), CPS.RK_ESCAPE, fields, name, cexp)) *)
+  (*         val env = (C.addInScope (ctx, name), dec, web, syn) *)
+  (*     in  (hdr, env) *)
+  (*     end *)
 
-  fun expandval (env: env, values: CPS.value list) : CPS.value list * header * env =
-    let fun samef (f: LCPS.function) (g: LCPS.function) = LV.same (#2 f, #2 g)
-        fun cvt (CPS.VAR v, (ctx, dec, web, syn)) =
+  fun expandval (env: env, values: CPS.value list) : CPS.value list =
+    let val (ctx, _, _, _) = env
+        fun cvt (CPS.VAR v) =
           (case C.protocolOf (ctx, v) handle e => raise e
              of Function { code, env, knowncode, ... } =>
-                  let val (slots, hdr, env) =
+                  let val slots =
                         (case env
-                           of D.Boxed e =>
-                                ([CPS.VAR (varOfEnv e)], Fn.id,
-                                  (ctx, dec, web, syn))
-                            | D.MutRecBox e =>
-                                let val (hdr, env) =
-                                   allocateMutRecBox ((ctx, dec, web, syn),e)
-                                in  ([CPS.VAR (varOfEnv e)], hdr, env)
-                                end
-                            | D.Flat slots =>
-                                (map (slotToVal ctx) slots, Fn.id,
-                                 (ctx, dec, web, syn)))
+                           of D.Boxed e => [CPS.VAR (varOfEnv e)]
+                            | D.Flat slots => map (slotToVal ctx) slots)
                       val cd =
                         (case (code, knowncode)
                            of (D.Pointer _, SOME f) => [CPS.LABEL (#2 f)]
                             | (D.Pointer v, NONE) => [CPS.VAR v]
                             | (D.Defun (_, fs), SOME f) =>
-                                [tagInt (indexOf (samef f) fs)]
+                                [tagInt (indexOf (sameF f) fs)]
                             | (D.Defun (f, fs), NONE) => [CPS.VAR f]
                             | _ => [])
-                  in  (cd @ slots, hdr, env)
+                  in  cd @ slots
                   end
-              | Value ty => ([CPS.VAR v], Fn.id, env))
-          | cvt (value, env) = ([value], Fn.id, env)
-        fun collect (v, (vs, hdr, env)) =
-          let val (vs', hdr', env) = cvt (v, env)
-          in  (vs' @ vs, hdr' o hdr, env)
-          end
-    in  foldr collect ([], Fn.id, env) values
+              | Value ty => [CPS.VAR v])
+          | cvt value = [value]
+        fun collect (v, vs) = (cvt v @ vs)
+    in  foldr collect [] values
     end
 
   fun fixaccess' (env: env, values: CPS.value list)
     : CPS.value list * header * env =
-    let val (args, hdr, env) = expandval (env, values)
+    let val args = expandval (env, values)
         val () = if List.length args <> List.length values then
                    raise Fail "Expansion different length"
                  else
                    ()
-        val (hdr', env) = fixaccess (env, args)
-    in  (args, hdr o hdr', env)
+        val (hdr, env) = fixaccess (env, args)
+    in  (args, hdr, env)
     end
 
   fun fixaccess1' (env: env, value: CPS.value) =
@@ -579,11 +597,11 @@ end = struct
         val D.Closure { code, env } = LCPS.FunMap.lookup (repr, f)
         val (envs, envtys) =
           (case env
-             of (D.Boxed e | D.MutRecBox e) => ([varOfEnv e], [bogusTy])
+             of D.Boxed e => ([varOfEnv e], [bogusTy])
               | D.Flat slots => ListPair.unzipMap (slotToArg ctx) slots)
         val insideenv =
           (case env
-             of (D.Boxed e | D.MutRecBox e) => D.MutRecBox e
+             of D.Boxed e => D.Boxed e
               | D.Flat slots =>
                   let val slots =
                         ListPair.mapEq (fn (D.Null, v) => D.Var (v, bogusTy)
@@ -595,7 +613,7 @@ end = struct
         (* val accessMap = buildAccessMap (env, f) *)
         val env =
           let val ctx =  C.addfun (ctx, #2 f, code, insideenv, SOME f)
-              val accessMap = buildAccessMap ((ctx, dec, web, syn), f)
+              val accessMap = buildAccessMap ((ctx, dec, web, syn), f, functions)
               val ctx = C.newContext (ctx, accessMap)
               val ctx = foldl (fn (v, ctx) => C.addInScope (ctx, v)) ctx envs
               (* val ctx = List.foldl addproto ctx functions *)
@@ -632,8 +650,8 @@ end = struct
         in  LCPS.FIX (label, bindings, allocateHdr (close (env, exp)))
         end
     | close (env as (ctx, dec, web, syn), LCPS.APP (label, CPS.VAR f, args)) =
-        let val (args, hdr, env) = expandval (env, args)
-            val (hdr', env) = fixaccess (env, args)
+        let val args = expandval (env, args)
+            val (hdr, env) = fixaccess (env, args)
             val mklab = LCPS.mkLabel
             val label = CPS.LABEL o (#2: LCPS.function -> LCPS.lvar)
             val var = CPS.VAR
@@ -645,11 +663,11 @@ end = struct
               handle e => raise e
             val envargs =
               (case environ
-                 of (D.Boxed e | D.MutRecBox e) => [var (varOfEnv e)]
+                 of D.Boxed e => [var (varOfEnv e)]
                   | D.Flat slots => map (slotToVal ctx) slots)
-            val (hdr'', env) = fixaccess (env, envargs)
+            val (hdr', env) = fixaccess (env, envargs)
             val args = envargs @ args
-            val hdr = hdr o hdr' o hdr''
+            val hdr = hdr o hdr'
         in  case (code, knowncode)
               of (D.Direct f, _) =>
                    hdr (LCPS.APP (mklab (), label f, args))

@@ -94,7 +94,7 @@ end = struct
                                       | _ => CPS.FUNt)
                       val fields =
                         (case env
-                           of (D.Boxed _ | D.MutRecBox _) => [Var (v, ty)]
+                           of (D.Boxed _) => [Var (v, ty)]
                             | D.Flat slots =>
                                 List.mapPartiali
                                   (fn (_, (D.Code _ | D.Null)) => NONE
@@ -189,7 +189,7 @@ end = struct
                        let val heap = EnvID.Map.insert (heap, e, D.Record s)
                            val cl = D.Closure
                              { code=D.SelectFrom { env=0, selects=[0] },
-                               env=D.MutRecBox e }
+                               env=D.Boxed e }
                            val repr = LCPS.FunMap.insert (repr, f, cl)
                        in  (heap, repr)
                        end) (heap, repr) closures

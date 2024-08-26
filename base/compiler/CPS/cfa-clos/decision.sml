@@ -79,7 +79,6 @@ structure ClosureDecision = struct
                 | Defun of LCPS.lvar * LCPS.function list
 
   datatype environment = Boxed of EnvID.t
-                       | MutRecBox of EnvID.t
                        | Flat  of slot list
 
   datatype closure = Closure of { code: code, env: environment }
@@ -107,11 +106,9 @@ structure ClosureDecision = struct
     | codeToS (Defun (v, fs)) = concat ["#", LV.lvarName v]
 
   fun envToS (Boxed e) = EnvID.toString e
-    | envToS (MutRecBox e) = "[M]" ^ EnvID.toString e
     | envToS (Flat slots) = String.concatWithMap "," slotToString slots ^ ","
 
   fun envToSlots (Boxed e) = [EnvID e]
-    | envToSlots (MutRecBox e) = [EnvID e]
     | envToSlots (Flat slots) = slots
 
   fun closureToS (Closure {code, env}) =
