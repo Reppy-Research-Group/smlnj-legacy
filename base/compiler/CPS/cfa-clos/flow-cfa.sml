@@ -994,7 +994,7 @@ end = struct
       val result = thunk ()
       val stop = Time.now ()
       val diff = Time.- (stop, start)
-      val () = (print (str ^ Time.toString diff); print "\n")
+      (* val () = (print (str ^ Time.toString diff); print "\n") *)
     in
       result
     end
@@ -1003,7 +1003,6 @@ end = struct
     let val ctx = initialize (syn, cps)
         val () = timeit "flow-cfa " (fn () => run ctx)
         (* val () = Context.dumpFlowGraph ctx *)
-        val () = print ("num LVs :" ^ Int.toString (Syn.numVars syn) ^ "\n")
         (* val () = Context.dump ctx *)
         (* val () = Profiler.report () *)
         (* val () = Context.dumpClosureDependency ctx *)

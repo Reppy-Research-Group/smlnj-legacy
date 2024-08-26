@@ -138,43 +138,6 @@ end = struct
       handle e => (dump t; raise e)
   end
 
-  (* structure WebType = struct *)
-  (*   datatype ty = MLValue *)
-  (*               | UInt of int *)
-  (*               | UFloat of int *)
-
-  (*   fun ctyToTy (CPS.NUMt { tag=false, sz }) = UInt sz *)
-  (*     | ctyToTy (CPS.FLTt sz) = UFloat sz (1* FIXME: arch dependent *1) *)
-  (*     | ctyToTy _ = MLValue *)
-
-  (*   fun tyToCty MLValue = bogusTy *)
-  (*     | tyToCty (UInt sz) = NUMt { sz=sz, tag=false } *)
-  (*     | tyToCty (UFloat sz) = FLT sz *)
-
-  (*   type stencil = { expand: ty list } *)
-  (*   type t = { web: Web.t, stencil: stencil Web.Map.map } *)
-
-  (*   fun make (D.T { repr, allo, heap }, web: Web.t, syn: S.t) = *)
-  (*     let *)
-  (*       datatype ty' = Ty  of ty *)
-  (*                    | Var of int *)
-
-  (*       datatype con = Eq of ty' * ty' *)
-  (*                    | /\ of con * con *)
-  (*                    | Tr *)
-
-  (*       val count = ref 0 *)
-  (*       fun freshVar () = Var (!ref before ref := !ref + 1) *)
-
-  (*       fun initialize (webid, {defs, uses, polluted, kind}, *)
-  (*                       webmap: ty' vector Web.Map.map) = *)
-  (*         (case (polluted, kind) *)
-  (*            of (true, Web.User) => *)
-  (*                 let val types = #[Ty MLValue] *)
-  (*         let val f = Vector.sub (defs, 0) (1* should have at least 1 f *1) *)
-  (*             val Closure { code, env } = LCPS.FunMap.lookup (repr, f) *)
-  (* end *)
-
   structure C = Context
 
   type env = C.t * D.t * W.t * S.t
@@ -370,7 +333,6 @@ end = struct
               | Value _ => raise Fail "impossible")
           handle e => raise e
         val names = #1 (ListPair.unzipMap (slotToArg ctx) slots)
-        (* val slots = LCPS.FunMap.lookup (repr, f) *)
         val bases =
           ListPair.foldl (fn (name, slot, bases) =>
             (slot, { base=name, selects=[] }) :: bases) [] (names, slots)
@@ -389,7 +351,6 @@ end = struct
                      | (_, D.Boxed e) => raise Fail "Check this"
                      | _ => access
               end) LV.Map.empty muts
-
     in  dfs (bases, initial)
     end
 
@@ -495,25 +456,6 @@ end = struct
     in  (args, tys, (ctx, dec, web, syn))
     end
 
-  (* fun allocateMutRecBox (e as (ctx, D.T {heap, ...}, web, syn): env, box) *)
-  (*   : header * env = *)
-  (*   if C.isInScope (ctx, varOfEnv box) then *)
-  (*     (fn cexp => cexp, e) *)
-  (*   else *)
-  (*     let val (function, slots) = *)
-  (*           (case EnvID.Map.lookup (heap, box) *)
-  (*              of D.Record (D.Code function::slots) => (function, slots) *)
-  (*               | _ => raise Fail "mut rec box does not have a code pointer") *)
-  (*         val values = CPS.LABEL (#2 function) :: map (slotToVal ctx) slots *)
-  (*         val (hdr, (ctx, dec, web, syn)) = fixaccess (e, values) *)
-  (*         val fields = map (fn f => (LCPS.mkLabel (), f, CPS.OFFp 0)) values *)
-  (*         val name = varOfEnv box *)
-  (*         val hdr = fn cexp => hdr *)
-  (*           (LCPS.RECORD (LCPS.mkLabel (), CPS.RK_ESCAPE, fields, name, cexp)) *)
-  (*         val env = (C.addInScope (ctx, name), dec, web, syn) *)
-  (*     in  (hdr, env) *)
-  (*     end *)
-
   fun expandval (env: env, values: CPS.value list) : CPS.value list =
     let val (ctx, _, _, _) = env
         fun cvt (CPS.VAR v) =
@@ -585,13 +527,6 @@ end = struct
           true
     end
 
-  (* fun formalArg (name, ctx, D.Var (v, _)) = v *)
-  (*   | formalArg (name, ctx, D.Expand (v, i)) = *)
-  (*       formalArg (name, ctx, C.expansionOf (ctx, v, i)) *)
-  (*   | formalArg (name, ctx, D.EnvID _) = freshLV name *)
-  (*   | formalArg (name, ctx, D.Code v) = v *)
-  (*   | formalArg (name, ctx, D.Null) = freshLV name *)
-
   fun closefun (env: env, functions) (f as (fk, name, args, tys, body)) =
     let val (ctx, dec as D.T {repr, ...}, web, syn) = env
         val D.Closure { code, env } = LCPS.FunMap.lookup (repr, f)
@@ -608,15 +543,11 @@ end = struct
                                          | (s, _) => s) (slots, envs)
                   in  D.Flat slots
                   end)
-        (* val ctx = List.foldl addproto ctx functions *)
-        (* val env = (ctx, dec, web, syn) *)
-        (* val accessMap = buildAccessMap (env, f) *)
         val env =
           let val ctx =  C.addfun (ctx, #2 f, code, insideenv, SOME f)
               val accessMap = buildAccessMap ((ctx, dec, web, syn), f, functions)
               val ctx = C.newContext (ctx, accessMap)
               val ctx = foldl (fn (v, ctx) => C.addInScope (ctx, v)) ctx envs
-              (* val ctx = List.foldl addproto ctx functions *)
           in  (ctx, dec, web, syn)
           end
         val (args, tys, env) = expandargs (env, args, tys)
@@ -626,10 +557,9 @@ end = struct
           (case funkind (env, f)
              of CPS.KNOWN => (envs @ args, envtys @ tys)
               | _ => (freshLV name :: envs @ args, bogusTy :: envtys @ tys))
-(*         val (args, tys) = (freshLV name :: envs @ args, bogusTy :: envtys @ tys) *)
-        val () = app print ["IN FUNCTION ", LV.lvarName name, "\n"]
-        val () = C.dump (#1 env)
-        val () = print "\n"
+        (* val () = app print ["IN FUNCTION ", LV.lvarName name, "\n"] *)
+        (* val () = C.dump (#1 env) *)
+        (* val () = print "\n" *)
     in  (fk, name, args, tys, close (env, body))
     end
   and close (env, cexp as LCPS.FIX (label, bindings, exp)) =
@@ -643,10 +573,10 @@ end = struct
               end
             val env = foldl addproto env bindings
             val bindings = map (closefun (env, bindings)) bindings
-            val () = app print ["AFTER FIX ", String.concatWithMap ","
-            (LV.lvarName o #2) bindings, "\n"]
-            val () = C.dump (#1 env)
-            val () = print "\n"
+            (* val () = app print ["AFTER FIX ", String.concatWithMap "," *)
+            (* (LV.lvarName o #2) bindings, "\n"] *)
+            (* val () = C.dump (#1 env) *)
+            (* val () = print "\n" *)
         in  LCPS.FIX (label, bindings, allocateHdr (close (env, exp)))
         end
     | close (env as (ctx, dec, web, syn), LCPS.APP (label, CPS.VAR f, args)) =
@@ -767,8 +697,6 @@ end = struct
                             bogusTy::bogusTy::CPS.CNTt::cstys@tys)
                   end
               | _ => raise Fail "no return in top level")
-          val () = print (Int.toString (List.length args) ^ "\n")
-          val () = print (Int.toString (List.length tys) ^ "\n")
          val env = (ctx, dec, web, syn)
     in  (fk, name, args, tys, close (env, body))
     end
