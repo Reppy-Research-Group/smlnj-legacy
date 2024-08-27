@@ -460,7 +460,7 @@ functor MLRiscGen (
 	     * with a general purpose value expression.
 	     *)
     fun lookupGpRegTbl x = Tbl.lookup gpRegTbl x
-                           handle RegMap => (print (LambdaVar.lvarName x ^ " unbound");
+                           handle RegMap => (print (LambdaVar.lvarName x ^ " gp unbound");
                                              raise RegMap)
 
 	    (*
@@ -507,7 +507,9 @@ functor MLRiscGen (
 	     * The following function looks up the MLTREE expression associated
 	     * with a floating point value expression.
 	     *)
-	      val lookupFpRegTbl = Tbl.lookup fpRegTbl
+            fun lookupFpRegTbl v = Tbl.lookup fpRegTbl v
+                           handle RegMap => (print (LambdaVar.lvarName v ^ " fp unbound");
+                                             raise RegMap)
 	      fun fregbind (C.VAR v) = lookupFpRegTbl v
 		| fregbind _ = error "fregbind"
 
