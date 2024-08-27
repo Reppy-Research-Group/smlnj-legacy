@@ -271,12 +271,11 @@ end = struct
                             D.Var (freshLV v, bogusTy),
                             D.Var (freshLV v, bogusTy)],
                     NONE)
-               | CPS.FUNt =>
+               | _ =>
                    (Web.User,
                     D.SelectFrom { env=0, selects=[0] },
                     D.Flat [D.Var (v, bogusTy)],
-                    NONE)
-               | _ => raise Fail "Not a function" (* Not a function *)))
+                    NONE)))
 
   fun funkind (env as (_, dec, _, syn): env, function: LCPS.function) =
     let val (kind, name, _, _, _) = function
@@ -587,7 +586,10 @@ end = struct
             val var = CPS.VAR
             val (code, environ, knowncode, pkg) =
               (case C.protocolOf (ctx, f)
-                 of Value _ => raise Fail "calling a non-function"
+                 of Value _ => 
+                      let val (_, code, environ, knowncode) = webenv (env, f)
+                      in  (code, environ, knowncode, NONE)
+                      end
                   | Function { code, env, knowncode, pkg } =>
                       (code, env, knowncode, pkg))
               handle e => raise e
