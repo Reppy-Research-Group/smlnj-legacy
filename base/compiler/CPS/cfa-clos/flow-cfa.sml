@@ -891,7 +891,11 @@ end = struct
       val merge = Context.merge ctx
 
       fun propagate (/-- (function as (kind, name, args, tys, body))) =
-            (ListPair.appEq (add o fromType) (args, tys))
+            ((ListPair.appEq (add o fromType) (args, tys))
+             handle e as ListPair.UnequalLengths =>
+              (app print ["args=", String.concatWithMap "," LV.lvarName args,
+                          "tys=", String.concatWithMap "," CPSUtil.ctyToString
+                                  tys, "\n"]; raise e))
         | propagate (x >-> y) = merge (x, y)
         | propagate (--/ x) = forallValuesOf x escape
         | propagate (v --> x) =
@@ -901,7 +905,10 @@ end = struct
       and propagateValue (Function (func as (_, _, formals, _, _)), x) =
             forallUsesOf x
               (fn APP (_, f, args) =>
-                    if LV.same (x, varOf f) then
+                    if LV.same (x, varOf f)
+                      andalso List.length args = List.length formals then
+                      (* If there has been a cast, the number of arguments will
+                       * not match. This function can't be used here *)
                       ListPair.appEq (add o flowValue) (args, formals)
                     else ()
                 | SETTER (_, CPS.P.SETHDLR, _, _) => add (/-- func)
