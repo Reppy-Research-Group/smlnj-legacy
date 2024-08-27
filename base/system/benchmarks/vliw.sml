@@ -3670,9 +3670,9 @@ fun main(s:string list, env:string list) =
 val s = OS.FileSys.getDir()
 
 fun doit() = main(["foobar", "-ws9",
-		   s^"/benchmarks/DATA/ndotprod.s",
-		   s^"/benchmarks/DATA/tmp.s",
-		   s^"/benchmarks/DATA/cmp.s"],
+		   s^"/DATA/ndotprod.s",
+		   s^"/DATA/tmp.s",
+		   s^"/DATA/cmp.s"],
 		  nil)
 fun testit _ = ()
 end
