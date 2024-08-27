@@ -119,15 +119,23 @@ end = struct
         handle e => (print ("In " ^( String.concatWithMap "," (LV.lvarName o #2)
         (Vector.toList functions)) ^ "\n");raise  e)
         val (fv, envs, heap) =
-          if LV.Set.isEmpty ufv then
-             (fv, [], heap)
-          else
-             let val boxedE = EnvID.new ()
-                 val ufv = LV.Set.listItems ufv
-                 val heap = EnvID.Map.insert
-                             (heap, boxedE, D.RawBlock (ufv, CPS.RK_RAW64BLOCK))
-             in  (Env (boxedE, ufv) :: fv, [boxedE], heap)
-             end
+          let val (floats, ints) = LV.Set.partition (isFloat syn) ufv
+              fun add (rk, vs, fv, envs, heap) =
+                if LV.Set.isEmpty vs then
+                  (fv, envs, heap)
+                else
+                  let val boxedE = EnvID.new ()
+                      val vs = LV.Set.listItems vs
+                      val heap = EnvID.Map.insert
+                        (heap, boxedE, D.RawBlock (vs, rk))
+                  in  (Env (boxedE, vs) :: fv, boxedE :: envs, heap)
+                  end
+              val (fv, envs, heap) =
+                add (CPS.RK_RAWBLOCK, ints, fv, [], heap)
+              val (fv, envs, heap) =
+                add (CPS.RK_RAW64BLOCK, floats, fv, envs, heap)
+          in  (fv, envs, heap)
+          end
         fun isKnown (f: LCPS.function) =
           let val name = #2 f
               fun isCall (LCPS.APP (_, CPS.VAR v, _)) = LV.same (v, name)
