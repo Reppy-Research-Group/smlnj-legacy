@@ -279,9 +279,9 @@ CPS/cfa-clos/identifier-fn.sml
     (*          post: "Control.Elab.unusedWarn := w;")) *)
 (* CPS/cfa-clos/representation.sml *)
 CPS/cfa-clos/syntactic.sml
-    (setup: (pre: "val w = !Control.Elab.unusedWarn;\n\
-                  \val () = Control.Elab.unusedWarn := true\n;"
-             post: "Control.Elab.unusedWarn := w;"))
+    (* (setup: (pre: "val w = !Control.Elab.unusedWarn;\n\ *)
+    (*               \val () = Control.Elab.unusedWarn := true\n;" *)
+    (*          post: "Control.Elab.unusedWarn := w;")) *)
 (* CPS/cfa-clos/unchangedvar.sml *)
 (* CPS/cfa-clos/cfa/cfa.sig *)
 (* CPS/cfa-clos/cfa/0cfa.sml *)
@@ -295,9 +295,9 @@ CPS/cfa-clos/flow-cfa.sml
     (*               \val () = Control.ElabData.saveLvarNames := true\n;" *)
     (*          post: "Control.CG.printit := w;")) *)
 CPS/cfa-clos/labelled-cps.sml
-    (setup: (pre: "val w = !Control.Elab.unusedWarn;\n\
-                  \val () = Control.Elab.unusedWarn := true\n;"
-             post: "Control.Elab.unusedWarn := w;"))
+    (* (setup: (pre: "val w = !Control.Elab.unusedWarn;\n\ *)
+    (*               \val () = Control.Elab.unusedWarn := true\n;" *)
+    (*          post: "Control.Elab.unusedWarn := w;")) *)
 CPS/cfa-clos/dot-lang.sml
 CPS/cfa-clos/web.sml
 CPS/cfa-clos/transform.sml

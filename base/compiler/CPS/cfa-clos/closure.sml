@@ -64,6 +64,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       UnRebind.unrebind (LCPS.unlabelF lcps)
       (* Cheat.closeCPS cps *)
     end
+    handle e => raise e
 
   (* fun closeFix *)
 
