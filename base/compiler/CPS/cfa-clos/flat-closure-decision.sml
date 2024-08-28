@@ -186,11 +186,18 @@ end = struct
                in  (repr, allo, heap)
                end
            | _ => (* General mutual recursion *)
-               let val sharedE = EnvID.new ()
-                   val sharedV = map embed fv
-                   val heap = EnvID.Map.insert (heap, sharedE, D.Record sharedV)
+               let val (sharedE, heap) =
+                     (case fv
+                        of [] => ([], heap)
+                         | _ =>
+                             let val sharedE = EnvID.new ()
+                                 val sharedV = map embed fv
+                                 val heap = EnvID.Map.insert 
+                                   (heap, sharedE, D.Record sharedV)
+                             in  ([sharedE], heap)
+                             end)
                    fun clos (f as (_, name, _, _, _)) =
-                     (f, EnvID.wrap name, [D.Code f, D.EnvID sharedE])
+                     (f, EnvID.wrap name, D.Code f :: map D.EnvID sharedE)
                    val closures = Vector.map clos functions
                    val (heap, repr) =
                      Vector.foldl (fn ((f, e, s), (heap, repr)) =>
@@ -202,7 +209,7 @@ end = struct
                        in  (heap, repr)
                        end) (heap, repr) closures
                    val allo = Group.Map.insert
-                     (allo, group, envs @ (sharedE :: mapL #2 closures))
+                     (allo, group, envs @ sharedE @ mapL #2 closures)
                in  (repr, allo, heap)
                end
     end

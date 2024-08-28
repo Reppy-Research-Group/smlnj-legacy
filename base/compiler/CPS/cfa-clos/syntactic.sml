@@ -4,6 +4,7 @@ structure SyntacticInfo :> sig
 
   val calculate     : LabelledCPS.function -> t
   val typeof        : t -> LabelledCPS.lvar -> LabelledCPS.cty
+  (* defSite x is the enclosing function of x's defintion site *)
   val defSite       : t -> LabelledCPS.lvar -> LabelledCPS.function
   val useSites      : t -> LabelledCPS.lvar -> LabelledCPS.FunSet.set
   val usePoints     : t -> LabelledCPS.lvar -> LabelledCPS.Set.set
@@ -114,6 +115,7 @@ end = struct
                 | LCPS.APP (_, f, args) =>
                     (app (useVar e) (f :: args);
                      addVs (LV.Set.empty, f :: args))
+                     (* LV.Set.fromList (f :: args)) *)
                 | LCPS.RECORD (_, _, values, v, cexp) =>
                     let val used = map #2 values
                         val defd = map #1 values
@@ -138,7 +140,8 @@ end = struct
                 | LCPS.SETTER (_, _, args, cexp) =>
                     (app (useVar e) args; addVs (exp cexp, args))
                 | LCPS.PURE   (label, CPS.P.MAKEREF, values, x, ty, cexp) =>
-                    (* GROSS HACK *)
+                    (* HACK: We need an address for the ref cell. *)
+                    (* TODO: look into MKSPECIAL *)
                     (newVar' (label, CPSUtil.BOGt);
                      app (useVar e) values; newVar' (x, ty);
                      addVs (subtract (exp cexp, x), values))

@@ -78,7 +78,7 @@ structure ClosureDecision = struct
                 | SelectFrom of { env: int, selects: int list }
                 | Defun of LCPS.lvar * LCPS.function list
 
-  datatype environment = Boxed of EnvID.t
+  datatype environment = Boxed of EnvID.t (* FIXME: remove this *)
                        | Flat  of slot list
 
   datatype closure = Closure of { code: code, env: environment }

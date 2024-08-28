@@ -32,16 +32,22 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       (* val cps = #1 (FreeClose.freemapClose cps) *)
       (* val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n") *)
       val lcps = LabelledCPS.labelF cps
+      handle e => (print "1\n"; raise e)
       val syntactic = SyntacticInfo.calculate lcps
+      handle e => (print "2\n"; raise e)
       (* val () = SyntacticInfo.dump syntactic *)
       (* val callgraph = ZeroCFA.analyze (syntactic, lcps) *)
       val result = FlowCFA.analyze (syntactic, lcps)
+      handle e => (print "3\n"; raise e)
       val decision = FlatClosureDecision.produce (lcps, syntactic)
-      (* val () = ClosureDecision.dump (decision, syntactic) *)
+      handle e => (print "4\n"; raise e)
+      val () = ClosureDecision.dump (decision, syntactic)
       val web = Web.calculate (result, syntactic)
+      handle e => (print "5\n"; raise e)
       (* val () = Web.dump web *)
 
       val lcps = Transform.transform (lcps, decision, web, syntactic)
+      handle e => (print "6\n"; raise e)
 
       (* val () = print "RESULT:\n>>>>>>\n" *)
       (* val () = PPCps.printcps0 (LCPS.unlabelF lcps) *)
@@ -64,7 +70,11 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       UnRebind.unrebind (LCPS.unlabelF lcps)
       (* Cheat.closeCPS cps *)
     end
-    handle e => raise e
+    handle e => 
+    (let 
+     val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n")
+     in   raise e
+     end)
 
   (* fun closeFix *)
 

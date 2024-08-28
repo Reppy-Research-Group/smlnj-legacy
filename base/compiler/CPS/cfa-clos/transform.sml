@@ -15,12 +15,14 @@ end = struct
   val defunTy = CPS.NUMt { sz=Target.defaultIntSz, tag=true }
 
   datatype path = Path of { base: LV.lvar, selects: int list }
-                | Create of { function: LCPS.function, env: LV.lvar }
+                | Create of { function: LCPS.function, env: LV.lvar,
+                              fields: int list }
 
   fun pathToS (Path {base, selects}) =
         concat (LV.lvarName base :: map (fn i => "." ^ Int.toString i) selects)
-    | pathToS (Create {function, env}) =
-        concat ["{", LV.lvarName (#2 function), ",", LV.lvarName env, "}"]
+    | pathToS (Create {function, env, fields}) =
+        concat ["{", LV.lvarName (#2 function), ",", LV.lvarName env,
+                ":", String.concatWithMap "," Int.toString fields, "}"]
 
   fun mergePath (Path { base=b1, selects=s1 }, Path { base=b2, selects=s2 }) =
         if List.length s1 <= List.length s2 then
@@ -345,8 +347,17 @@ end = struct
                     of (D.SelectFrom _, D.Boxed e) =>
                          (* If the mutually recursive functions need a pointer,
                           * we create one from. *)
-                         LV.Map.insert (access, varOfEnv e,
-                           Create { function=f, env=List.hd names })
+                         let val envFields =
+                               (case EnvID.Map.lookup (heap, e)
+                                  of D.RawBlock _ => raise Fail "how?"
+                                   | D.Record slots =>
+                                       List.mapPartiali
+                                         (fn (i, D.Code _) => NONE
+                                           | (i, _) => SOME i) slots)
+                             val base = List.hd names
+                         in  LV.Map.insert (access, varOfEnv e,
+                               Create {function=g, env=base, fields=envFields})
+                         end
                      | (_, D.Boxed e) => raise Fail "Check this"
                      | _ => access
               end) LV.Map.empty muts
@@ -379,11 +390,11 @@ end = struct
                   end
         in  select selects base
         end
-    | pathToHdr (SOME (Create { function, env=base }), name, cty) =
-        let val fields = [
-              (LCPS.mkLabel (), CPS.LABEL (#2 function), CPS.OFFp 0),
-              (LCPS.mkLabel (), CPS.VAR base, CPS.SELp (1, CPS.OFFp 0))
-            ]
+    | pathToHdr (SOME (Create { function, env=base, fields=fs }), name, cty) =
+        let val fields = map (fn i =>
+              (LCPS.mkLabel (), CPS.VAR base, CPS.SELp (i, CPS.OFFp 0))) fs
+            val fields =
+              (LCPS.mkLabel (), CPS.LABEL (#2 function), CPS.OFFp 0) :: fields
         in  fn cexp =>
               LCPS.RECORD (LCPS.mkLabel (), CPS.RK_ESCAPE, fields, name, cexp)
         end
@@ -418,8 +429,9 @@ end = struct
         val (hdr, env as (ctx, dec, web, syn)) = fixaccess (env, fields)
         val name = varOfEnv e
         val fields = map (fn f => (LCPS.mkLabel (), f, CPS.OFFp 0)) fields
-        val () = if List.null fields then raise Fail "GC is not gonna like this"
-                                     else ()
+        val () = if List.null fields then
+                   (D.dump (dec, syn); raise Fail "GC is not gonna like this")
+                 else ()
         val hdr = fn cexp =>
           hdr (LCPS.RECORD (LCPS.mkLabel (), recKind, fields, name, cexp))
     in  (hdr, (C.addInScope (ctx, name), dec, web, syn))
@@ -586,7 +598,7 @@ end = struct
             val var = CPS.VAR
             val (code, environ, knowncode, pkg) =
               (case C.protocolOf (ctx, f)
-                 of Value _ => 
+                 of Value _ =>
                       let val (_, code, environ, knowncode) = webenv (env, f)
                       in  (code, environ, knowncode, NONE)
                       end
@@ -629,7 +641,6 @@ end = struct
                    let val call = LCPS.APP (mklab (), label f, label f :: args)
                    in  hdr call
                    end
-
                | (D.Defun _, _) => raise Fail "unimp"
         end
     | close (env as (ctx, dec, web, syn), LCPS.APP (label, _, args)) =
