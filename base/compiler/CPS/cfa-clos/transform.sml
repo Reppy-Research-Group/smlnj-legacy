@@ -346,7 +346,7 @@ end = struct
               in  case (code, env)
                     of (D.SelectFrom _, D.Boxed e) =>
                          (* If the mutually recursive functions need a pointer,
-                          * we create one from. *)
+                          * we create one from the base. *)
                          let val envFields =
                                (case EnvID.Map.lookup (heap, e)
                                   of D.RawBlock _ => raise Fail "how?"
