@@ -80,6 +80,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
 
   fun closeCPS cps =
     let
+      val () = print "[new] "
       (* val lcps = LabelledCPS.labelF cps *)
       (* val callgraph = ZeroCFA.analyze lcps *)
       (* val lifetime = Lifetime.analyze (lcps, callgraph) *)
