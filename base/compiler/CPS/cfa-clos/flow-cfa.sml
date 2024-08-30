@@ -16,77 +16,6 @@ end = struct
 
   exception Impossible of string
 
-  structure SipHash13 :> sig
-    type state
-
-    val new : unit -> state
-    val write : state * Word64.word -> state
-    val finalize : state -> Word64.word
-  end = struct
-    type state = {
-      v0: Word64.word,
-      v1: Word64.word,
-      v2: Word64.word,
-      v3: Word64.word
-    }
-    fun rotl (x, b) = Word64.orb (Word64.<< (x, b), Word64.>> (x, 0w64 - b))
-    fun compress ({v0, v1, v2, v3}: state) =
-      let val v0 = v0 + v1
-            val v1 = rotl (v1, 0w13)
-            val v1 = Word64.xorb (v1, v0)
-
-          val v0 = rotl (v0, 0w32)
-
-          val v2 = v2 + v3
-            val v3 = rotl (v3, 0w16)
-            val v3 = Word64.xorb (v3, v2)
-
-          val v0 = v0 + v3
-            val v3 = rotl (v3, 0w21)
-            val v3 = Word64.xorb (v3, v0)
-
-          val v2 = v2 + v1
-            val v1 = rotl (v1, 0w17)
-            val v1 = Word64.xorb (v1, v2)
-
-          val v2 = rotl (v2, 0w32)
-      in  {v0=v0, v1=v1, v2=v2, v3=v3}
-      end
-      fun cRounds state = compress state
-      fun dRounds state = compress (compress (compress state))
-      fun finalize ({v0, v1, v2, v3}: state) =
-        let val v2 = Word64.xorb (v2, 0wxff)
-            val {v0, v1, v2, v3} = dRounds {v0=v0, v1=v1, v2=v2, v3=v3}
-        in  Word64.xorb (Word64.xorb (Word64.xorb (v0, v1), v2), v3)
-        end
-      fun new () : state =
-        let val v0 = 0wx736f6d6570736575
-            val v1 = 0wx646f72616e646f6d
-            val v2 = 0wx6c7967656e657261
-            val v3 = 0wx7465646279746573
-        in  {v0=v0, v1=v1, v2=v2, v3=v3}
-        end
-
-      fun write ({v0, v1, v2, v3}: state, x: Word64.word) =
-        let val v3 = Word64.xorb (v3, x)
-            val {v0, v1, v2, v3} = cRounds {v0=v0, v1=v1, v2=v2, v3=v3}
-        in  {v0=Word64.xorb (v0, x), v1=v1, v2=v2, v3=v3}
-        end
-  end
-
-  fun hashMix (x: word) =
-    let val state = SipHash13.new ()
-        val state = SipHash13.write (state, Word.toLarge x)
-    in  Word.fromLarge (SipHash13.finalize state)
-    end
-
-  fun hashCombine (hash1: word, hash2: word) =
-    let val state = SipHash13.new ()
-        val state = SipHash13.write (state, Word.toLarge hash1)
-        val state = SipHash13.write (state, Word.toLarge hash2)
-    in  Word.fromLarge (SipHash13.finalize state)
-    end
-
   (* TODO: Feature request *)
   (* C++ Boost's hash_combine *)
   fun hashMix x =
@@ -103,18 +32,16 @@ end = struct
   fun hashCombine (hash1, hash2) =
     hashMix (hash1 + 0wx9e3779b9 + hash2)
 
-  fun oldHashCombine (hash1, hash2) =
+  fun _oldHashCombine (hash1, hash2) =
     (* C++ Boost's hash_combine *)
     Word.xorb (hash1, Word.+ (hash2,
                               (Word.+ (0wx9e3779b9,
                                        (Word.+ (Word.<< (hash1, 0w6),
                                                 Word.>> (hash1, 0w2)))))))
+
   structure LV = struct
     open LambdaVar
-    structure MonoSet = HashSetFn(struct
-      open Tbl.Key
-      (* val hashVal = hashMix o Word.fromInt o toId *)
-    end)
+    structure MonoSet = HashSetFn(Tbl.Key)
   end
 
   type lvar = LV.lvar
@@ -141,24 +68,6 @@ end = struct
                | Record   of int * lvar
                | Mutable  of lvar
                | Value    of LCPS.cty
-
-    (* fun hash v = *)
-    (*   let val funtag = 0w0 *)
-    (*       val rectag = 0w1 *)
-    (*       val muttag = 0w2 *)
-    (*       val valtag = 0w3 *)
-    (*       val hashvar = Word.fromInt o LV.toId *)
-    (*       fun hashTy (CPS.NUMt _) = 0w0 *)
-    (*         | hashTy (CPS.PTRt _) = 0w1 *)
-    (*         | hashTy (CPS.FUNt)   = 0w2 *)
-    (*         | hashTy (CPS.FLTt _) = 0w3 *)
-    (*         | hashTy (CPS.CNTt)   = 0w4 *)
-    (*   in  case v *)
-    (*         of Function f => hashMix (hashvar (#2 f)) *)
-    (*          | Record (i, v) => hashCombine (Word.fromInt i, hashvar v) *)
-    (*          | Mutable v => hashMix (hashvar v) *)
-    (*          | Value ty => hashMix (hashTy ty) *)
-    (*   end *)
 
     fun hash v =
       let val funtag = 0w0
