@@ -13,7 +13,7 @@
 
 [x] Decision invariant checker
 
-[ ] Transformation: decision representation, invariant checker
+[x] Transformation: decision representation, invariant checker
 
 [ ] Comments
 

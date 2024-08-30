@@ -27,26 +27,37 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
   (*     app p components *)
   (*   end *)
 
+  fun timeit str f x =
+    let
+      val start = Time.now ()
+      val result = f x
+      val stop = Time.now ()
+      val diff = Time.- (stop, start)
+      val () = (print (str ^ " " ^ Time.toString diff); print "\n")
+    in
+      result
+    end
+
   fun test cps =
     let
       (* val cps = #1 (FreeClose.freemapClose cps) *)
       (* val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n") *)
-      val lcps = LabelledCPS.labelF cps
+      val lcps = timeit "label" LabelledCPS.labelF cps
       handle e => (print "1\n"; raise e)
-      val syntactic = SyntacticInfo.calculate lcps
+      val syntactic = timeit "syntactic" SyntacticInfo.calculate lcps
       handle e => (print "2\n"; raise e)
       (* val () = SyntacticInfo.dump syntactic *)
       (* val callgraph = ZeroCFA.analyze (syntactic, lcps) *)
-      val result = FlowCFA.analyze (syntactic, lcps)
+      val result = timeit "flow-cfa" FlowCFA.analyze (syntactic, lcps)
       handle e => (print "3\n"; raise e)
-      val decision = FlatClosureDecision.produce (lcps, syntactic)
+      val decision = timeit "flat" FlatClosureDecision.produce (lcps, syntactic)
       handle e => (print "4\n"; raise e)
       (* val () = ClosureDecision.dump (decision, syntactic) *)
-      val web = Web.calculate (result, syntactic)
+      val web = timeit "web" Web.calculate (result, syntactic)
       handle e => (print "5\n"; raise e)
       (* val () = Web.dump web *)
 
-      val lcps = Transform.transform (lcps, decision, web, syntactic)
+      val lcps = timeit "transform" Transform.transform (lcps, decision, web, syntactic)
       handle e => (print "6\n"; raise e)
 
       (* val () = print "RESULT:\n>>>>>>\n" *)

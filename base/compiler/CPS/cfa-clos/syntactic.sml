@@ -28,7 +28,8 @@ end = struct
   structure LCPS = LabelledCPS
   structure LV   = LambdaVar
 
-  type var_info = { ty: LCPS.cty, def: LCPS.function, uses: LCPS.Set.set }
+  type var_info = { ty: LCPS.cty, def: LCPS.function, uses: LCPS.Set.set,
+                    knownfun: LCPS.function option }
   type fun_info = { binder: LCPS.function, fv: LV.Set.set, group: Group.t,
                     depth: int }
   type exp_info = { enclosing: LCPS.function }
@@ -66,15 +67,22 @@ end = struct
       fun prependGrp group = grps := group :: !grps
 
       fun newVar currF (var, ty) =
-            LV.Tbl.insert varTbl
-              (var, { ty=ty, def=currF, uses=LCPS.Set.empty })
+        LV.Tbl.insert varTbl
+          (var, { ty=ty, def=currF, uses=LCPS.Set.empty, knownfun=NONE })
+
+      fun newVarF currF (f as (kind, name, _, _, _)) =
+        let val ty = kindToCty kind
+        in  LV.Tbl.insert varTbl
+              (name, { ty=ty, def=currF, uses=LCPS.Set.empty, knownfun=SOME f })
+        end
+
       fun useVar exp (CPS.VAR var) =
-            let val { ty, def, uses } = LV.Tbl.lookup varTbl var
-                                        handle SyntacticInfo => (print
-                                        (LV.lvarName var ^ " missing\n");
-                                         raise SyntacticInfo)
+            let val { ty, def, uses, knownfun } = LV.Tbl.lookup varTbl var
+                  handle SyntacticInfo => 
+                  (print (LV.lvarName var ^ " missing\n"); raise SyntacticInfo)
                 val uses' = LCPS.Set.add (uses, exp)
-            in  LV.Tbl.insert varTbl (var, { ty=ty, def=def, uses=uses' })
+            in  LV.Tbl.insert varTbl (var, 
+                 { ty=ty, def=def, uses=uses', knownfun=knownfun })
             end
         | useVar _ _ = ()
 
@@ -96,14 +104,13 @@ end = struct
       and walkE (currF, depth) =
         let
           val newVar' = newVar currF
+          val newVarF' = newVarF currF
           fun exp e =
             (LCPS.Tbl.insert expTbl (e, { enclosing=currF });
              case e
                of LCPS.FIX (label, bindings, cexp) =>
                     let val names = map #2 bindings
-                        val () = app (fn (kind, name, _, _, _) =>
-                                        newVar' (name, kindToCty kind))
-                                     bindings
+                        val () = app newVarF' bindings
                         val () = prependGrp (Group.wrap label)
                         val fvs = map (walkF (currF, label, depth)) bindings
                         val fv = foldr LV.Set.union LV.Set.empty fvs
@@ -223,12 +230,14 @@ end = struct
       handle SyntacticInfo => (print (LV.lvarName v ^ " missing\n");
                                raise SyntacticInfo)
 
-  fun knownFun (t as (T { functions, lam0, ... })) v =
+  fun knownFun (t as (T { varTbl, lam0, ... })) v =
     if LV.same (#2 lam0, v) then
       SOME lam0
     else
       (* GROSS HACK *)
-      Vector.find (fn (_, name, _, _, _) => LV.same (name, v)) functions
+      #knownfun (LV.Tbl.lookup varTbl v)
+      handle SyntacticInfo => (print (LV.lvarName v ^ " missing\n");
+                               raise SyntacticInfo)
 
   fun binderOf (T { funTbl, lam0, ... }) f =
     if LV.same (#2 lam0, #2 f) then
@@ -273,8 +282,11 @@ end = struct
            p "; ";
            p ("fv: " ^ lst (map LV.lvarName (LV.Set.listItems fv)));
            p "\n")
-        fun pV (var, { ty, def, uses }) =
+        fun pV (var, { ty, def, uses, knownfun }) =
           (p ("var " ^ LV.lvarName var ^ CPSUtil.ctyToString ty ^ ": ");
+           (case knownfun
+              of NONE => ()
+               | SOME _ => p ("is known fun"));
            p ("defined in " ^ funName def ^ "; ");
            p ("used in " ^
               lst (map funName (LCPS.FunSet.listItems (enclosingFs (t, uses)))));
