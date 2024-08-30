@@ -32,7 +32,7 @@ end = struct
   fun hashCombine (hash1, hash2) =
     hashMix (hash1 + 0wx9e3779b9 + hash2)
 
-  fun _oldHashCombine (hash1, hash2) =
+  fun oldHashCombine_ (hash1, hash2) =
     (* C++ Boost's hash_combine *)
     Word.xorb (hash1, Word.+ (hash2,
                               (Word.+ (0wx9e3779b9,
@@ -62,6 +62,7 @@ end = struct
     val same : t * t -> bool
     val toString : t -> string
 
+    structure Set : ORD_SET where type Key.ord_key = t
     structure HashSet : MONO_HASH_SET where type Key.hash_key = t
   end = struct
     datatype t = Function of LCPS.function
@@ -101,11 +102,44 @@ end = struct
               | _ => false)
       | same _ = false
 
+    fun compare (Function f1, Function f2) = LV.compare (#2 f1, #2 f2)
+      | compare (Function _, _) = GREATER
+      | compare (_, Function _) = LESS
+      | compare (Record (i1, v1), Record (i2, v2)) =
+          (case LV.compare (v1, v2)
+             of EQUAL => Int.compare (i1, i2)
+              | order => order)
+      | compare (Record _, _) = GREATER
+      | compare (_, Record _) = LESS
+      | compare (Mutable v1, Mutable v2) = LV.compare (v1, v2)
+      | compare (Mutable _, _) = GREATER
+      | compare (_, Mutable _) = LESS
+      | compare (Value ty1, Value ty2) =
+          (case (ty1, ty2)
+             of (CPS.NUMt _, CPS.NUMt _) => EQUAL
+              | (CPS.NUMt _, _) => GREATER
+              | (_, CPS.NUMt _) => LESS
+              | (CPS.PTRt _, CPS.PTRt _) => EQUAL
+              | (CPS.PTRt _, _) => GREATER
+              | (_, CPS.PTRt _) => LESS
+              | (CPS.FUNt, CPS.FUNt) => EQUAL
+              | (CPS.FUNt, _) => GREATER
+              | (_, CPS.FUNt) => LESS
+              | (CPS.FLTt _, CPS.FLTt _) => EQUAL
+              | (CPS.FLTt _, _) => GREATER
+              | (_, CPS.FLTt _) => LESS
+              | (CPS.CNTt, CPS.CNTt) => EQUAL)
+
     fun toString (Function f) = LV.lvarName (#2 f) ^ "[f]"
       | toString (Record (i, v)) =
           concat ["{.", Int.toString i, " = ", LV.lvarName v, "} [R]"]
       | toString (Mutable v) = concat [LV.lvarName v, "[REF]"]
       | toString (Value cty) = CPSUtil.ctyToString cty
+
+    structure Set = RedBlackSetFn(struct
+      type ord_key = t
+      val compare = compare
+    end)
 
     structure HashSet = HashSetFn(struct
       type hash_key = t
@@ -910,7 +944,7 @@ end = struct
       val result = thunk ()
       val stop = Time.now ()
       val diff = Time.- (stop, start)
-      (* val () = (print (str ^ Time.toString diff); print "\n") *)
+      val () = (print (str ^ Time.toString diff); print "\n")
     in
       result
     end
