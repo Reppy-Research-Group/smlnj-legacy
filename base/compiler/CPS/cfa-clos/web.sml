@@ -63,44 +63,45 @@ end = struct
     let
       type item = (LCPS.lvar, LCPS.function) either
 
-      fun maximize ([], defs, uses, polluted) = (defs, uses, polluted)
-        | maximize (INL v :: todo', defs, uses, polluted) =
+      val funMap = LCPS.FunTbl.mkTable (S.numFuns syn, Fail "funmap")
+      val varMap = LV.Tbl.mkTable (S.numVars syn, Fail "varmap")
+
+      fun maximize ([], id, defs, uses, polluted) = (defs, uses, polluted)
+        | maximize (INL v :: todo', id, defs, uses, polluted) =
             if LV.Set.member (uses, v) then
-              maximize (todo', defs, uses, polluted)
+              maximize (todo', id, defs, uses, polluted)
             else
               (case lookup v
                  of NONE => (* v is dead, can this even be possible? *)
                       raise Fail "Impossible dead variable in a web"
                   | SOME { known, unknown } =>
                       let val uses = LV.Set.add (uses, v)
+                          val () = LV.Tbl.insert varMap (v, id)
                           val polluted = polluted orelse unknown
-                      in  maximize (map INR known @ todo', defs, uses, polluted)
+                      in  maximize (map INR known @ todo',
+                                    id, defs, uses, polluted)
                       end)
-        | maximize (INR f :: todo', defs, uses, polluted) =
+        | maximize (INR f :: todo', id, defs, uses, polluted) =
             if LCPS.FunSet.member (defs, f) then
-              maximize (todo', defs, uses, polluted)
+              maximize (todo', id, defs, uses, polluted)
             else
               let val { known, escape } = flow f
                   val defs = LCPS.FunSet.add (defs, f)
+                  val () = LCPS.FunTbl.insert funMap (f, id)
                   val polluted = polluted orelse escape
-              in  maximize (map INL known @ todo', defs, uses, polluted)
+              in  maximize (map INL known @ todo', id, defs, uses, polluted)
               end
-
-      val funMap = LCPS.FunTbl.mkTable (1024, Fail "funmap")
-      val varMap = LV.Tbl.mkTable (1024, Fail "varmap")
 
       fun processFun (f, (length, webs: info list)) =
         if LCPS.FunTbl.inDomain funMap f then
           (length, webs)
         else
-          let val web as (defs, uses, polluted) =
-                maximize ([INR f], LCPS.FunSet.empty, LV.Set.empty, false)
+          let val id = length
+              val web as (defs, uses, polluted) =
+                maximize ([INR f], id, LCPS.FunSet.empty, LV.Set.empty, false)
               val defs = LCPS.FunSet.toList defs and uses = LV.Set.toList uses
               val kind =
                 (case #1 (List.hd defs) of CPS.CONT => Cont | _ => User)
-              val id = length
-              val () = List.app (fn f => LCPS.FunTbl.insert funMap (f, id)) defs
-              val () = List.app (fn v => LV.Tbl.insert varMap (v, id)) uses
               val web = { defs=Vector.fromList defs, uses=Vector.fromList uses,
                           polluted=polluted, kind=kind }
           in  (length + 1, web :: webs)
@@ -108,11 +109,7 @@ end = struct
       val (length, webs) = Vector.foldl processFun (0, []) (S.functions syn)
       val webs = Vector.fromList (List.rev webs)
     in
-      T {
-        webs=webs,
-        funMap=funMap,
-        varMap=varMap
-      }
+      T { webs=webs, funMap=funMap, varMap=varMap }
     end
 
   fun webOfVar (T { varMap, ... }, v) = LV.Tbl.find varMap v
