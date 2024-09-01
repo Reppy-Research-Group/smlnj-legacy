@@ -25,13 +25,14 @@ end = struct
   fun isMLValue syn v =
     (not (isUntaggedInt syn v)) andalso (not (isFloat syn v))
 
-  datatype fv = Var of LV.lvar * CPS.cty
-              | CS  of LV.lvar * int * CPS.cty
-              | Env of D.EnvID.t * LV.lvar list
+  type lifetime = int * int
+  datatype fv = Var of LV.lvar * CPS.cty * lifetime
+              | CS  of LV.lvar * int * CPS.cty * lifetime
+              | Env of D.EnvID.t * lifetime
 
-  fun embed (Var (v, ty)) = D.Var (v, ty)
-    | embed (CS (v, i, ty)) = D.Expand (v, i, ty)
-    | embed (Env (e, _)) = D.EnvID e
+  fun embed (Var (v, ty, _)) = D.Var (v, ty)
+    | embed (CS (v, i, ty, _)) = D.Expand (v, i, ty)
+    | embed (Env (e, lt)) = D.EnvID e
 
   val fvToS = D.slotToString o embed
 
@@ -43,34 +44,24 @@ end = struct
         | choose [x, y]    = ([embed x, embed y, D.Null], [])
         | choose [x, y, z] = ([embed x, embed y, embed z], [])
         | choose (x::y::z::rest) = ([embed x, embed y], map embed (z :: rest))
+      val depthOf = S.depthOf syn and useSites = S.useSites syn
       fun mergeLT (f, NONE) =
-            let val depth = S.depthOf syn f
+            let val depth = depthOf f
             in  SOME (depth, depth)
             end
         | mergeLT (f, SOME (fut, lut)) =
-            let val depth = S.depthOf syn f
+            let val depth = depthOf f
             in  SOME (Int.min (fut, depth), Int.max (lut, depth))
             end
-      fun lifetimeOf (Var (v, _)) =
-            let val fs = S.useSites syn v
-                val lifetime = LCPS.FunSet.foldl mergeLT NONE fs
-            in  Option.valOf lifetime
-                (* v is free in a function, so useSite cannot be empty. *)
-            end
-        | lifetimeOf (CS (v, _, _)) =
+      fun lifetimeOf (Var (_, _, lt)) = lt
+        | lifetimeOf (CS (v, _, _, lt)) =
             (case returnCont
                of SOME c => if LV.same (v, c) then
                               (~1, ~1) (* Top priority *)
                             else
-                              lifetimeOf (Var (v, CPS.CNTt))
-                | NONE => lifetimeOf (Var (v, CPS.CNTt)))
-        | lifetimeOf (Env (e, vs)) =
-            let val fs = foldl
-                  (fn (v, fs) => LCPS.FunSet.union (S.useSites syn v, fs))
-                  LCPS.FunSet.empty vs
-                val lifetime = LCPS.FunSet.foldl mergeLT NONE fs
-            in  Option.valOf lifetime (* vs is non-empty *)
-            end
+                              lt
+                | NONE => lt)
+        | lifetimeOf (Env (_, lt)) = lt
       val vs = map (fn v => (v, lifetimeOf v)) vs
       fun gt ((v, (fut1, lut1)), (w, (fut2, lut2)))=
         if lut1 = lut2 then fut2 > fut1 else lut1 > lut2
@@ -84,51 +75,60 @@ end = struct
 
   fun trueFV (fv, syn, repr) =
     let val ty = CPS.PTRt CPS.VPT
-        fun require v =
+        fun require (v, lifetime) =
           (case S.knownFun syn v
              of SOME f =>
                   let val D.Closure {code, env} = LCPS.FunMap.lookup (repr, f)
-                      handle e => (print (LV.lvarName v ^ " trying\n"); raise e)
                       val funty = (case #1 f
                                      of (CPS.KNOWN_CONT | CPS.CONT) => CPS.CNTt
                                       | _ => CPS.FUNt)
                       val fields =
                         (case env
-                           of (D.Boxed _) => [Var (v, ty)]
+                           of (D.Boxed _) => [Var (v, ty, lifetime)]
                             | D.Flat slots =>
                                 List.mapPartiali
                                   (fn (_, (D.Code _ | D.Null)) => NONE
-                                    | (i, slot) => SOME (CS (v, i, ty))) slots)
+                                    | (i, slot) =>
+                                        SOME (CS (v, i, ty, lifetime))) slots)
                       (* NEVER needs to close over the code for a known fun *)
                   in  fields
                   end
               | NONE =>
                   (case S.typeof syn v
                      of CPS.CNTt =>
-                          [Var (v, CPS.CNTt),
-                           CS (v, 0, ty), CS (v, 1, ty), CS (v, 2, ty)]
-                      | ty => [Var (v, ty)]))
+                          [Var (v, CPS.CNTt, lifetime),
+                           CS (v, 0, ty, lifetime), CS (v, 1, ty, lifetime),
+                           CS (v, 2, ty, lifetime)]
+                      | ty => [Var (v, ty, lifetime)]))
         fun collect (v, vs) = require v @ vs
-    in  LV.Set.foldr collect [] fv
+    in  foldr collect [] fv
     end
+
+  fun joinLT [] = raise Fail "No LT"
+    | joinLT (lt::lts) =
+        foldl 
+          (fn ((fut1, lut1), (fut2, lut2)) => 
+            (Int.min (fut1, fut2), Int.max (lut1, lut2))) lt lts
 
   fun collect syn (group, (repr, allo, heap)) =
     let val functions = S.groupFun syn group
-        val (fv, ufv) = LV.Set.partition (isMLValue syn) (S.groupFV syn group)
+        val fv : (LV.lvar * lifetime) list =
+          LV.Map.listItemsi (S.groupFV syn group)
+        val (fv, ufv) = List.partition (isMLValue syn o #1) fv
         val fv = trueFV (fv, syn, repr)
         handle e => (print ("In " ^( String.concatWithMap "," (LV.lvarName o #2)
         (Vector.toList functions)) ^ "\n");raise  e)
         val (fv, envs, heap) =
-          let val (floats, ints) = LV.Set.partition (isFloat syn) ufv
+          let val (floats, ints) = List.partition (isFloat syn o #1) ufv
               fun add (rk, vs, fv, envs, heap) =
-                if LV.Set.isEmpty vs then
+                if List.null vs then
                   (fv, envs, heap)
                 else
                   let val boxedE = EnvID.new ()
-                      val vs = LV.Set.listItems vs
+                      val (vs, lts) = ListPair.unzip vs
                       val heap = EnvID.Map.insert
                         (heap, boxedE, D.RawBlock (vs, rk))
-                  in  (Env (boxedE, vs) :: fv, boxedE :: envs, heap)
+                  in  (Env (boxedE, joinLT lts) :: fv, boxedE :: envs, heap)
                   end
               val (fv, envs, heap) =
                 add (CPS.RK_RAWBLOCK, ints, fv, [], heap)
@@ -143,7 +143,6 @@ end = struct
               val uses = S.usePoints syn name
           in  LCPS.Set.all isCall uses
           end
-
     in  case functions
           of #[f as (CPS.CONT, name, _, _, _)] =>
                (case spill syn (group, fv) of (callees, []) =>

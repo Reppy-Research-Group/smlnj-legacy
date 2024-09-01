@@ -577,7 +577,8 @@ end = struct
             else
               NODE (LV.lvarName v, [])
           fun pf (function as (_, name, _, _, _), dot) =
-            let val fv = LV.Set.subtract (Syn.fv syn function, name)
+            let val fv = LV.Set.subtract (
+                  LV.Set.fromList (LV.Map.listKeys (Syn.fv syn function)), name)
                 val self = fromF (function, fv)
                 fun dofv (v, dot) =
                   (case LVT.find store v

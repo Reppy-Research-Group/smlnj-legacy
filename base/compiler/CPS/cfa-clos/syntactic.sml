@@ -10,10 +10,10 @@ structure SyntacticInfo :> sig
   val usePoints     : t -> LabelledCPS.lvar -> LabelledCPS.Set.set
   val knownFun      : t -> LabelledCPS.lvar -> LabelledCPS.function option
   val binderOf      : t -> LabelledCPS.function -> LabelledCPS.function option
-  val fv            : t -> LabelledCPS.function -> LambdaVar.Set.set
+  val fv            : t -> LabelledCPS.function -> (int * int) LambdaVar.Map.map
   val groupOf       : t -> LabelledCPS.function -> Group.t
   val depthOf       : t -> LabelledCPS.function -> int
-  val groupFV       : t -> Group.t -> LambdaVar.Set.set
+  val groupFV       : t -> Group.t -> (int * int) LambdaVar.Map.map
   val groupFun      : t -> Group.t -> LabelledCPS.function vector
   val groupExp      : t -> Group.t -> LabelledCPS.cexp
   val enclosing     : t -> LabelledCPS.cexp -> LabelledCPS.function
@@ -28,12 +28,13 @@ end = struct
   structure LCPS = LabelledCPS
   structure LV   = LambdaVar
 
+  type lifetime = int * int
   type var_info = { ty: LCPS.cty, def: LCPS.function, uses: LCPS.Set.set,
                     knownfun: LCPS.function option }
-  type fun_info = { binder: LCPS.function, fv: LV.Set.set, group: Group.t,
-                    depth: int }
+  type fun_info = { binder: LCPS.function, fv: lifetime LV.Map.map,
+                    group: Group.t, depth: int }
   type exp_info = { enclosing: LCPS.function }
-  type grp_info = { functions: LCPS.function vector, fv: LV.Set.set,
+  type grp_info = { functions: LCPS.function vector, fv: lifetime LV.Map.map,
                     exp: LCPS.cexp }
 
   datatype t = T of {
@@ -49,12 +50,12 @@ end = struct
   fun kindToCty (CPS.CONT | CPS.KNOWN_CONT) = CPS.CNTt
     | kindToCty _ = CPS.FUNt
 
-  val add = LV.Set.add
-  val subtract = LV.Set.subtract
-  fun subtracts (set, xs) = foldr LV.Set.subtract' set xs
-  fun addV (m, CPS.VAR v) = add (m, v)
-    | addV (m, _) = m
-  fun addVs (m, vs) = foldr (fn (v, m) => addV (m, v)) m vs
+  (* val add = LV.Set.add *)
+  (* val subtract = LV.Set.subtract *)
+  (* fun subtracts (set, xs) = foldr LV.Set.subtract' set xs *)
+  (* fun addV (m, CPS.VAR v) = add (m, v) *)
+  (*   | addV (m, _) = m *)
+  (* fun addVs (m, vs) = foldr (fn (v, m) => addV (m, v)) m vs *)
 
   exception SyntacticInfo
   fun calculate (cps: LCPS.function) : t =
@@ -78,10 +79,10 @@ end = struct
 
       fun useVar exp (CPS.VAR var) =
             let val { ty, def, uses, knownfun } = LV.Tbl.lookup varTbl var
-                  handle SyntacticInfo => 
+                  handle SyntacticInfo =>
                   (print (LV.lvarName var ^ " missing\n"); raise SyntacticInfo)
                 val uses' = LCPS.Set.add (uses, exp)
-            in  LV.Tbl.insert varTbl (var, 
+            in  LV.Tbl.insert varTbl (var,
                  { ty=ty, def=def, uses=uses', knownfun=knownfun })
             end
         | useVar _ _ = ()
@@ -91,6 +92,21 @@ end = struct
            (Group.wrap label,
             { functions=Vector.fromList bindings, fv=fv, exp=exp }))
 
+      fun mergeLT ((fut1, lut1), (fut2, lut2)) =
+        (Int.min (fut1, fut2), Int.max(lut1, lut2))
+
+      val union = LV.Map.unionWith mergeLT
+      fun add (m, v, depth) = LV.Map.insertWith mergeLT (m, v, (depth, depth))
+      fun subtract (m, v) =
+        (case LV.Map.findAndRemove (m, v)
+           of NONE => m
+            | SOME (m', _) => m')
+      fun subtracts (m, xs) = foldl (fn (v, m) => subtract (m, v)) m xs
+      fun addV (m, CPS.VAR v, depth) = add (m, v, depth)
+        | addV (m, _, _) = m
+      fun addVs (m, vs, depth) =
+        foldl (fn (v, m) => addV (m, v, depth)) m vs
+
       fun walkF
         (parent, label, depth)
         (function as (kind, name, args, tys, body)) =
@@ -98,7 +114,7 @@ end = struct
             val fv = subtracts (walkE (function, depth + 1) body, args)
         in  LCPS.FunTbl.insert funTbl
               (function, { binder=parent, fv=fv, group=Group.wrap label,
-                           depth=depth });
+                           depth=depth }: fun_info);
             fv
         end
       and walkE (currF, depth) =
@@ -113,15 +129,15 @@ end = struct
                         val () = app newVarF' bindings
                         val () = prependGrp (Group.wrap label)
                         val fvs = map (walkF (currF, label, depth)) bindings
-                        val fv = foldr LV.Set.union LV.Set.empty fvs
+                        val fv = foldr union LV.Map.empty fvs
                         val () =
                           newGrp (label, bindings, subtracts (fv, names), e)
                         val fv' = exp cexp
-                    in  subtracts (LV.Set.union (fv', fv), names)
+                    in  subtracts (union (fv', fv), names)
                     end
                 | LCPS.APP (_, f, args) =>
                     (app (useVar e) (f :: args);
-                     addVs (LV.Set.empty, f :: args))
+                     addVs (LV.Map.empty, f :: args, depth))
                      (* LV.Set.fromList (f :: args)) *)
                 | LCPS.RECORD (_, _, values, v, cexp) =>
                     let val used = map #2 values
@@ -129,37 +145,37 @@ end = struct
                     in  newVar' (v, CPS.PTRt (CPS.RPT (List.length values)));
                         app (fn v => newVar' (v, CPSUtil.BOGt)) defd;
                         app (useVar e) used;
-                        addVs (subtract (exp cexp, v), used)
+                        addVs (subtract (exp cexp, v), used, depth)
                     end
                 | LCPS.SELECT (_, _, arg, x, ty, cexp) =>
                     (useVar e arg; newVar' (x, ty);
-                     addV (subtract (exp cexp, x), arg))
+                     addV (subtract (exp cexp, x), arg, depth))
                 | LCPS.OFFSET _ => raise Fail "offset"
                 | LCPS.SWITCH (_, value, _, branches) =>
                     let val fvs = map exp branches
-                        val fv  = foldr LV.Set.union LV.Set.empty fvs
-                    in  useVar e value; addV (fv, value)
+                        val fv  = foldl union LV.Map.empty fvs
+                    in  useVar e value; addV (fv, value, depth)
                     end
                 | LCPS.BRANCH (_, _, args, _, expT, expF) =>
-                    let val fv = LV.Set.union (exp expT, exp expF)
-                    in  app (useVar e) args; addVs (fv, args)
+                    let val fv = union (exp expT, exp expF)
+                    in  app (useVar e) args; addVs (fv, args, depth)
                     end
                 | LCPS.SETTER (_, _, args, cexp) =>
-                    (app (useVar e) args; addVs (exp cexp, args))
+                    (app (useVar e) args; addVs (exp cexp, args, depth))
                 | LCPS.PURE   (label, CPS.P.MAKEREF, values, x, ty, cexp) =>
                     (* HACK: We need an address for the ref cell. *)
                     (* TODO: look into MKSPECIAL *)
                     (newVar' (label, CPSUtil.BOGt);
                      app (useVar e) values; newVar' (x, ty);
-                     addVs (subtract (exp cexp, x), values))
+                     addVs (subtract (exp cexp, x), values, depth))
                 | (LCPS.LOOKER (_, _, values, x, ty, cexp) |
                    LCPS.ARITH  (_, _, values, x, ty, cexp) |
                    LCPS.PURE   (_, _, values, x, ty, cexp)) =>
                     (app (useVar e) values; newVar' (x, ty);
-                     addVs (subtract (exp cexp, x), values))
+                     addVs (subtract (exp cexp, x), values, depth))
                 | LCPS.RCC (_, _, _, _, args, returns, cexp) =>
                     (app (useVar e) args; app newVar' returns;
-                     addVs (subtracts (exp cexp, map #1 returns), args)))
+                     addVs (subtracts (exp cexp, map #1 returns), args, depth)))
         in
           exp
         end
@@ -246,7 +262,7 @@ end = struct
       SOME (#binder (LCPS.FunTbl.lookup funTbl f))
   fun fv (T { funTbl, lam0, ... }) f =
     if LV.same (#2 lam0, #2 f) then
-      LV.Set.empty
+      LV.Map.empty
     else
       #fv (LCPS.FunTbl.lookup funTbl f)
   fun groupOf (T { funTbl, lam0, ... }) f =
@@ -280,7 +296,7 @@ end = struct
                       " at depth ", Int.toString depth, ": "]);
            p ("inside " ^ funName binder);
            p "; ";
-           p ("fv: " ^ lst (map LV.lvarName (LV.Set.listItems fv)));
+           p ("fv: " ^ lst (map LV.lvarName (LV.Map.listKeys fv)));
            p "\n")
         fun pV (var, { ty, def, uses, knownfun }) =
           (p ("var " ^ LV.lvarName var ^ CPSUtil.ctyToString ty ^ ": ");
