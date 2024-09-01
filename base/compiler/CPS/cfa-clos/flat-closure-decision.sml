@@ -106,8 +106,8 @@ end = struct
 
   fun joinLT [] = raise Fail "No LT"
     | joinLT (lt::lts) =
-        foldl 
-          (fn ((fut1, lut1), (fut2, lut2)) => 
+        foldl
+          (fn ((fut1, lut1), (fut2, lut2)) =>
             (Int.min (fut1, fut2), Int.max (lut1, lut2))) lt lts
 
   fun collect syn (group, (repr, allo, heap)) =
@@ -191,7 +191,7 @@ end = struct
                          | _ =>
                              let val sharedE = EnvID.new ()
                                  val sharedV = map embed fv
-                                 val heap = EnvID.Map.insert 
+                                 val heap = EnvID.Map.insert
                                    (heap, sharedE, D.Record sharedV)
                              in  ([sharedE], heap)
                              end)
