@@ -141,60 +141,58 @@ end = struct
           in  elem
           end
 
-        fun initF (f, flowInfo: FlowCFA.variables) : unit =
+        fun initF (f, {known, escape}: FlowCFA.variables)
+          : info' UF.elem * LCPS.lvar list =
           let val (kind, stdweb) =
                 (case #1 f of CPS.CONT => (Cont, stdcntWeb)
                             | _ => (User, stdfunWeb))
               val web =
-                if #escape flowInfo then
+                if escape then
                   (addstdF (f, stdweb); stdweb)
                 else
                   mkSingleF (f, kind)
-          in  LCPS.FunTbl.insert funTbl (f, web)
+          in  LCPS.FunTbl.insert funTbl (f, web); (web, known)
           end
 
-        fun initV (v, flowInfo: FlowCFA.functions) : unit =
+        fun initV (v, {known, unknown}: FlowCFA.functions)
+          : info' UF.elem * LCPS.function list =
           let val (kind, stdweb) =
                 (case S.typeof syn v
                    of CPS.CNTt => (Cont, stdcntWeb)
                     | _ => (User, stdfunWeb))
               val web =
-                if #unknown flowInfo then
+                if unknown then
                   (addstdV (v, stdweb); stdweb)
                 else
                   mkSingleV (v, kind)
-          in  LV.Tbl.insert varTbl (v, web)
+          in  LV.Tbl.insert varTbl (v, web); (web, known)
           end
 
         val union = UF.merge mergeInfo
 
         fun initialize () =
-          (S.appF syn (fn f => initF (f, flow f));
-           S.appV syn (fn v => (case lookup v
-                                  of NONE => ()
-                                   | SOME info => initV (v, info))))
+          let val fs = S.foldF syn (fn (f, acc) => initF (f, flow f) :: acc) []
+              val vs = S.foldV syn (fn (v, acc) =>
+                         (case lookup v
+                            of NONE => acc
+                             | SOME info => initV (v, info) :: acc)) []
+          in  (fs, vs)
+          end
 
         fun lookupF f = LCPS.FunTbl.lookup funTbl f
         fun lookupV v = LV.Tbl.lookup varTbl v
 
-        fun processF f =
-          let val { known, escape } = flow f
-              val fcell = lookupF f
-              val _ = foldl (fn (v, c) => union (lookupV v, c)) fcell known
+        fun processF (fcell, known) =
+          let val _ = foldl (fn (v, c) => union (lookupV v, c)) fcell known
           in  ()
           end
 
-        fun processV v =
-          (case lookup v
-             of SOME { known, unknown } =>
-                  let val vcell = lookupV v
-                      val _ =
-                        foldl (fn (f, c) => union (lookupF f, c)) vcell known
-                  in  ()
-                  end
-              | NONE => ())
+        fun processV (vcell, known) =
+          let val _ = foldl (fn (f, c) => union (lookupF f, c)) vcell known
+          in  ()
+          end
 
-        fun build () = (S.appF syn processF; S.appV syn processV)
+        fun build (fs, vs) = (app processF fs; app processV vs)
 
         fun finalize () =
           let fun convertWeb { defs, uses, polluted, kind } : info =
@@ -252,7 +250,11 @@ end = struct
                LV.Tbl.map removeCell varTbl)
           end
 
-        val (webs, funMap, varMap) = (initialize (); build (); finalize ())
+        val (webs, funMap, varMap) =
+          let val (fs, vs) = timeit "init" initialize ()
+              val () = timeit "build" build (fs, vs);
+          in  timeit "final" finalize ()
+          end
     in  T { webs=webs, funMap=funMap, varMap=varMap }
     end
 

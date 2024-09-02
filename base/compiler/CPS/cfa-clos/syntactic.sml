@@ -20,7 +20,9 @@ structure SyntacticInfo :> sig
   val enclosingUser : t -> LabelledCPS.cexp -> LabelledCPS.function
   val returnCont    : t -> LabelledCPS.cexp -> LabelledCPS.lvar option
   val appF          : t -> (LabelledCPS.function -> unit) -> unit
+  val foldF         : t -> (LabelledCPS.function * 'a -> 'a) -> 'a -> 'a
   val appV          : t -> (LabelledCPS.lvar -> unit) -> unit
+  val foldV         : t -> (LabelledCPS.lvar * 'a -> 'a) -> 'a -> 'a
   val functions     : t -> LabelledCPS.function vector
   val groups        : t -> Group.t vector
   val numVars       : t -> int
@@ -285,6 +287,10 @@ end = struct
   fun appF (T { funTbl, ... }) f =
     LCPS.FunTbl.appi (fn (function, _) => f function) funTbl
   fun appV (T { varTbl, ... }) f = LV.Tbl.appi (fn (v, _) => f v) varTbl
+  fun foldF (T { funTbl, ... }) f zero =
+    LCPS.FunTbl.foldi (fn (function, _, acc) => f (function, acc)) zero funTbl
+  fun foldV (T { varTbl, ... }) f zero =
+    LV.Tbl.foldi (fn (v, _, acc) => f (v, acc)) zero varTbl
   fun functions (T { functions, ... }) = functions
   fun groups (T { groups, ... }) = groups
   fun numVars (T { varTbl, ... }) = LV.Tbl.numItems varTbl
