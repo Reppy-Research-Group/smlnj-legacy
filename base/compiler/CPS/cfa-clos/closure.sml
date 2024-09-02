@@ -55,7 +55,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       (* val () = ClosureDecision.dump (decision, syntactic) *)
       val web = timeit "web" Web.calculate (result, syntactic)
       handle e => (print "5\n"; raise e)
-      (* val () = Web.dump web *)
+      val () = Web.dump web
 
       val lcps = timeit "transform" Transform.transform (lcps, decision, web, syntactic)
       handle e => (print "6\n"; raise e)
@@ -83,7 +83,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
     end
     handle e => 
     (let 
-     val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n")
+     (* val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n") *)
      in   raise e
      end)
 

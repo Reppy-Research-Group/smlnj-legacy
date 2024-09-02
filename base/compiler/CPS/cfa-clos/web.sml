@@ -77,6 +77,10 @@ end = struct
                   | SOME { known, unknown } =>
                       let val uses = LV.Set.add (uses, v)
                           val () = LV.Tbl.insert varMap (v, id)
+                          val () =
+                          (case LV.Tbl.find varMap v
+                             of SOME _ => raise Fail "Double v"
+                              | NONE => ())
                           val polluted = polluted orelse unknown
                       in  maximize (map INR known @ todo',
                                     id, defs, uses, polluted)
@@ -87,6 +91,10 @@ end = struct
             else
               let val { known, escape } = flow f
                   val defs = LCPS.FunSet.add (defs, f)
+                  val () =
+                  (case LCPS.FunTbl.find funMap f
+                     of SOME _ => raise Fail "Double f"
+                      | NONE => ())
                   val () = LCPS.FunTbl.insert funMap (f, id)
                   val polluted = polluted orelse escape
               in  maximize (map INL known @ todo', id, defs, uses, polluted)
@@ -106,8 +114,146 @@ end = struct
                           polluted=polluted, kind=kind }
           in  (length + 1, web :: webs)
           end
-      val (length, webs) = Vector.foldl processFun (0, []) (S.functions syn)
-      val webs = Vector.fromList (List.rev webs)
+
+      datatype state
+        = Known of {
+            defs: LCPS.FunSet.set,
+            uses: LV.Set.set,
+            std: { defs: LCPS.FunSet.set, uses: LV.Set.set }
+          }
+        | Std of { defs: LCPS.FunSet.set, uses: LV.Set.set }
+
+      fun maximize ([], state) = state
+        | maximize (INL v :: todo', st as Known { defs, uses, std }) =
+            if LV.Set.member (uses, v) then
+              maximize (todo', st)
+            else
+              (case lookup v
+                 of NONE => (* v is dead, can this even be possible? *)
+                      raise Fail "Impossible dead variable in a web"
+                  | SOME { known, unknown } =>
+                      if unknown then (* switching state now *)
+                        let val { defs=stdDefs, uses=stdUses } = std
+                            val stdDefs = LCPS.FunSet.union (defs, stdDefs)
+                            val stdUses = LV.Set.union (uses, stdUses)
+                            val stdUses = LV.Set.add (stdUses, v)
+                        in  maximize (map INR known @ todo',
+                                      Std { defs=stdDefs, uses=stdUses })
+                        end
+                      else (* staying known *)
+                        let val uses = LV.Set.add (uses, v)
+                        in  maximize (map INR known @ todo',
+                                      Known { defs=defs, uses=uses, std=std })
+                        end)
+        | maximize (INR f :: todo', st as Known { defs, uses, std }) =
+            if LCPS.FunSet.member (defs, f) then
+              maximize (todo', st)
+            else
+              let val { known, escape } = flow f
+              in  if escape then (* switching state *)
+                    let val { defs=stdDefs, uses=stdUses } = std
+                        val stdDefs = LCPS.FunSet.union (defs, stdDefs)
+                        val stdUses = LV.Set.union (uses, stdUses)
+                        val stdDefs = LCPS.FunSet.add (stdDefs, f)
+                    in  maximize (map INL known @ todo',
+                                  Std { defs=stdDefs, uses=stdUses })
+                    end
+                  else
+                    let val defs = LCPS.FunSet.add (defs, f)
+                    in  maximize (map INL known @ todo',
+                                  Known { defs=defs, uses=uses, std=std })
+                    end
+              end
+        | maximize (INL v :: todo', st as Std { defs, uses }) =
+            if LV.Set.member (uses, v) then
+              maximize (todo', st)
+            else
+              (case lookup v
+                 of NONE => raise Fail "Impossible dead variable in a web"
+                  | SOME { known, unknown } =>
+                      let val uses = LV.Set.add (uses, v)
+                      in  maximize (map INR known @ todo',
+                                    Std { defs=defs, uses=uses })
+                      end)
+        | maximize (INR f :: todo', st as Std { defs, uses }) =
+            if LCPS.FunSet.member (defs, f) then
+              maximize (todo', st)
+            else
+              let val { known, escape } = flow f
+                  val defs = LCPS.FunSet.add (defs, f)
+              in  maximize (map INL known @ todo', Std { defs=defs, uses=uses })
+              end
+
+      fun addIdF id f =
+        (* (if Option.isSome (LCPS.FunTbl.find funMap f) then *)
+        (*    raise Fail "Double f" *)
+        (*  else *)
+        (*    (); *)
+         LCPS.FunTbl.insert funMap (f, id)
+      fun addIdV id v =
+        (* (if Option.isSome (LV.Tbl.find varMap v) then *)
+        (*    raise Fail "Double v" *)
+        (*  else *)
+        (*    (); *)
+         LV.Tbl.insert varMap (v, id)
+
+      fun toWeb (id, defs, uses, polluted, kind): info =
+        let val defs = LCPS.FunSet.listItems defs
+            val uses = LV.Set.listItems uses
+            val () = List.app (addIdF id) defs
+            val () = List.app (addIdV id) uses
+        in  { defs=Vector.fromList defs, uses=Vector.fromList uses,
+              polluted=polluted, kind=kind }
+        end
+
+      fun processFun (f, (length, webs: info list, stdfun, stdcnt))=
+        (case #1 f
+           of CPS.CONT =>
+                if LCPS.FunTbl.inDomain funMap f
+                   orelse LCPS.FunSet.member (#defs stdcnt, f) then
+                  (length, webs, stdfun, stdcnt)
+                else
+                  (case maximize ([INR f],
+                                  Known { defs=LCPS.FunSet.empty,
+                                          uses=LV.Set.empty,
+                                          std=stdcnt })
+                     of Known { defs, uses, std } =>
+                          let val web = toWeb (length, defs, uses, false, Cont)
+                          handle e => raise e
+                          in  (length + 1, web :: webs, stdfun, stdcnt)
+                          end
+                      | Std { defs, uses } =>
+                          (length, webs, stdfun, { defs=defs, uses=uses }))
+            | _ =>
+                if LCPS.FunTbl.inDomain funMap f
+                   orelse LCPS.FunSet.member (#defs stdfun, f) then
+                  (length, webs, stdfun, stdcnt)
+                else
+                  (case maximize ([INR f],
+                                  Known { defs=LCPS.FunSet.empty,
+                                          uses=LV.Set.empty,
+                                          std=stdfun })
+                     of Known { defs, uses, std } =>
+                          let val web = toWeb (length, defs, uses, false, User)
+                          handle e => raise e
+                          in  (length + 1, web :: webs, stdfun, stdcnt)
+                          end
+                      | Std { defs, uses } =>
+                          (length, webs, { defs=defs, uses=uses }, stdcnt)))
+      (* Web #0 is stdfun, Web #1 is stdcnt *)
+      val (length, webs, stdfun, stdcnt) =
+        Vector.foldl
+          processFun
+          (2, [], { defs=LCPS.FunSet.empty, uses=LV.Set.empty },
+                  { defs=LCPS.FunSet.empty, uses=LV.Set.empty })
+          (S.functions syn)
+      val stdfun = toWeb (0, #defs stdfun, #uses stdfun, true, User)
+      handle e => raise e
+      val stdcnt = toWeb (1, #defs stdcnt, #uses stdcnt, true, Cont)
+      handle e => raise e
+      val webs = Vector.fromList (stdfun :: stdcnt :: List.rev webs)
+      (* val (length, webs) = Vector.foldl processFun (0, []) (S.functions syn) *)
+      (* val webs = Vector.fromList (List.rev webs) *)
     in
       T { webs=webs, funMap=funMap, varMap=varMap }
     end
@@ -150,11 +296,16 @@ end = struct
     end
 
   fun webToS (id: int, { defs, uses, polluted, kind }: info) =
-    let val fs = String.concatWith "," (mapL (LV.lvarName o #2) defs)
+    let
+        val fs = String.concatWith "," (mapL (LV.lvarName o #2) defs)
         val vs = String.concatWith "," (mapL LV.lvarName uses)
+        (* val fs = Int.toString (Vector.length defs) *)
+        (* val vs = Int.toString (Vector.length uses) *)
         val polluted = if polluted then " (polluted)" else ""
         val kind = case kind of User => "user" | Cont => "cont"
-    in  concat [
+    in 
+        (* if Vector.length defs < 5 then "" else *)
+        concat [
           "Web #", Int.toString id, " ", kind, polluted, "\n",
           "  defs: [", fs, "]\n",
           "  uses: [", vs, "]\n"
