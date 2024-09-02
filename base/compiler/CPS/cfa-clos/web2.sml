@@ -59,11 +59,11 @@ end = struct
 
   datatype info'
     = Partial of {
-      defs: LCPS.FunSet.set,
-      uses: LV.Set.set,
-      polluted: bool,
-      kind: kind
-    }
+        defs: LCPS.FunSet.set,
+        uses: LV.Set.set,
+        polluted: bool,
+        kind: kind
+      }
     | Sealed of id
 
   fun timeit str f x =
@@ -81,6 +81,7 @@ end = struct
     (Partial {defs=defs1, uses=uses1, polluted=polluted1, kind=kind1},
      Partial {defs=defs2, uses=uses2, polluted=polluted2, kind=kind2}) =
        let val kind = if kind1 <> kind2 then raise Fail "Ill-merge" else kind1
+       (* Check: this is disjoint *)
            val defs = LCPS.FunSet.union (defs1, defs2)
            val uses = LV.Set.union (uses1, uses2)
            val polluted = polluted1 orelse polluted2
@@ -92,6 +93,7 @@ end = struct
     let val funTbl = LCPS.FunTbl.mkTable (S.numFuns syn, Fail "funmap")
         val varTbl = LV.Tbl.mkTable (S.numVars syn, Fail "varmap")
 
+        (* TODO: specialize *)
         val stdfunWeb =
           let val web = { defs=LCPS.FunSet.empty, uses=LV.Set.empty,
                           polluted=true, kind=User }
@@ -108,7 +110,7 @@ end = struct
           (case UF.get stdweb
              of Partial { defs, uses, polluted, kind } =>
                   let val defs = LCPS.FunSet.add (defs, f)
-                      val web = 
+                      val web =
                         { defs=defs, uses=uses, polluted=polluted, kind=kind }
                   in  UF.set (stdweb, Partial web)
                   end
@@ -118,7 +120,7 @@ end = struct
           (case UF.get stdweb
              of Partial { defs, uses, polluted, kind } =>
                   let val uses = LV.Set.add (uses, v)
-                      val web = 
+                      val web =
                         { defs=defs, uses=uses, polluted=polluted, kind=kind }
                   in  UF.set (stdweb, Partial web)
                   end
@@ -140,7 +142,7 @@ end = struct
           end
 
         fun initF (f, flowInfo: FlowCFA.variables) : unit =
-          let val (kind, stdweb) = 
+          let val (kind, stdweb) =
                 (case #1 f of CPS.CONT => (Cont, stdcntWeb)
                             | _ => (User, stdfunWeb))
               val web =
@@ -299,7 +301,7 @@ end = struct
         (* val vs = Int.toString (Vector.length uses) *)
         val polluted = if polluted then " (polluted)" else ""
         val kind = case kind of User => "user" | Cont => "cont"
-    in 
+    in
         (* if Vector.length defs < 5 then "" else *)
         concat [
           "Web #", Int.toString id, " ", kind, polluted, "\n",
