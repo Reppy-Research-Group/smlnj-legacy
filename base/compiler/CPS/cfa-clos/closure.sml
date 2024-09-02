@@ -38,6 +38,8 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       result
     end
 
+  fun timeit _ f x = f x
+
   fun test cps =
     let
       (* val cps = #1 (FreeClose.freemapClose cps) *)
