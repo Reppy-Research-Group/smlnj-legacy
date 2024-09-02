@@ -299,7 +299,8 @@ CPS/cfa-clos/labelled-cps.sml
     (*               \val () = Control.Elab.unusedWarn := true\n;" *)
     (*          post: "Control.Elab.unusedWarn := w;")) *)
 CPS/cfa-clos/dot-lang.sml
-CPS/cfa-clos/web.sml
+CPS/cfa-clos/union-find.sml
+CPS/cfa-clos/web2.sml
 CPS/cfa-clos/transform.sml
 
 CPS/convert/convert.sml

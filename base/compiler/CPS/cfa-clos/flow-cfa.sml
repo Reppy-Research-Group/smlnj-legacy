@@ -415,7 +415,8 @@ end = struct
                         {known=f::known, unknown=unknown}
                     | collect (Record _, acc) = acc
                     | collect (Mutable _, acc) = acc
-                    | collect (Value (CPS.FUNt | CPS.CNTt), {known, unknown}) =
+                    | collect (Value (CPS.FUNt | CPS.CNTt | CPS.PTRt _),
+                               {known, unknown}) =
                         {known=known, unknown=true}
                     | collect (Value _, acc) = acc
               in  case VS.fold collect {known=[], unknown=false} set
