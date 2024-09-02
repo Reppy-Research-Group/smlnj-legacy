@@ -64,6 +64,7 @@ end = struct
         polluted: bool,
         kind: kind
       }
+    | Standard of kind
     | Sealed of id
 
   fun timeit str f x =
@@ -87,6 +88,8 @@ end = struct
            val polluted = polluted1 orelse polluted2
        in  Partial {defs=defs, uses=uses, polluted=polluted, kind=kind}
        end
+    | mergeInfo (Partial _, Standard kind) = Standard kind
+    | mergeInfo (Standard kind, Partial _) = Standard kind
     | mergeInfo _ = raise Fail "impossible"
 
   fun calculate ({lookup, flow} : FlowCFA.result, syn) =
@@ -95,15 +98,17 @@ end = struct
 
         (* TODO: specialize *)
         val stdfunWeb =
-          let val web = { defs=LCPS.FunSet.empty, uses=LV.Set.empty,
-                          polluted=true, kind=User }
-          in  UF.make (Partial web)
+          let 
+            (* val web = { defs=LCPS.FunSet.empty, uses=LV.Set.empty, *)
+            (*               polluted=true, kind=User } *)
+          in  UF.make (Standard User)
           end
 
         val stdcntWeb =
-          let val web = { defs=LCPS.FunSet.empty, uses=LV.Set.empty,
-                          polluted=true, kind=Cont }
-          in  UF.make (Partial web)
+          let
+            (* val web = { defs=LCPS.FunSet.empty, uses=LV.Set.empty, *)
+            (*               polluted=true, kind=Cont } *)
+          in  UF.make (Standard Cont)
           end
 
         fun addstdF (f, stdweb) =
@@ -148,7 +153,7 @@ end = struct
                             | _ => (User, stdfunWeb))
               val web =
                 if escape then
-                  (addstdF (f, stdweb); stdweb)
+                  stdweb
                 else
                   mkSingleF (f, kind)
           in  LCPS.FunTbl.insert funTbl (f, web); (web, known)
@@ -162,7 +167,7 @@ end = struct
                     | _ => (User, stdfunWeb))
               val web =
                 if unknown then
-                  (addstdV (v, stdweb); stdweb)
+                  stdweb
                 else
                   mkSingleV (v, kind)
           in  LV.Tbl.insert varTbl (v, web); (web, known)
@@ -208,37 +213,42 @@ end = struct
                             val () = UF.set (cell, Sealed currID)
                         in  (currID + 1, web :: webs)
                         end
-                    | Sealed _ => (currID, webs))
+                    | _ => (currID, webs))
 
               fun collectV (v, cell, (currID, webs)) =
                 (case UF.get cell
                    of Partial info =>
                         raise Fail
                           "webs without a function and does not escape????"
-                    | Sealed _ => (currID, webs))
+                    | _ => (currID, webs))
 
               fun removeCell cell =
                 (case UF.get cell
                    of Partial _ => raise Fail "partial remaining"
+                    | Standard _ => raise Fail "standard remaining"
                     | Sealed id => id)
 
               val web0 =
-                (case UF.get stdfunWeb
-                   of Partial info =>
-                        let val web = convertWeb info
-                            val () = UF.set (stdfunWeb, Sealed 0)
-                        in  web
-                        end
-                    | _ => raise Fail "impossible")
+                (UF.set (stdfunWeb, Sealed 0);
+                 { polluted=true, kind=User, defs= #[], uses= #[] })
+                (* (case UF.get stdfunWeb *)
+                (*    of Partial info => *)
+                (*         let val web = convertWeb info *)
+                (*             val () = UF.set (stdfunWeb, Sealed 0) *)
+                (*         in  web *)
+                (*         end *)
+                (*     | _ => raise Fail "impossible") *)
 
               val web1 =
-                (case UF.get stdcntWeb
-                   of Partial info =>
-                        let val web = convertWeb info
-                            val () = UF.set (stdcntWeb, Sealed 1)
-                        in  web
-                        end
-                    | _ => raise Fail "impossible")
+                (UF.set (stdcntWeb, Sealed 1);
+                 { polluted=true, kind=Cont, defs= #[], uses= #[] })
+                (* (case UF.get stdcntWeb *)
+                (*    of Partial info => *)
+                (*         let val web = convertWeb info *)
+                (*             val () = UF.set (stdcntWeb, Sealed 1) *)
+                (*         in  web *)
+                (*         end *)
+                (*     | _ => raise Fail "impossible") *)
 
               val (len, webs) =
                 LCPS.FunTbl.foldi collectF (2, [web1, web0]) funTbl
