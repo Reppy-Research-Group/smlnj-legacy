@@ -66,5 +66,4 @@ rm -f "$LPC"
 cp ../../config/extrapathconfig "$LPC"
 
 CM_PATHCONFIG="$LIB_DIR/pathconfig" CM_LOCAL_PATHCONFIG="$LPC" \
-    rlwrap "$bindir/sml" $SIZE_OPT @SMLload="$HEAP_IMAGE" -Ced.save-lvar-names=true \
-    -Ccg.new-closure-converter=true $ARGS # -Cmlrisc.dump-initial-cfg=true
+    rlwrap "$bindir/sml" $SIZE_OPT @SMLload="$HEAP_IMAGE" $ARGS
