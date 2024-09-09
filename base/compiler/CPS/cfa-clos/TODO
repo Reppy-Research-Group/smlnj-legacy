@@ -21,6 +21,8 @@
 [ ] Decision rewriting
 
     [ ] Flattening: Web
+        [ ] Webs that don't close over themselves.
+        [ ] Webs that do.
 
     [ ] Sharing: Shareable chain, *unchanging variable analysis
 
