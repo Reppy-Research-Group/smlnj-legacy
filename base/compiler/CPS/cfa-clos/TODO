@@ -1,4 +1,5 @@
 [x] Flow analysis
+    Check MKSpecial
 
 [x] Web
     WebID --> { defs: Functions, uses: Variables, unknown: bool }

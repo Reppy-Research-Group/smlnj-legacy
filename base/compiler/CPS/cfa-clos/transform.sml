@@ -232,7 +232,7 @@ end = struct
     (case Web.webOfVar (web, v)
        of SOME w =>
            (case Web.content (web, w)
-              of { polluted=true, kind=Web.Cont, defs, ... } =>
+              of { polluted=true, kind=Web.Cont, ... } =>
                    (* Default cont *)
                    (Web.Cont,
                     D.Pointer v,
@@ -240,7 +240,7 @@ end = struct
                             D.Var (freshLV v, bogusTy),
                             D.Var (freshLV v, bogusTy)],
                     NONE)
-               | { polluted=true, kind=Web.User, defs, ... } =>
+               | { polluted=true, kind=Web.User, ... } =>
                    (Web.User,
                     D.SelectFrom { env=0, selects=[0] },
                     D.Flat [D.Var (v, bogusTy)],

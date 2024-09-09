@@ -37,6 +37,16 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
     in
       result
     end
+  (* fun timeit' msg thnk x = *)
+  (*   let val start = Timer.startCPUTimer () *)
+  (*       val result = thnk x *) 
+  (*       val { nongc={usr, sys}, gc={usr=gcusr, sys=gcsys} } = *)
+  (*         Timer.checkCPUTimes start *)
+  (*       val tos = Time.toString *)
+  (*   in  app print [msg, ": usr=", tos usr, " sys=", tos sys, *)
+  (*                  " gcusr=", tos gcusr, " gcsys=", tos gcsys, "\n"]; *)
+  (*       result *)
+  (*   end *)
 
   (* fun timeit _ f x = f x *)
 

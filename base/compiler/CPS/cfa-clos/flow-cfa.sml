@@ -940,16 +940,16 @@ end = struct
       loop 0
     end
 
-  (* fun timeit str thunk = *)
-  (*   let *)
-  (*     val start = Time.now () *)
-  (*     val result = thunk () *)
-  (*     val stop = Time.now () *)
-  (*     val diff = Time.- (stop, start) *)
-  (*     val () = (print (str ^ Time.toString diff); print "\n") *)
-  (*   in *)
-  (*     result *)
-  (*   end *)
+  fun timeit str thunk =
+    let
+      val start = Time.now ()
+      val result = thunk ()
+      val stop = Time.now ()
+      val diff = Time.- (stop, start)
+      val () = (print (str ^ Time.toString diff); print "\n")
+    in
+      result
+    end
 
   fun analyze (syn, cps) =
     let val ctx = initialize (syn, cps)
