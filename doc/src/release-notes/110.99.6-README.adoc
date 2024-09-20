@@ -1,7 +1,5 @@
-// A template for creating release notes for a version
-//
-:version: @VERSION@
-:date: @DATE@
+:version: 110.99.6
+:date: September 19, 2024
 :dist-dir: https://smlnj.org/dist/working/{version}/
 :history: {dist-dir}HISTORY.html
 :issue-base: https://github.com/smlnj/legacy/issues/
@@ -33,47 +31,63 @@ FILES::
 
 == Summary
 
-// **** summary description of release
+The primary purpose of this release is to enable support for **macOS** 15 (Sequoia),
+but it also contains a number of minor bug fixes.
 
 == Details
 
-// **** details: include those sections that are relevant
-
 === Compiler
 
-=== CM
-
-=== MLRISC
-
-=== Runtime System
-
-=== Basis Library
+* The fusing of conversions between integer and word types has been improved.
+  Basically, we have switched from only fusing operations that are adjacent
+  in the CPS IR to fusing operations that are logically adjacent (_i.e._, there
+  is a def-use dependency between them).
 
 === SML/NJ Library
 
+There were a number of bug fixes to the Library (see the **Bugs** section below).
+In addition, the following changes were made:
+
+* Added the `combineWith` function to the various implementations of the
+  `ORD_SET` signature.
+
+* Some minor improvements to hash sets and integer hash tables.
+
+* Fixed the reporting of field-not-found errors in JSON library (the error
+  message was garbled).
+
 * Fixed some bugs in the new JSON parser.  The first byte of a UTF-8
   sequence was being dropped and comments were only allowed immediately
-  in front of values.
+  in front of values.  There was also a problem with Unicode escape sequences
+  in strings that has been fixed.
 
-=== Successor ML
-
-=== ML-LPT
-
-=== Documentation
+ * Refactored how error exceptions are used in the `JSONDecode` and `JSONUtil`
+  modules.  The new design, which follows the Basis Library pattern of
+  the `IO.Io` exception, uses a single `JSONError` exception for all errors.
+  The `JSONError` exception has two arguments: the first is an exception
+  that details the particular kind of error and the second is the JSON value
+  that was being processed when the error was detected.
+  Note that this change will break code that is explicitly matching on the
+  exceptions defined in the `JSONDecode` and `JSONUtil` modules.
 
 === Installation
+
+Installation on **macOS** 15 (Sequoia) is now supported.
 
 == Bugs
 
 Here is a list of the issues that are fixed (or closed) with this release.
 We include the original bug numbers for bugs that were reported using the
-https://smlnj-gforge.cs.uchicago.edu/projects/smlnj-bugs[gforge bug tracker].
+gforge bug tracker.
 
 [.buglist,cols="^1,<10,^2",strips="none",options="header"]
 |=======
 | Issue
 | Description
 | Gforge Bug
+| [.bugid]#305#
+| {issue-base}/305[`Date.date` incorrectly modifies local time with timezone offset]
+| n.a.
 | [.bugid]#310#
 | {issue-base}/310[`HashSetFn.isSubset` function accesses out of bound element]
 | n.a.
@@ -83,12 +97,16 @@ https://smlnj-gforge.cs.uchicago.edu/projects/smlnj-bugs[gforge bug tracker].
 | [.bugid]#314#
 | {issue-base}/314[Wrong description of brace syntax in RegExp Library in SML of NJ Library]
 | n.a.
-//| [.bugid]#@ID#
-//| {issue-base}/@ID[@DESCRIPTION]
-//| [old bug #@OLDID]
+| [.bugid]#315#
+| {issue-base}/315[Support macOS 15 Sequoia]
+| n.a.
+| [.bugid]#320#
+| {issue-base}/320[`TimeLimit.timeLimit` immediately throws exception on Windows]
+| n.a.
+| [.bugid]#323#
+| {issue-base}/323[Can't build 2024.2 because of problem with ASDL C++ library]
+| n.a.
 |=======
-
-// ***** include a list of unnumbered bugs here *****
 
 == Supported systems
 
@@ -105,8 +123,9 @@ tested some of them:
 | | macOS 12 (Monterey) | Tested
 | | macOS 13 (Ventura) | Tested
 | | macOS 14 (Sonoma) | Tested
-| | Ubuntu 22.04.4 LTS | Tested
+| | macOS 15 (Sequoia) | Tested
 | | Ubuntu 20.04.6 LTS | Tested
+| | Ubuntu 22.04.4 LTS | Tested
 | {nbsp} | |
 | Power PC | Mac OS X 10.5 (Leopard) |
 | | AIX |
@@ -121,8 +140,9 @@ tested some of them:
 | | Mac OS X 10.10 (Yosemite) |
 | | Mac OS X 10.11 (El Capitan) |
 | | macOS 10.12 (Sierra) |
-| | macOS 10.13 (High Sierra) | Tested
+| | macOS 10.13 (High Sierra) |
 | | macOS 10.14 (Mojave) |
+| | macOS 10.15 (Catalina) |
 | | Ubuntu 16.04.3 LTS |
 | | Other Linux variants |
 | | FreeBSD 12.0 |
@@ -132,6 +152,8 @@ tested some of them:
 | | Cygwin (32-bit) |
 | {nbsp} | |
 |=======
+
+The system also works on Apple Silicon using Rosetta2.
 
 === 32-bit macOS issues
 
