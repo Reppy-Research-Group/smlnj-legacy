@@ -9,6 +9,7 @@ structure SyntacticInfo :> sig
   val useSites      : t -> LabelledCPS.lvar -> LabelledCPS.FunSet.set
   val usePoints     : t -> LabelledCPS.lvar -> LabelledCPS.Set.set
   val knownFun      : t -> LabelledCPS.lvar -> LabelledCPS.function option
+  val isTopLevel    : t -> LabelledCPS.function -> bool
   val binderOf      : t -> LabelledCPS.function -> LabelledCPS.function option
   val fv            : t -> LabelledCPS.function -> (int * int) LambdaVar.Map.map
   val groupOf       : t -> LabelledCPS.function -> Group.t
@@ -258,6 +259,8 @@ end = struct
       #knownfun (LV.Tbl.lookup varTbl v)
       handle SyntacticInfo => (print (LV.lvarName v ^ " missing\n");
                                raise SyntacticInfo)
+
+  fun isTopLevel (T { lam0, ... }) (f: LCPS.function) = LV.same (#2 lam0, #2 f)
 
   fun binderOf (T { funTbl, lam0, ... }) f =
     if LV.same (#2 lam0, #2 f) then

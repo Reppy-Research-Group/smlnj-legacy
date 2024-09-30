@@ -302,6 +302,9 @@ CPS/cfa-clos/dot-lang.sml
 CPS/cfa-clos/union-find.sml
 CPS/cfa-clos/web.sml
 CPS/cfa-clos/transform.sml
+CPS/cfa-clos/lifetime.sml
+CPS/cfa-clos/printer.sml
+CPS/cfa-clos/printer.sig
 
 CPS/convert/convert.sml
 CPS/convert/cpstrans.sml
