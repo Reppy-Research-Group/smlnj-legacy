@@ -11,13 +11,13 @@ NRUNS=10
 
 if [ x"$1" = "x--llvm" ] ; then
   LLVM=yes
-  SML="../../bin/sml -Ccg.llvm=true"
-  OUT_SUFFIX="-llvm"
+  SML="../../../bin/sml -Ccg.new-closure-converter=true"
+  OUT_SUFFIX="-new"
   shift
 else
   LLVM=no
   SML="/usr/local/smlnj/bin/sml"
-  OUT_SUFFIX="-mlrisc"
+  OUT_SUFFIX="-old"
 fi
 
 if [ x"$1" = x ] ; then
@@ -31,13 +31,13 @@ OUT_FILE="$prog$OUT_SUFFIX"
 
 echo "results in $OUT_FILE: "
 
-echo "{bmark=\"$prog\", llvm=\"$LLVM\", " > $OUT_FILE
+echo "{bmark=\"$prog\", new=\"$LLVM\", " > $OUT_FILE
 
 # first we time the compile time
 #
 echo "    compiling ..."
 echo -n " compiles=[ " >> $OUT_FILE
-$SML <<EOF 1>/dev/null 2>&1
+$SML <<EOF 2>&1
   use "timeit.sml";
   val outS = TextIO.openAppend("$OUT_FILE");
   fun loop 0 = ()
@@ -55,7 +55,7 @@ echo " ]," >> $OUT_FILE
 #
 echo "    running ..."
 echo -n " runs=[" >> $OUT_FILE
-$SML <<EOF 1>/dev/null 2>&1
+$SML <<EOF 2>&1
   use "timeit.sml";
   use "$prog.sml";
   val outS = TextIO.openAppend("$OUT_FILE");
