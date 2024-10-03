@@ -26,6 +26,7 @@ structure SyntacticInfo :> sig
   val foldV         : t -> (LabelledCPS.lvar * 'a -> 'a) -> 'a -> 'a
   val functions     : t -> LabelledCPS.function vector
   val groups        : t -> Group.t vector
+  val topLevel      : t -> LabelledCPS.function
   val numVars       : t -> int
   val numFuns       : t -> int
   val dump          : t -> unit
@@ -298,6 +299,7 @@ end = struct
   fun groups (T { groups, ... }) = groups
   fun numVars (T { varTbl, ... }) = LV.Tbl.numItems varTbl
   fun numFuns (T { funTbl, ... }) = LCPS.FunTbl.numItems funTbl
+  fun topLevel (T { lam0, ... }) = lam0
 
   fun dump (t as (T { funTbl, varTbl, ... })) =
     let val p = print

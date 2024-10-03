@@ -15,7 +15,7 @@ structure DotLanguage :> sig
   val toString : t -> string
   val write : string -> t -> unit
   val fromGraph : ('node -> id * attr list)
-               -> { roots: 'node list, follow: 'node -> 'node list }
+               -> { roots: 'node list, follow: 'node -> ('node * attr list) list }
                -> t
 end = struct
   type attr = string * string
@@ -90,12 +90,11 @@ end = struct
                   let
                     val seen' = AtomSet.add (seen, name')
                     val nexts = follow node
-                    val names = map (#1 o convert) nexts
-                    val doc' =
-                      doc <+<
-                        (NODE n :: map (fn n' => EDGE (name, n', [])) names)
+                    fun edge (n', attr) = EDGE (name, #1 (convert n'), attr)
+                    fun node (n', _) = n'
+                    val doc' = doc <+< (NODE n :: map edge nexts)
                   in
-                    dfs seen' (nexts @ todo) doc'
+                    dfs seen' (map node nexts @ todo) doc'
                   end
             end
     in

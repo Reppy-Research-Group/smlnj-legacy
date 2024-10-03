@@ -8,29 +8,55 @@ end = struct
   datatype lifepath = MoveTo of life | Use
   withtype life = LCPS.function * lifepath list
 
-  structure P = PrinterFn(DefaultCostModel)
+  local
+    structure P = PrinterFn(DefaultCostModel)
 
-  val op^^ = P.^^
-  val op<$> = P.<$>
-  val op<-> = P.<->
-  val op<+> = P.<+>
-  infix 4 ^^ <$> <-> <+>
+    val op^^ = P.^^
+    val op<$> = P.<$>
+    val op<-> = P.<->
+    val op<+> = P.<+>
+    infix 4 ^^ <$> <-> <+>
+  in
+    fun dumpLife (x: CPS.lvar, (function, paths) : life) : unit =
+      let fun buildPath (MoveTo (f, p :: paths)) : P.doc =
+                P.text (LV.lvarName (#2 f) ^ " ") <+>
+                (foldl (fn (p, doc) => doc <$> (P.text "\\--> " ^^ buildPath p))
+                       (P.text "---> " ^^ buildPath p)
+                       paths)
+            | buildPath (MoveTo (f, [])) = raise Fail "empty path"
+            | buildPath Use = P.text "///"
 
-  fun dumpLife (x: CPS.lvar, (function, paths) : life) : unit =
-    let fun buildPath (MoveTo (f, p :: paths)) : P.doc =
-              P.text (LV.lvarName (#2 f) ^ " ") <+>
-              (foldl (fn (p, doc) => doc <$> (P.text "\\--> " ^^ buildPath p))
-                     (P.text "---> " ^^ buildPath p)
-                     paths)
-          | buildPath (MoveTo (f, [])) = raise Fail "empty path"
-          | buildPath Use = P.text "///"
+          fun build (x, function, paths) : P.doc =
+            P.text (LV.lvarName x ^ ": ")
+            <+> buildPath (MoveTo (function, paths))
 
-        fun build (x, function, paths) : P.doc =
-          P.text (LV.lvarName x ^ ": ")
-          <+> buildPath (MoveTo (function, paths))
+      in  P.pprint print 200 (build (x, function, paths)); print "\n\n"
+      end
+  end
 
-    in  P.pprint print 200 (build (x, function, paths)); print "\n\n"
-    end
+  local open DotLanguage in
+    fun dumpDot (lives: life LV.Tbl.hash_table) =
+      let val dot = empty (true, "closure-dept-graph")
+          fun fid (f: LCPS.function) =
+            (case #1 f
+               of (CPS.CONT | CPS.KNOWN_CONT) => "[C]" ^ LV.lvarName (#2 f)
+                | _ => "[F]" ^ LV.lvarName (#2 f))
+          fun vid (v: CPS.lvar) = "[V]" ^ LV.lvarName v
+          fun buildPath (parent, MoveTo (f, paths), dot) =
+                let val dot = << (dot, EDGE (fid parent, fid f, []))
+                in  foldl (fn (path, dot) => buildPath (f, path, dot)) dot paths
+                end
+            | buildPath (parent, Use, dot) = dot
+          fun collect (v, (f, paths), dot) =
+            let val dot = << (dot, EDGE (vid v, fid f, 
+                  [("arrowhead", "none"), ("arrowtail", "none")]))
+                val dot = foldl (fn (p, dot) => buildPath (f, p, dot)) dot paths
+            in  dot
+            end
+          val dot = LV.Tbl.foldi collect dot lives
+      in  dump dot
+      end
+  end
 
   (* TODO: put this in syntactic analysis *)
   fun innerFunctions ((_, _, _, _, body): LCPS.function) =
@@ -93,9 +119,9 @@ end = struct
         val () = LV.Map.appi (fn (v, paths) =>
           LV.Tbl.insert tbl (v, (function, paths))) localLives
 
-        val () = app print ["In Function: ", LV.lvarName (#2 function), "\n"]
-        val () = LV.Map.appi (fn (v, paths) =>
-          dumpLife (v, (function, paths))) localLives
+        (* val () = app print ["In Function: ", LV.lvarName (#2 function), "\n"] *)
+        (* val () = LV.Map.appi (fn (v, paths) => *)
+        (*   dumpLife (v, (function, paths))) localLives *)
 
     in  fvLives
     end
@@ -104,6 +130,8 @@ end = struct
     let val tbl = LV.Tbl.mkTable (S.numVars syn div 2, Fail "lifetime")
         val lives = calculate (cps, syn, tbl)
         val () = if LV.Map.isEmpty lives then () else raise Fail "???"
+        val () = dumpDot tbl
+        (* val () = LV.Tbl.appi dumpLife tbl *)
     in  ()
     end
 end

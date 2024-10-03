@@ -305,6 +305,7 @@ CPS/cfa-clos/transform.sml
 CPS/cfa-clos/lifetime.sml
 CPS/cfa-clos/printer.sml
 CPS/cfa-clos/printer.sig
+CPS/cfa-clos/control-flow.sml
 
 CPS/convert/convert.sml
 CPS/convert/cpstrans.sml

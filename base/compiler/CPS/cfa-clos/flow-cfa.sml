@@ -450,12 +450,12 @@ end = struct
           fun prow (x, set) =
             puts [LV.lvarName x, " >-> {",
                   String.concatWithMap " " LV.lvarName (LVS.listItems set),
-                  Int.toString (LVS.numItems set),
+                  (* Int.toString (LVS.numItems set), *)
                   "}\n"]
           fun pstore (x, vs) =
             puts [LV.lvarName x, " <-- {",
-                  (* String.concatWithMap " " Value.toString (VS.listItems vs), *)
-                  Int.toString (VS.numItems vs),
+                  String.concatWithMap " " Value.toString (VS.listItems vs),
+                  (* Int.toString (VS.numItems vs), *)
                   "}\n"]
           fun valueSetTally set =
             let fun v (Function _, ls) = 0 :: ls
@@ -470,22 +470,22 @@ end = struct
           fun storeSizes (x, set, data) = VS.numItems set :: data
           (* fun storeSizes (x, set, data) = valueSetTally set @ data *)
           (* val () = histogram (LVT.foldi rowSizes [] row) *)
-          val () = print "-----------------------------------------\n"
-          val () = histogram (LVT.foldi storeSizes [] store)
+          (* val () = print "-----------------------------------------\n" *)
+          (* val () = histogram (LVT.foldi storeSizes [] store) *)
           (* val () = print ("x >-> y: " ^ sum (LVT.foldi rowSizes [] row) ^ "\n") *)
           (* val () = print ("v --> y: " ^ sum (LVT.foldi storeSizes [] store) ^ "\n") *)
           (* val () = print ("/-- f: " ^ sum [LCPS.FunMonoSet.numItems escape] ^ "\n") *)
           (* val () = print ("--/ v: " ^ sum [LVS.numItems sink] ^ "\n") *)
       in
-          (* LVT.appi prow row; *)
-          (* LVT.appi pstore store; *)
-          (* puts ["/-- {", *)
-          (*       String.concatWithMap " " (LV.lvarName o #2) *)
-          (*       (LCPS.FunMonoSet.listItems escape), *)
-          (*       "}\n"]; *)
-          (* puts ["--/ {", *)
-          (*       String.concatWithMap " " LV.lvarName (LVS.listItems sink), *)
-          (*       "}\n"] *)
+          LVT.appi prow row;
+          LVT.appi pstore store;
+          puts ["/-- {",
+                String.concatWithMap " " (LV.lvarName o #2)
+                (LCPS.FunMonoSet.listItems escape),
+                "}\n"];
+          puts ["--/ {",
+                String.concatWithMap " " LV.lvarName (LVS.listItems sink),
+                "}\n"];
           ()
       end
 
@@ -956,7 +956,7 @@ end = struct
         (* val () = timeit "flow-cfa " (fn () => run ctx) *)
         val () = run ctx
         (* val () = Context.dumpFlowGraph ctx *)
-        (* val () = Context.dump ctx *)
+        val () = Context.dump ctx
         (* val () = Profiler.report () *)
         (* val () = Context.dumpClosureDependency ctx *)
     in  Context.result ctx
