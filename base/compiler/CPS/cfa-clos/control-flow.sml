@@ -14,12 +14,35 @@ end = struct
     = Return of CPS.lvar * CPS.value list
     | Call   of CPS.lvar * CPS.value list
     | Raise  of CPS.lvar * CPS.value list
-    | Branch of CPS.P.branch * CPS.value list * block * block * prob
-    | Switch of (block * prob) list
+    | Branch of CPS.P.branch * CPS.value list * block * block * prob option
+    | Switch of (block * prob option) list
+  and block = Block of {
+      term: terminator,
+      label: LCPS.label,
+      fix: fix list,
+      function: LCPS.function
+    }
   withtype fix = LCPS.label * LCPS.function list
-       and block = { term: terminator, fix: fix list }
 
   type funtbl = block LCPS.FunTbl.hash_table
+
+  fun terminatorName (Return _) = "return"
+    | terminatorName (Call _) = "call"
+    | terminatorName (Raise _) = "raise"
+    | terminatorName (Branch _) = "branch"
+    | terminatorName (Switch _) = "switch"
+
+  (* number: block -> int
+   * node  : int -> block
+   * last  : int -> int
+   * pred  : int -> int
+   * succ  : int -> int
+   * entry : function -> block      <--- implied
+   * owner : block    -> function   <--- add??
+   *
+   * succ_kind : Goto, Approximate, Fake
+   * pred_kind : Goto, Approximate, Fake
+   *)
 
   structure Summary :> sig
     val analyze : S.t -> funtbl
@@ -38,7 +61,7 @@ end = struct
     val RH = Prob.percent 72          val notRH = Prob.not RH
     val unlikely = Prob.prob (1, 100) val likely = Prob.not unlikely
 
-    fun predict (lookup, test, args, block1: block, block2: block): prob =
+    fun predict (lookup, test, args, block1, block2) : prob option =
       let fun combine (f, prob) =
             (case (f (), prob)
                of (NONE, NONE) => NONE
@@ -49,8 +72,8 @@ end = struct
                           Prob.combineProb2 {trueProb=trueP, takenProb=takenP}
                     in  SOME (#t prob)
                     end)
-          val {term=term1, ...} = block1
-          val {term=term2, ...} = block2
+          val Block {term=term1, ...} = block1
+          val Block {term=term2, ...} = block2
 
           (* Pointer heuristic (PH): Predict that a comparison of a pointer
            * against null or of two pointers will fail *)
@@ -123,8 +146,8 @@ end = struct
           fun rh () =
             (case (term1, term2)
                of (Return _, Return _) => NONE
-                | (Return _, _) => SOME notRH
-                | (_, Return _) => SOME RH
+                | (Return _, Call _) => SOME notRH
+                | (Call _, Return _) => SOME RH
                 | _ => NONE)
 
           (* Miscellaneous:
@@ -146,9 +169,7 @@ end = struct
                 | _ => NONE)
 
           val heuristics = [ph, oh, rh, raiseExn, boundsCheck]
-      in  case foldl combine NONE heuristics
-            of NONE => Prob.prob (1, 2)
-             | SOME prob => prob
+      in  foldl combine NONE heuristics
       end
 
     fun calculate (f: LCPS.function, syn: S.t): block =
@@ -156,37 +177,41 @@ end = struct
           val insertInfo = LV.Tbl.insert info
           val lookupInfo = LV.Tbl.find info
           val typeof = S.typeof syn
-          fun walk (LCPS.APP (_, CPS.VAR v, args)) =
+          fun walk (LCPS.APP (l, CPS.VAR v, args)) =
                 let val term =
                       (case typeof v
                          of CPS.CNTt => Return (v, args)
                           | _ => (case lookupInfo v
                                     of SOME Handler => Raise (v, args)
                                      | _ => Call (v, args)))
-                in  { term=term, fix=[] }
+                in  Block { term=term, fix=[], label=l, function=f }
                 end
             | walk (LCPS.APP (_, _, _)) = raise Fail "App non arg"
-            | walk (LCPS.FIX (label, functions, exp)) =
-                let val { term, fix } = walk exp
-                in  { term=term, fix=(label, functions)::fix }
+            | walk (LCPS.FIX (l, functions, exp)) =
+                let val Block { term, fix, label, function } = walk exp
+                in  Block {
+                      term=term,
+                      fix=(l, functions)::fix,
+                      label=label,
+                      function=function
+                    }
                 end
-            | walk (LCPS.BRANCH (_, branch, args, _, exp1, exp2)) =
+            | walk (LCPS.BRANCH (l, branch, args, _, exp1, exp2)) =
                 let val blk1 = walk exp1
                     val blk2 = walk exp2
                     val prob = predict (lookupInfo, branch, args, blk1, blk2)
-                in  { term=Branch (branch, args, blk1, blk2, prob), fix=[] }
+                    val term = Branch (branch, args, blk1, blk2, prob)
+                in  Block { term=term, fix=[], label=l, function=f }
                 end
-            | walk (LCPS.SWITCH (_, _, _, exps)) =
-                let val length = List.length exps
-                    (* TODO: multi-arm branch prediction?
+            | walk (LCPS.SWITCH (l, _, _, exps)) =
+                let (* TODO: multi-arm branch prediction?
                      *
                      * The problem with SWITCH in the CPS IR is that there is no
                      * information on the SWITCH argument --- it is just an
                      * integer. The only heuristics that could apply is RH, and
                      * I'm not sure how useful it is. *)
-                    val prob   = Prob.prob (1, length)
-                    val blocks = map (fn e => (walk e, prob)) exps
-                in  { term=Switch blocks, fix=[] }
+                    val blocks = map (fn e => (walk e, NONE)) exps
+                in  Block { term=Switch blocks, fix=[], label=l, function=f }
                 end
             | walk (LCPS.PURE (_, (CPS.P.OBJLENGTH|CPS.P.LENGTH), _, x, _, e)) =
                 (insertInfo (x, Length); walk e)
@@ -217,6 +242,201 @@ end = struct
       end
   end
 
+  (* Graph:
+   * node = Start | Block of block
+   * edge = Local | Precise | Imprecise | Fake
+   *)
+
+  structure Graph :> sig
+    datatype node = Start of LCPS.label | Node of block
+    datatype edge
+      = Local of block list * prob option
+      | Precise of block list
+      | Imprecise of block list
+      | Fake of block list
+
+    type t
+    val build : funtbl * S.t * FlowCFA.result -> t
+
+    val root : t -> node
+    val succ : t * node -> block list
+    val pred : t * node -> node list
+
+    val dumpDot : t -> unit
+  end = struct
+
+    datatype node = Start of LCPS.label | Node of block
+    datatype edge
+      = Local of block list * prob option
+      | Precise of block list
+      | Imprecise of block list
+      | Fake of block list
+
+    fun nodeLabel (Start label) = label
+      | nodeLabel (Node (Block {label, ...})) = label
+
+    fun sameNode (Start _, Start _) = true
+      | sameNode (
+          Node (Block {label=label1, ...}),
+          Node (Block {label=label2, ...})
+        ) = LV.same (label1, label2)
+      | sameNode _ = false
+
+    fun destsOfEdge (Local (dests, _) | Precise dests |
+                     Imprecise dests | Fake dests) = dests
+
+    structure NodeTbl : MONO_HASH_TABLE = HashTableFn(struct
+      type hash_key = node
+      val hashVal = LV.Tbl.Key.hashVal o nodeLabel
+      val sameKey = sameNode
+    end)
+
+    datatype t = Graph of {
+      start  : node,
+      funtbl : funtbl,
+      succ   : edge NodeTbl.hash_table,
+      pred   : node list NodeTbl.hash_table
+    }
+
+    fun appendUniq ([], node) = [node]
+      | appendUniq (n :: ns, node) =
+          if sameNode (n, node) then n :: ns else n :: appendUniq (ns, node)
+
+    fun build (funtbl: funtbl, syn: S.t, {lookup, flow}: FlowCFA.result) : t =
+      let val succ : edge      NodeTbl.hash_table =
+            NodeTbl.mkTable (2 * S.numFuns syn, Fail "succ")
+          val pred : node list NodeTbl.hash_table =
+            NodeTbl.mkTable (2 * S.numFuns syn, Fail "succ")
+
+          val entryBlock = LCPS.FunTbl.lookup funtbl
+
+          fun insertSucc (src, dests) =
+            case NodeTbl.find succ src
+              of SOME _ => raise Fail "Multiple insertion"
+               | NONE => NodeTbl.insert succ (src, dests)
+            
+
+          fun insertPred (dest, src) =
+            case NodeTbl.find pred dest
+              of SOME srcs =>
+                   NodeTbl.insert pred (dest, appendUniq (srcs, src))
+               | NONE =>
+                   NodeTbl.insert pred (dest, [src])
+
+          fun addEdge (src, edge) =
+            let val () = insertSucc (src, edge)
+                val dests = destsOfEdge edge
+                val () = app (fn dest => insertPred (Node dest, src)) dests
+            in  ()
+            end
+
+          fun blocksOfValue (CPS.VAR v) : block list =
+                (case lookup v
+                   of NONE => []
+                    | SOME { unknown=true, ... } => []
+                    | SOME { known, ... } => map entryBlock known)
+            | blocksOfValue _ = []
+
+          fun processB (src as Block { term, ... }) =
+            (case term
+               of (Return (f, args) | Call (f, args) | Raise (f, args)) =>
+                    (case lookup f
+                       of NONE => addEdge (Node src, Imprecise [])
+                        | SOME { unknown=true, known=[] } =>
+                            (* If f is calling nothing but unknown
+                             * functions, the assumption is that the
+                             * unknown functions will call any
+                             * continuations/functions passed in. *)
+                            let val fake = List.concatMap blocksOfValue args
+                            in  addEdge (Node src, Fake fake)
+                            end
+                        | SOME { unknown=true, known } =>
+                            addEdge (Node src, Imprecise (map entryBlock known))
+                        | SOME { unknown=false, known } =>
+                            addEdge (Node src, Precise (map entryBlock known)))
+                | Branch (_, _, block1, block2, prob) =>
+                    (addEdge (Node src, Local ([block1, block2], prob));
+                     processB block1;
+                     processB block2)
+                | Switch blocks =>
+                    (addEdge (Node src, Local (map #1 blocks, NONE));
+                     app (processB o #1) blocks))
+
+          val () = LCPS.FunTbl.app processB funtbl
+          val start = Start (#2 (S.topLevel syn))
+                      (* Arbitrary unique label for start node *)
+          fun collectBlock (f, block, acc) =
+            (case flow f
+               of { escape=true, ... } => block :: acc
+                | _ => acc)
+            
+          val escapingBlocks =
+            LCPS.FunTbl.foldi 
+              (fn (f, block, acc) => collectBlock (f, block, acc)) [] funtbl
+          val () = addEdge (start, Fake escapingBlocks)
+      in  Graph { start=start, funtbl=funtbl, succ=succ, pred=pred }
+      end
+
+    fun root (Graph { start, ... }) = start
+    fun succ (Graph { succ=succTbl, ... }, n) =
+      destsOfEdge (NodeTbl.lookup succTbl n)
+    fun pred (Graph { pred=predTbl, ... }, n) =
+      NodeTbl.lookup predTbl n
+
+    local open DotLanguage in
+      fun dumpDot (Graph { start, funtbl, succ, pred }) =
+        let val nodeId = LV.lvarName o nodeLabel
+            fun blockId (Block {label, ...}) = LV.lvarName label
+            fun probToS p = Real.fmt (StringCvt.FIX (SOME 3)) (Prob.toReal p)
+            fun addEdges (src, edge, dot) =
+              let val dests =
+                    (case edge
+                       of Precise dests =>
+                            map (fn d => (d, [])) dests
+                        | Imprecise dests  =>
+                            map (fn d => (d,  [("style", "dashed")])) dests
+                        | Fake dests => 
+                            map (fn d => (d, 
+                                  [("style", "dashed"), ("color", "red")])) dests
+                        | Local ([b1, b2], SOME prob) =>
+                            [(b1, [("style", "bold"), ("label", probToS prob)]),
+                             (b2, [("style", "bold"),
+                                   ("label", probToS (Prob.not prob))])]
+                        | Local (dests, _) =>
+                            map (fn d => (d, [("style", "bold")])) dests)
+              in  foldl (fn ((dst, attrs), dot) =>
+                    << (dot, EDGE (nodeId src, blockId dst, attrs))) dot
+                    dests
+              end
+            fun addFunCluster (f: LCPS.function, block, dot) =
+              let fun blocknode (Block {label, term, ...}) : stmt =
+                    NODE (LV.lvarName label,
+                          [("label", terminatorName term), ("shape", "box")])
+                  fun walk (b as Block {term, ...}) : stmt list =
+                    (case term
+                       of Branch (_, _, b1, b2, _) =>
+                            blocknode b :: walk b1 @ walk b2
+                        | Switch blocks =>
+                            blocknode b :: List.concatMap (walk o #1) blocks
+                        | _ => [blocknode b])
+                  val fname = LV.lvarName (#2 f)
+                  val stmts = ATTR "graph[style=dotted]"
+                           :: ATTR (concat ["label=\"", fname, "\""])
+                           :: walk block
+                  val name = concat ["cluster_", fname]
+              in  << (dot, SUBGRAPH (SOME name, stmts))
+              end
+            val dot = empty (true, "control-flow")
+            val dot = LCPS.FunTbl.foldi addFunCluster dot funtbl
+            val dot = << (dot, NODE (nodeId start, 
+              [("label", "START"), ("shape", "box"), ("color", "red")]))
+            val dot = NodeTbl.foldi addEdges dot succ
+        in  dump dot
+        end
+    end
+  end
+
+
   (* TODO: put this in syntactic analysis *)
   fun immediateCallSites ((_, _, _, _, body): LCPS.function)
     : (LCPS.label * LCPS.value * LCPS.value list) list =
@@ -235,51 +455,10 @@ end = struct
     in  walk body
     end
 
-  datatype node = Start
-                | Function of LCPS.function
-                | End
-
-  fun nodeToNode Start = ("start", [("color", "red")])
-    | nodeToNode (Function f) = (LV.lvarName (#2 f), [])
-    | nodeToNode End = ("end", [("color", "blue")])
-
-  fun analyze (cps, syn, {lookup, flow}: FlowCFA.result) =
-    let fun escapes f = #escape (flow f)
-        val escaping =
-          S.foldF syn (fn (f, acc) => if escapes f then f :: acc else acc) [cps]
-
-        fun functionOfValue (CPS.VAR v) =
-              (case lookup v
-                 of NONE => []
-                  | SOME { unknown=true, ... } => []
-                  | SOME { known, ... } => known)
-          | functionOfValue _ = []
-
-        fun successor Start = map (fn f => (Function f, [])) escaping
-          | successor (Function f) =
-              let val calls = immediateCallSites f
-                  fun convert (_, CPS.VAR f, args) =
-                    (case lookup f
-                       of NONE => []
-                        | SOME { unknown=true, ... } =>
-                            (* If f is calling an unknown function with some
-                             * function/continuation as arguments, the assumption
-                             * is that the unknown function will call the
-                             * functions. *)
-                            let val fake = List.concatMap functionOfValue args
-                            in  map (fn f => (Function f, [("color", "gray")]))
-                                    fake
-                            end
-                        | SOME { known, ... } =>
-                            map (fn f => (Function f, [])) known)
-                    | convert _ = []
-              in  List.concatMap convert calls
-              end
-          | successor End = []
-
-        val graph = DotLanguage.fromGraph nodeToNode
-                      { roots=map Function escaping, follow=successor }
-        val () = DotLanguage.dump graph
+  fun analyze (cps, syn, flow: FlowCFA.result) =
+    let val funtbl = Summary.analyze syn
+        val graph  = Graph.build (funtbl, syn, flow)
+        val () = Graph.dumpDot graph
     in  ()
     end
 end
