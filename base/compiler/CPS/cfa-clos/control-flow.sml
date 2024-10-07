@@ -255,14 +255,22 @@ end = struct
       | Imprecise of block list
       | Fake of block list
 
+    structure NodeTbl : MONO_HASH_TABLE where type Key.hash_key = node
+
     type t
     val build : funtbl * S.t * FlowCFA.result -> t
 
-    val root : t -> node
-    val succ : t * node -> block list
-    val pred : t * node -> node list
+    val root  : t -> node
+    val succ  : t * node -> node list
+    val succ' : t * node -> block list
+    val pred  : t * node -> node list
+
+    val appPred : t * (node * node list -> unit) -> unit
+
+    val numNodes : t -> int
 
     val dumpDot : t -> unit
+    val dumpDot' : t * (node -> string) -> unit
   end = struct
 
     datatype node = Start of LCPS.label | Node of block
@@ -314,7 +322,7 @@ end = struct
             case NodeTbl.find succ src
               of SOME _ => raise Fail "Multiple insertion"
                | NONE => NodeTbl.insert succ (src, dests)
-            
+
 
           fun insertPred (dest, src) =
             case NodeTbl.find pred dest
@@ -369,22 +377,26 @@ end = struct
             (case flow f
                of { escape=true, ... } => block :: acc
                 | _ => acc)
-            
+
           val escapingBlocks =
-            LCPS.FunTbl.foldi 
+            LCPS.FunTbl.foldi
               (fn (f, block, acc) => collectBlock (f, block, acc)) [] funtbl
           val () = addEdge (start, Fake escapingBlocks)
       in  Graph { start=start, funtbl=funtbl, succ=succ, pred=pred }
       end
 
     fun root (Graph { start, ... }) = start
-    fun succ (Graph { succ=succTbl, ... }, n) =
+    fun succ' (Graph { succ=succTbl, ... }, n) =
       destsOfEdge (NodeTbl.lookup succTbl n)
-    fun pred (Graph { pred=predTbl, ... }, n) =
-      NodeTbl.lookup predTbl n
+    fun succ (graph, n) = map Node (succ' (graph, n))
+    fun pred (Graph { pred=predTbl, ... }, n) = NodeTbl.lookup predTbl n
+
+    fun appPred (Graph { pred=predTbl, ... }, f) = NodeTbl.appi f predTbl
+
+    fun numNodes (Graph { succ, ... }) = NodeTbl.numItems succ
 
     local open DotLanguage in
-      fun dumpDot (Graph { start, funtbl, succ, pred }) =
+      fun dumpDot' (Graph { start, funtbl, succ, pred }, ann) =
         let val nodeId = LV.lvarName o nodeLabel
             fun blockId (Block {label, ...}) = LV.lvarName label
             fun probToS p = Real.fmt (StringCvt.FIX (SOME 3)) (Prob.toReal p)
@@ -395,9 +407,10 @@ end = struct
                             map (fn d => (d, [])) dests
                         | Imprecise dests  =>
                             map (fn d => (d,  [("style", "dashed")])) dests
-                        | Fake dests => 
-                            map (fn d => (d, 
-                                  [("style", "dashed"), ("color", "red")])) dests
+                        | Fake dests =>
+                            map (fn d => (d,
+                                  [("style", "dashed"), ("color", "red"),
+                                   ("constraint", "false")])) dests
                         | Local ([b1, b2], SOME prob) =>
                             [(b1, [("style", "bold"), ("label", probToS prob)]),
                              (b2, [("style", "bold"),
@@ -409,9 +422,10 @@ end = struct
                     dests
               end
             fun addFunCluster (f: LCPS.function, block, dot) =
-              let fun blocknode (Block {label, term, ...}) : stmt =
+              let fun blocknode (b as Block {label, term, ...}) : stmt =
                     NODE (LV.lvarName label,
-                          [("label", terminatorName term), ("shape", "box")])
+                          [("label", terminatorName term ^ ann (Node b)),
+                           ("shape", "box")])
                   fun walk (b as Block {term, ...}) : stmt list =
                     (case term
                        of Branch (_, _, b1, b2, _) =>
@@ -428,37 +442,201 @@ end = struct
               end
             val dot = empty (true, "control-flow")
             val dot = LCPS.FunTbl.foldi addFunCluster dot funtbl
-            val dot = << (dot, NODE (nodeId start, 
-              [("label", "START"), ("shape", "box"), ("color", "red")]))
+            val dot = << (dot, NODE (nodeId start,
+              [("label", "START" ^ ann start), ("shape", "box"),
+               ("color", "red")]))
             val dot = NodeTbl.foldi addEdges dot succ
         in  dump dot
         end
+      fun dumpDot graph = dumpDot' (graph, fn _ => "")
     end
   end
 
+  structure LoopNestingTree :> sig
+    val build : Graph.t -> unit
+  end = struct
+    type number_tbl = int Graph.NodeTbl.hash_table
+    type node_tbl   = Graph.node Array.array
+    type last_tbl   = int Array.array
 
-  (* TODO: put this in syntactic analysis *)
-  fun immediateCallSites ((_, _, _, _, body): LCPS.function)
-    : (LCPS.label * LCPS.value * LCPS.value list) list =
-    let fun walk (LCPS.FIX (_, _, exp)) = walk exp
-          | walk (LCPS.APP app) = [app]
-          | walk (LCPS.SWITCH (_, _, _, exps)) = List.concatMap walk exps
-          | walk (LCPS.BRANCH (_, _, _, _, exp1, exp2)) = walk exp1 @ walk exp2
-          | walk ( LCPS.RECORD (_, _, _, _, exp)
-                 | LCPS.SELECT (_, _, _, _, _, exp)
-                 | LCPS.OFFSET (_, _, _, _, exp)
-                 | LCPS.SETTER (_, _, _, exp)
-                 | LCPS.LOOKER (_, _, _, _, _, exp)
-                 | LCPS.ARITH  (_, _, _, _, _, exp)
-                 | LCPS.PURE   (_, _, _, _, _, exp)
-                 | LCPS.RCC    (_, _, _, _, _, _, exp)) = walk exp
-    in  walk body
-    end
+    structure NodeTbl = Graph.NodeTbl
+
+    fun getPreorderNumbers (graph: Graph.t) : number_tbl * node_tbl * last_tbl =
+      let val counter = ref 0
+          fun incr (r as ref n) = r := n + 1
+
+          val start   = Graph.root graph
+          val nodeTbl = Array.array (Graph.numNodes graph, start)
+          val lastTbl = Array.array (Graph.numNodes graph, ~1)
+          val numberTbl = NodeTbl.mkTable (Graph.numNodes graph, Fail "number")
+
+          fun dfs node =
+            let val curr = !counter before incr counter
+                val () = NodeTbl.insert numberTbl (node, curr)
+                val () = Array.update (nodeTbl, curr, node)
+                val () = app (fn succ =>
+                  if NodeTbl.inDomain numberTbl succ then () else dfs succ)
+                  (Graph.succ (graph, node))
+                val last = !counter - 1
+            in  Array.update (lastTbl, curr, last)
+            end
+
+          val () = dfs start
+          val () = if !counter <> (Graph.numNodes graph) then
+                     raise Fail "???"
+                   else ()
+
+      in  (numberTbl, nodeTbl, lastTbl)
+      end
+
+    fun mkUnionFind sz = Array.tabulate (sz, fn i => i)
+
+    fun find trees =
+      let fun loop u =
+            let val parent = Array.sub (trees, u)
+            in  if u = parent then
+                  u
+                else
+                  let val root = loop parent (* path compression *)
+                  in  Array.update (trees, u, root); root
+                  end
+            end
+      in  loop
+      end
+
+    fun union trees (t1, t2) =
+      let val r1 = find trees t1
+          val r2 = find trees t2
+      in  case Int.compare (r1, r2)
+            of EQUAL   => ()
+             | LESS    => Array.update (trees, r2, r1)
+             | GREATER => Array.update (trees, r1, r2)
+      end
+
+    datatype node_type = NonHeader | Self | Reducible | Irreducible
+
+    fun nodeTyToString NonHeader = "nonheader"
+      | nodeTyToString Self = "self"
+      | nodeTyToString Reducible = "reducible"
+      | nodeTyToString Irreducible = "irreducible"
+
+    structure IntSet = IntRedBlackSet
+
+    (* Paul Havlak. "Nesting of Reducible and Irreducible Loops." TOPLAS'97 *)
+    fun analyzeLoops (graph, numTbl, lastTbl) =
+      let val numNodes     = Graph.numNodes graph
+          val backPreds    = Array.tabulate (numNodes, fn _ => [])
+          val nonBackPreds = Array.tabulate (numNodes, fn _ => [])
+          val header       = Array.tabulate (numNodes, fn _ => 0) (* start *)
+          val tyTbl        = Array.tabulate (numNodes, fn _ => NonHeader)
+
+          fun numberOf node = NodeTbl.lookup numTbl node
+          fun isAncestor (w, v) = w <= v andalso v <= Array.sub (lastTbl, w)
+
+          fun partitionPred (node, preds) =
+            let val w = numberOf node
+                val vs = map numberOf preds
+                (* For an edge (v -> w), if w is an ancestor of v, then v -> w
+                 * is a back edge. *)
+                val (back, nonBack) =
+                  List.partition (fn v => isAncestor (w, v)) vs
+            in  Array.update (backPreds, w, back);
+                Array.update (nonBackPreds, w, nonBack)
+            end
+          val () = Graph.appPred (graph, partitionPred)
+
+          (* Initialize the Union-Find data structure *)
+          val trees = mkUnionFind numNodes
+          val find  = find trees
+          val union = union trees
+
+          fun prependNonBackPreds (w, y) =
+            let val nonBack = Array.sub (nonBackPreds, w)
+            in  Array.update (nonBackPreds, w, y :: nonBack)
+            end
+
+          (* Main analysis loop *)
+          fun loop 0 = ()
+            | loop w =
+              let (* Get all back-edge predecessors *)
+                  val (preds, ty) =
+                    foldl (fn (v, (preds, hasSelf)) =>
+                      if v = w then
+                        (preds, Self)
+                      else
+                        (IntSet.add (preds, find v), Reducible)
+                    ) (IntSet.empty, NonHeader) (Array.sub (backPreds, w))
+
+                  (* Chase upwards for all non-back-edge predecessors of the
+                   * back-edge predecessors of w. This step finds the nodes in
+                   * the body of the loop. *)
+                  fun chaseUpward ([], preds, ty) = (preds, ty)
+                    | chaseUpward (x :: wl, preds, ty) =
+                        let fun chase (y, (wl, preds, ty)) =
+                              let val y' = find y
+                              in  if not (isAncestor (w, y')) then
+                                    (* if w is not an ancestor of y', there is
+                                     * another path into w's loop that avoids w.
+                                     * This loop is irreducible. *)
+                                    (prependNonBackPreds (w, y');
+                                     (wl, preds, Irreducible))
+                                  else if (not (IntSet.member (preds, y')))
+                                          andalso (y' <> w) then
+                                    (y' :: wl, IntSet.add (preds, y'), ty)
+                                  else
+                                    (wl, preds, ty)
+                              end
+                            val (wl, preds, ty) =
+                              foldl chase (wl, preds, ty)
+                                          (Array.sub (nonBackPreds, x))
+                        in  chaseUpward (wl, preds, ty)
+                        end
+
+                  val (preds, ty) =
+                    chaseUpward (IntSet.listItems preds, preds, ty)
+
+                  val () = IntSet.app (fn x =>
+                    (Array.update (header, x, w); union (x, w))
+                  ) preds
+
+                  val () = Array.update (tyTbl, w, ty)
+
+                  val () = app print [
+                    "Processed ", Int.toString w, ": ",
+                    "type=", nodeTyToString ty, " ",
+                    "preds=[", String.concatWithMap "," Int.toString
+                    (IntSet.listItems preds), "] "]
+
+                  val () = app print [
+                    "header=", String.concatWithMap "," Int.toString
+                    (Array.toList header), "\n"]
+
+              in  loop (w - 1)
+              end
+
+          val () = loop (numNodes - 1)
+      in  (header, tyTbl)
+      end
+
+    fun annotateWithTbl (numTbl, lastTbl) node =
+      let val number = NodeTbl.lookup numTbl node
+          val last = Array.sub (lastTbl, number)
+      in  concat ["(", Int.toString number, ",", Int.toString last, ")"]
+      end
+
+    fun build (graph: Graph.t) =
+      let val (numTbl, nodeTbl, lastTbl) = getPreorderNumbers graph
+          val () = Graph.dumpDot' (graph, annotateWithTbl (numTbl, lastTbl))
+          val (header, tyTbl) = analyzeLoops (graph, numTbl, lastTbl)
+      in  ()
+      end
+  end
 
   fun analyze (cps, syn, flow: FlowCFA.result) =
     let val funtbl = Summary.analyze syn
         val graph  = Graph.build (funtbl, syn, flow)
-        val () = Graph.dumpDot graph
+        val () = LoopNestingTree.build graph
+        (* val () = Graph.dumpDot graph *)
     in  ()
     end
 end
