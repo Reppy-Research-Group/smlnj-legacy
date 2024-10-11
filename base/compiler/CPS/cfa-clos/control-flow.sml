@@ -22,7 +22,7 @@ end = struct
       fix: fix list,
       function: LCPS.function
     }
-  withtype fix = LCPS.label * LCPS.function list
+  withtype fix = Group.t * LCPS.function list
 
   type funtbl = block LCPS.FunTbl.hash_table
 
@@ -31,18 +31,6 @@ end = struct
     | terminatorName (Raise _) = "raise"
     | terminatorName (Branch _) = "branch"
     | terminatorName (Switch _) = "switch"
-
-  (* number: block -> int
-   * node  : int -> block
-   * last  : int -> int
-   * pred  : int -> int
-   * succ  : int -> int
-   * entry : function -> block      <--- implied
-   * owner : block    -> function   <--- add??
-   *
-   * succ_kind : Goto, Approximate, Fake
-   * pred_kind : Goto, Approximate, Fake
-   *)
 
   structure Summary :> sig
     val analyze : S.t -> funtbl
@@ -191,7 +179,7 @@ end = struct
                 let val Block { term, fix, label, function } = walk exp
                 in  Block {
                       term=term,
-                      fix=(l, functions)::fix,
+                      fix=(Group.wrap l, functions)::fix,
                       label=label,
                       function=function
                     }
@@ -268,6 +256,7 @@ end = struct
     val appPred : t * (node * node list -> unit) -> unit
 
     val numNodes : t -> int
+    val nodeToString : node -> string
 
     val dumpDot : t -> unit
     val dumpDot' : t * (node -> string) -> unit
@@ -395,6 +384,10 @@ end = struct
 
     fun numNodes (Graph { succ, ... }) = NodeTbl.numItems succ
 
+    fun nodeToString (Start _) = "START"
+      | nodeToString (Node (Block { label, function, ... })) =
+          ("B" ^ LV.lvarName label ^ "[" ^ LV.lvarName (#2 function) ^ "]")
+
     local open DotLanguage in
       fun dumpDot' (Graph { start, funtbl, succ, pred }, ann) =
         let val nodeId = LV.lvarName o nodeLabel
@@ -453,7 +446,11 @@ end = struct
   end
 
   structure LoopNestingTree :> sig
-    val build : Graph.t -> unit
+    datatype node_type = NonHeader | Self | Reducible | Irreducible
+    type loop_info = { nestingDepth: int, header: Graph.node, ty: node_type }
+    type looptbl = loop_info Graph.NodeTbl.hash_table
+
+    val build : Graph.t -> looptbl
   end = struct
     type number_tbl = int Graph.NodeTbl.hash_table
     type node_tbl   = Graph.node Array.array
@@ -601,15 +598,15 @@ end = struct
 
                   val () = Array.update (tyTbl, w, ty)
 
-                  val () = app print [
-                    "Processed ", Int.toString w, ": ",
-                    "type=", nodeTyToString ty, " ",
-                    "preds=[", String.concatWithMap "," Int.toString
-                    (IntSet.listItems preds), "] "]
+                  (* val () = app print [ *)
+                  (*   "Processed ", Int.toString w, ": ", *)
+                  (*   "type=", nodeTyToString ty, " ", *)
+                  (*   "preds=[", String.concatWithMap "," Int.toString *)
+                  (*   (IntSet.listItems preds), "] "] *)
 
-                  val () = app print [
-                    "header=", String.concatWithMap "," Int.toString
-                    (Array.toList header), "\n"]
+                  (* val () = app print [ *)
+                  (*   "header=", String.concatWithMap "," Int.toString *)
+                  (*   (Array.toList header), "\n"] *)
 
               in  loop (w - 1)
               end
@@ -618,24 +615,339 @@ end = struct
       in  (header, tyTbl)
       end
 
-    fun annotateWithTbl (numTbl, lastTbl) node =
-      let val number = NodeTbl.lookup numTbl node
-          val last = Array.sub (lastTbl, number)
-      in  concat ["(", Int.toString number, ",", Int.toString last, ")"]
+    type loop_info = { nestingDepth: int, header: Graph.node, ty: node_type }
+    type looptbl = loop_info Graph.NodeTbl.hash_table
+
+    fun convertTree (nodeTbl, header, tyTbl): loop_info NodeTbl.hash_table =
+      let val numNodes = Array.length nodeTbl
+          val loopTbl  = NodeTbl.mkTable (numNodes, Fail "loop table")
+          fun iter v =
+            if v >= numNodes then
+              ()
+            else
+              let val hdr     = Array.sub (header, v)
+                  val hdrNode = Array.sub (nodeTbl, hdr)
+                  val ty      = Array.sub (tyTbl, v)
+                  val { nestingDepth, ... } = (NodeTbl.lookup loopTbl hdrNode)
+                  handle e => raise e
+                  val info =
+                    { nestingDepth=nestingDepth + 1, header=hdrNode, ty=ty }
+                  val node = Array.sub (nodeTbl, v)
+              in  NodeTbl.insert loopTbl (node, info);
+                  iter (v + 1)
+              end
+          val start = Array.sub (nodeTbl, 0)
+          val () = NodeTbl.insert loopTbl (start,
+            { nestingDepth=0, header=start, ty=NonHeader })
+          val () = iter 1
+      in  loopTbl
       end
+
+    fun annotateWithTbl (numTbl, loopTbl : loop_info NodeTbl.hash_table) node =
+      let val number = NodeTbl.lookup numTbl node
+          val {nestingDepth, header, ty} = (NodeTbl.lookup loopTbl node)
+          handle e => (print (Graph.nodeToString node); raise e)
+          val hdrnum = NodeTbl.lookup numTbl header
+      in  concat ["(", Int.toString number, ",", Int.toString hdrnum, ",",
+                  Int.toString nestingDepth, ",", nodeTyToString ty, ")"]
+      end
+
 
     fun build (graph: Graph.t) =
       let val (numTbl, nodeTbl, lastTbl) = getPreorderNumbers graph
-          val () = Graph.dumpDot' (graph, annotateWithTbl (numTbl, lastTbl))
           val (header, tyTbl) = analyzeLoops (graph, numTbl, lastTbl)
-      in  ()
+          val loopTbl = convertTree (nodeTbl, header, tyTbl)
+          (* val () = Graph.dumpDot' (graph, annotateWithTbl (numTbl, loopTbl)) *)
+      in  loopTbl
       end
+  end
+
+  type looptbl = LoopNestingTree.loop_info Graph.NodeTbl.hash_table
+
+  (* TODO: move this structure to another file *)
+  structure SharingAnalysis :> sig
+    type pack
+    val preference : LCPS.function * S.t * funtbl * looptbl
+                  -> pack Group.Tbl.hash_table
+  end = struct
+    structure PackID = IdentifierFn( )
+
+    datatype pack = Pack of {
+      packs: PackID.Set.set,
+      loose: LV.Set.set,
+      fv: LV.Set.set (* Invariant: disjointU (packs, loose) = fv *)
+    }
+
+    fun packToString (Pack { packs, loose, fv }) =
+      concat [
+        "(packs=[",
+        String.concatWithMap "," PackID.toString (PackID.Set.listItems packs),
+        "], ",
+        "loose=[",
+        String.concatWithMap "," LV.lvarName (LV.Set.listItems loose),
+        "], ",
+        "fv=[", String.concatWithMap "," LV.lvarName (LV.Set.listItems fv), "])"
+      ]
+
+    fun fvOfPack (Pack { fv, ... }) = fv
+    fun disjointPack (p1, p2) = LV.Set.disjoint (fvOfPack p1, fvOfPack p2)
+
+    fun sortBy (key : 'a -> int) (xs : 'a list) : 'a list =
+      let fun gt (x, y) = key x > key y
+      in  ListMergeSort.sort gt xs
+      end
+
+    fun removeMax (f : 'a -> int) (xs : 'a list) : 'a * 'a list =
+      let fun go (pre, _, maxEl, []) = (maxEl, pre)
+            | go (pre, maxN, maxEl, x :: xs) =
+               let val currN = f x
+               in  if currN > maxN then
+                     let val (m, post) = go ([], currN, x, xs)
+                     in  (m, maxEl :: pre @ post)
+                     end
+                   else
+                     go (x :: pre, maxN, maxEl, xs)
+               end
+      in  case xs
+            of [] => raise Empty
+             | [x] => (x, [])
+             | x :: xs => go ([], f x, x, xs)
+      end
+
+    (* Significance:
+     *
+     *
+     * function p3 { packs=[p2], loose=[] }
+     *   function p2: { packs=[p1], loose=[x] }
+     *     Create p1 is only a move
+     *
+     * function p3 { packs=[p2], loose=[] }
+     *   function p2: { packs=[p1], loose=[x] }
+     *     Create p1 is only a move
+     *)
+     (* ask a fix what it wants
+      *
+      * Tile fv:
+      *   Groups:
+      *     id list
+      *   Loose:
+      *     fv list
+      *   Function: group
+      *
+      *   GroupTbl: Group.id --> { groups, looseitems, total: fv list }
+      *     invariant: reachable == fv
+      *
+      *   In a group, there are groups and ``loose items.'' Loose items can
+      *   be converted to groups but groups cannot be touched.
+      *
+      * Leaf function:
+      *   --> groups: {}, looseitems: fvs
+      *
+      * Non-leaf function:
+      *   --> ask inner functions --> g: [groups, looseitems]
+      *
+      *   for each requested group:
+      *   1. Propagate up
+      *   2. Create here
+      *   3. Find other groups
+      *
+      *   use groups to tile my fvs
+      *   return groups: g, looseitems
+      * *)
+
+    fun preference (
+      cps: LCPS.function,
+      syn: S.t,
+      funtbl: funtbl,
+      loopTbl: looptbl
+    ) =
+      let val lookupBlock = LCPS.FunTbl.lookup funtbl
+          fun lookupLoopInfo block =
+            Graph.NodeTbl.lookup loopTbl (Graph.Node block)
+          fun isUsed fs v =
+            List.exists (fn f => LCPS.FunSet.member (S.useSites syn v, f)) fs
+          fun sortFixes blocks =
+            let fun walk (prob, b as Block { term, fix, ... }) =
+                  let val { nestingDepth, ... } = lookupLoopInfo b
+                      val curr = map (fn f => (f, nestingDepth, prob)) fix
+                  in  case term
+                        of Branch (_, _, b1, b2, probOpt) =>
+                             let val (prob1, prob2) =
+                                   case probOpt
+                                     of SOME p =>
+                                          (Prob.toReal p,
+                                           Prob.toReal (Prob.not p))
+                                      | NONE => (0.5, 0.5)
+                             in  curr @ walk (prob * prob1, b1)
+                                      @ walk (prob * prob2, b2)
+                             end
+                         | Switch blocks =>
+                             let val defaultProb =
+                                   1.0 / Real.fromInt (List.length blocks)
+                                 fun getOpt (SOME p) = Prob.toReal p
+                                   | getOpt NONE = defaultProb
+                             in  foldl (fn ((b, p), fixes) =>
+                                   walk (prob * getOpt p, b) @ fixes
+                                 ) curr blocks
+                             end
+                          | _ => curr
+                  end
+                val fixes = List.concatMap (fn b => walk (1.0, b)) blocks
+                fun gt ((_, l1, p1), (_, l2, p2)) =
+                  if l1 = l2 then p1 < p2 else l1 < l2
+            in  map #1 (ListMergeSort.sort gt fixes)
+            end
+          fun introducedAt (fs: LCPS.function list) v =
+            let val defsite = S.defSite syn v
+            in  List.exists (fn f => LV.same (#2 f, #2 defsite)) fs
+            end
+
+          val packTbl = PackID.Tbl.mkTable (S.numFuns syn, Fail "pack table")
+          val insertPack = PackID.Tbl.insert packTbl
+          val lookupPack = PackID.Tbl.lookup packTbl
+          val findPack = PackID.Tbl.find packTbl
+
+          val grpTbl = Group.Tbl.mkTable (S.numFuns syn, Fail "grp table")
+          val insertGroup = Group.Tbl.insert grpTbl
+          val lookupGroup = Group.Tbl.lookup grpTbl
+
+          fun setOfKeys (map: 'a LV.Map.map) : LV.Set.set =
+            let val keys = LV.Map.listKeys map
+            in  LV.Set.fromList keys
+            end
+
+          fun allPacks ([], result) = result
+            | allPacks (Pack { packs, ... }::ps, result) =
+                let val packs = PackID.Set.foldl (fn (p, res) =>
+                      (p, lookupPack p) :: res
+                    ) result packs
+                in  allPacks (ps, packs)
+                end
+
+          fun defDepth v = S.depthOf syn (S.defSite syn v)
+
+          fun mkPack (fs : LCPS.function list) data =
+            let val name = String.concatWithMap "-" (LV.lvarName o #2) fs
+                val packID = PackID.new name
+                val pack = Pack data
+            in  insertPack (packID, pack); (packID, pack)
+            end
+
+          fun ask (grp: Group.t, functions: LCPS.function list) : pack =
+            let val blocks = map lookupBlock functions
+                val fv     = setOfKeys (S.groupFV syn grp)
+                val fixes  = sortFixes blocks
+                val packs  = map ask fixes
+                val lowerLevelPacks = allPacks (packs, [])
+
+                val () =
+                  let val name = String.concatWithMap "," (LV.lvarName o #2)
+                                                       functions
+                  in  app print ["IN FUNCTIONS ", name, "\n"]
+                  end
+
+                (* See if we can throw any of the lower-level packs up since if
+                 * not we are responsible for allocating the pack. *)
+                val (ineligibles, candidates) =
+                  List.partition (fn (_, Pack { fv, ... }) =>
+                    LV.Set.exists (introducedAt functions) fv
+                  ) lowerLevelPacks
+
+                val () =
+                  app print [
+                  "candidates=[", String.concatWithMap ", "
+                  (packToString o #2) candidates, "]\n",
+                  "ineligibles=[", String.concatWithMap ", "
+                  (packToString o #2) ineligibles, "]\n"]
+
+
+                val (usedFV, unusedFV) = LV.Set.partition (isUsed functions) fv
+
+                (* TODO: Use a better heuristics *)
+                val (packs, remainingFV) =
+                  let fun pick (candidates, chosen, remain) =
+                        (case (candidates, LV.Set.isEmpty remain)
+                           of (([], _) | (_, true)) => (chosen, fv)
+                            | (c :: cs, _) =>
+                                let fun szinter (_, Pack {fv, ...}) =
+                                      let val inter =
+                                            LV.Set.intersection (fv, remain)
+                                      in  LV.Set.numItems inter
+                                      end
+                                    val (c, cs) = removeMax szinter (c :: cs)
+                                    val remain =
+                                      let val (_, Pack { fv, ... }) = c
+                                      in  LV.Set.difference (remain, fv)
+                                      end
+                                    (* TODO: This disallows duplication. *)
+                                    val cs = List.filter (fn (_, c') =>
+                                      disjointPack (#2 c, c')) cs
+                                in  pick (cs, c :: chosen, remain)
+                                end)
+                  in  pick (candidates, [], unusedFV)
+                  end
+
+                (* These are the free variables that the packs have not
+                 * accounted for. *)
+                val loose =
+                  let val fv = LV.Set.union (usedFV, remainingFV)
+                      val fv = LV.Set.listItems fv
+                  in  map (fn v => (v, defDepth v)) fv
+                  end
+
+                val currDepth = S.depthOf syn (List.hd functions)
+
+                val (packs, loose) =
+                  let fun cutoff (_, depth) = currDepth - depth >= 3
+                      val (far, near) = List.partition cutoff loose
+                  in  if List.length far >= 3 then
+                        let val loose = LV.Set.fromList (map #1 far)
+                            val newpack =
+                              mkPack functions {
+                                  packs=PackID.Set.empty,
+                                  loose=loose,
+                                  fv=loose
+                                }
+                        in  (newpack :: packs, near)
+                        end
+                      else
+                        (packs, loose)
+                  end
+                val result = Pack {
+                    packs=PackID.Set.fromList (map #1 packs),
+                    loose=LV.Set.fromList (map #1 loose),
+                    fv=fv
+                  }
+                val () = print "\n\n"
+            in  insertGroup (grp, result); result
+            end
+          val () =
+            let val fixes = sortFixes [lookupBlock cps]
+                val packs = map ask fixes
+            in  ()
+            end
+
+          val () = Group.Tbl.appi (fn (g, pack) =>
+            let val fs = S.groupFun syn g
+                val name = String.concatWithMap "," (LV.lvarName o #2)
+                                                    (Vector.toList fs)
+            in  app print [name, " --> ", packToString pack, "\n"]
+            end) grpTbl
+          val () = print "==============\n"
+          val () = PackID.Tbl.appi (fn (p, pack) =>
+            app print [PackID.toString p, " --> ", packToString pack, "\n"]
+          ) packTbl
+      in  grpTbl
+      end
+
+      (* Generate a dot file *)
   end
 
   fun analyze (cps, syn, flow: FlowCFA.result) =
     let val funtbl = Summary.analyze syn
         val graph  = Graph.build (funtbl, syn, flow)
-        val () = LoopNestingTree.build graph
+        val loopTbl = LoopNestingTree.build graph
+        val _ = SharingAnalysis.preference (cps, syn, funtbl, loopTbl)
         (* val () = Graph.dumpDot graph *)
     in  ()
     end

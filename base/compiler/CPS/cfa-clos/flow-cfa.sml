@@ -956,7 +956,7 @@ end = struct
         (* val () = timeit "flow-cfa " (fn () => run ctx) *)
         val () = run ctx
         (* val () = Context.dumpFlowGraph ctx *)
-        val () = Context.dump ctx
+        (* val () = Context.dump ctx *)
         (* val () = Profiler.report () *)
         (* val () = Context.dumpClosureDependency ctx *)
     in  Context.result ctx

@@ -48,7 +48,7 @@ end = struct
                 end
             | buildPath (parent, Use, dot) = dot
           fun collect (v, (f, paths), dot) =
-            let val dot = << (dot, EDGE (vid v, fid f, 
+            let val dot = << (dot, EDGE (vid v, fid f,
                   [("arrowhead", "none"), ("arrowtail", "none")]))
                 val dot = foldl (fn (p, dot) => buildPath (f, p, dot)) dot paths
             in  dot
@@ -130,7 +130,7 @@ end = struct
     let val tbl = LV.Tbl.mkTable (S.numVars syn div 2, Fail "lifetime")
         val lives = calculate (cps, syn, tbl)
         val () = if LV.Map.isEmpty lives then () else raise Fail "???"
-        val () = dumpDot tbl
+        (* val () = dumpDot tbl *)
         (* val () = LV.Tbl.appi dumpLife tbl *)
     in  ()
     end

@@ -30,3 +30,13 @@
 
 [ ] Unchanging variable analysis
 
+
+Unexplored paths:
+
+- Global cost function:
+    Take the current closure decision and cps, evaluate the cost
+
+- Sharing as a live range splitting problem:
+    A variable may be introduced at a function and not used until much later,
+    but it has to be carried around, moved from a closure to another.
+    Can ``spill'' these.

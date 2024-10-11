@@ -33,7 +33,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       val result = f x
       val stop = Time.now ()
       val diff = Time.- (stop, start)
-      val () = (print (str ^ " " ^ Time.toString diff); print "\n")
+      val () = app print ["Timing: ", str, " ", Time.toString diff, "\n"]
     in
       result
     end
@@ -50,9 +50,10 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
 
   (* fun timeit _ f x = f x *)
 
+  fun phase x = Stats.doPhase (Stats.makePhase x)
+
   fun test cps =
     let
-      (* val cps = #1 (FreeClose.freemapClose cps) *)
       val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n")
       val lcps = timeit "label" LabelledCPS.labelF cps
       handle e => (print "1\n"; raise e)
@@ -60,7 +61,8 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       handle e => (print "2\n"; raise e)
       val () = SyntacticInfo.dump syntactic
       (* val callgraph = ZeroCFA.analyze (syntactic, lcps) *)
-      val result = timeit "flow-cfa" FlowCFA.analyze (syntactic, lcps)
+      (* val result = timeit "flow-cfa" FlowCFA.analyze (syntactic, lcps) *)
+      val result = phase "CPS 081 cfa" FlowCFA.analyze (syntactic, lcps)
       handle e => (print "3\n"; raise e)
       val decision = timeit "flat" FlatClosureDecision.produce (lcps, syntactic)
       handle e => (print "4\n"; raise e)
