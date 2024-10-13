@@ -853,15 +853,15 @@ end = struct
                     LV.Set.exists (introducedAt functions) fv
                   ) lowerLevelPacks
 
-                val () =
-                  app print [
-                  "candidates=[", String.concatWithMap ", "
-                  (packToString o #2) candidates, "]\n",
-                  "ineligibles=[", String.concatWithMap ", "
-                  (packToString o #2) ineligibles, "]\n"]
+                (* val () = *)
+                (*   app print [ *)
+                (*   "candidates=[", String.concatWithMap ", " *)
+                (*   (packToString o #2) candidates, "]\n", *)
+                (*   "ineligibles=[", String.concatWithMap ", " *)
+                (*   (packToString o #2) ineligibles, "]\n"] *)
 
 
-                val (usedFV, unusedFV) = LV.Set.partition (isUsed functions) fv
+                (* val (usedFV, unusedFV) = LV.Set.partition (isUsed functions) fv *)
 
                 (* TODO: Use a better heuristics *)
                 val (packs, remainingFV) =
@@ -884,19 +884,22 @@ end = struct
                                       disjointPack (#2 c, c')) cs
                                 in  pick (cs, c :: chosen, remain)
                                 end)
-                  in  pick (candidates, [], unusedFV)
+                  in  pick (candidates, [], fv)
                   end
 
                 (* These are the free variables that the packs have not
                  * accounted for. *)
                 val loose =
-                  let val fv = LV.Set.union (usedFV, remainingFV)
+                  let val fv = foldl (fn ((_, Pack { fv, ... }), set) =>
+                          LV.Set.difference (set, fv)
+                        ) fv packs
                       val fv = LV.Set.listItems fv
                   in  map (fn v => (v, defDepth v)) fv
                   end
 
                 val currDepth = S.depthOf syn (List.hd functions)
 
+                (* TODO: group it better?? *)
                 val (packs, loose) =
                   let fun cutoff (_, depth) = currDepth - depth >= 3
                       val (far, near) = List.partition cutoff loose
@@ -918,9 +921,10 @@ end = struct
                     loose=LV.Set.fromList (map #1 loose),
                     fv=fv
                   }
-                val () = print "\n\n"
+                (* val () = print "\n\n" *)
             in  insertGroup (grp, result); result
             end
+
           val () =
             let val fixes = sortFixes [lookupBlock cps]
                 val packs = map ask fixes
