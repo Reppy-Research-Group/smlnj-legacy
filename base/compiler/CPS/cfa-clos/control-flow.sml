@@ -667,8 +667,9 @@ end = struct
   (* TODO: move this structure to another file *)
   structure SharingAnalysis :> sig
     type pack
-    val preference : LCPS.function * S.t * funtbl * looptbl
-                  -> pack Group.Tbl.hash_table
+    structure PackID : IDENTIFIER
+    val analyze : LCPS.function * S.t * funtbl * looptbl
+                -> pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table
   end = struct
     structure PackID = IdentifierFn( )
 
@@ -688,6 +689,11 @@ end = struct
         "], ",
         "fv=[", String.concatWithMap "," LV.lvarName (LV.Set.listItems fv), "])"
       ]
+
+    fun samePack (
+      Pack { packs=packs1, loose=loose1, ... },
+      Pack { packs=packs2, loose=loose2, ... }
+    ) = PackID.Set.equal (packs1, packs2) andalso LV.Set.equal (loose1, loose2)
 
     fun fvOfPack (Pack { fv, ... }) = fv
     fun disjointPack (p1, p2) = LV.Set.disjoint (fvOfPack p1, fvOfPack p2)
@@ -899,23 +905,44 @@ end = struct
 
                 val currDepth = S.depthOf syn (List.hd functions)
 
-                (* TODO: group it better?? *)
                 val (packs, loose) =
-                  let fun cutoff (_, depth) = currDepth - depth >= 3
-                      val (far, near) = List.partition cutoff loose
-                  in  if List.length far >= 3 then
-                        let val loose = LV.Set.fromList (map #1 far)
-                            val newpack =
-                              mkPack functions {
-                                  packs=PackID.Set.empty,
-                                  loose=loose,
-                                  fv=loose
-                                }
-                        in  (newpack :: packs, near)
-                        end
-                      else
-                        (packs, loose)
+                  let val loose = sortBy #2 loose
+                      val distCutoff = 1 and sizeCutoff = 3
+                      fun findCandidatePacks (vs, fstDepth, currPack, packs) =
+                        (case vs
+                           of [] => currPack :: packs
+                            | (v as (_, d)) :: vs =>
+                                if d - fstDepth > distCutoff then
+                                  findCandidatePacks
+                                    (vs, d, [v], currPack :: packs)
+                                else
+                                  findCandidatePacks
+                                    (vs, fstDepth, v :: currPack, packs))
+                      val candidatePacks : (CPS.lvar * int) list list =
+                        (case loose
+                           of [] => []
+                            | (v as (_, d)) :: vs =>
+                                findCandidatePacks (vs, d, [v], []))
+                      val (chosen, rejected) =
+                        List.partition
+                          (fn pack => List.length pack >= sizeCutoff)
+                          candidatePacks
+                      val loose = List.concat rejected
+                      val packs =
+                        foldl (fn (pack, packs) =>
+                          let val loose = LV.Set.fromList (map #1 pack)
+                              val newpack =
+                                mkPack functions {
+                                    packs=PackID.Set.empty,
+                                    loose=loose,
+                                    fv=loose
+                                  }
+                          in  newpack :: packs
+                          end
+                        ) packs chosen
+                  in  (packs, loose)
                   end
+
                 val result = Pack {
                     packs=PackID.Set.fromList (map #1 packs),
                     loose=LV.Set.fromList (map #1 loose),
@@ -931,6 +958,95 @@ end = struct
             in  ()
             end
 
+      in  (grpTbl, packTbl)
+      end
+
+      (* TODO:
+       * - If a pack is only used once, unpack it.
+       * - Elide the pack that are the same.
+       *)
+
+      fun prune (
+        grpTbl : pack Group.Tbl.hash_table,
+        packTbl : pack PackID.Tbl.hash_table
+      ) =
+      let
+          (* Step 1: Figure out what packs are the same *)
+          val replaceMap : PackID.t PackID.Map.map =
+            (* TODO: Do this faster than n^2 ? *)
+            PackID.Tbl.foldi (fn (packid1, pack1, map) =>
+              PackID.Tbl.foldi (fn (packid2, pack2, map) =>
+                if not (PackID.Map.inDomain (map, packid2))
+                   andalso not (PackID.same (packid1, packid2))
+                   andalso samePack (pack1, pack2) then
+                  PackID.Map.insert (map, packid2, packid1)
+                else
+                  map
+              ) map packTbl
+            ) PackID.Map.empty packTbl
+
+          fun replace packid =
+            (case PackID.Map.find (replaceMap, packid)
+               of SOME packid' => packid'
+                | NONE => packid)
+
+          fun replacePack (Pack {packs, loose, fv}) =
+            let val packs = PackID.Set.map replace packs
+            in  Pack { packs=packs, loose=loose, fv=fv }
+            end
+
+          val () = Group.Tbl.modify replacePack grpTbl
+
+          (* Step 2: Clean up unused or unshared packs *)
+          datatype usage = Unused
+                         | UsedOnlyBy of Group.t
+                         (* Items used more than once are cleared out of the
+                          * table *)
+          val usageTbl = PackID.Tbl.map (fn _ => Unused) packTbl
+          fun use grp pack =
+            (case PackID.Tbl.find usageTbl pack
+               of NONE => ()
+                | SOME Unused =>
+                    PackID.Tbl.insert usageTbl (pack, UsedOnlyBy grp)
+                | SOME (UsedOnlyBy _) =>
+                    ignore (PackID.Tbl.remove usageTbl pack))
+          val () = Group.Tbl.appi (fn (grp, Pack { packs, ... }) =>
+              PackID.Set.app (use grp) packs
+            ) grpTbl
+
+          (* NOTE: Currently, packs don't have other packs, so we don't need to
+           * scan the packTbl. If that changes in the future, scan it. *)
+
+          val () = PackID.Tbl.appi (fn (pckid, usage) =>
+              (case usage
+                 of Unused => ignore (PackID.Tbl.remove packTbl pckid)
+                  | UsedOnlyBy grp =>
+                      let val Pack { packs, loose, fv } =
+                            Group.Tbl.lookup grpTbl grp
+                          val packs = PackID.Set.delete (packs, pckid)
+                          val pack = PackID.Tbl.lookup packTbl pckid
+                          val loose = LV.Set.union (loose, fvOfPack pack)
+                          val newpack = Pack {
+                              packs=packs,
+                              loose=loose,
+                              fv=fv
+                            }
+                      in  PackID.Tbl.remove packTbl pckid;
+                          Group.Tbl.insert grpTbl (grp, newpack)
+                      end)
+             ) usageTbl
+      in  ()
+      end
+
+    fun analyze (
+      cps: LCPS.function,
+      syn: S.t,
+      funtbl: funtbl,
+      loopTbl: looptbl
+    ) : pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table =
+      let val (grpTbl, packTbl) = preference (cps, syn, funtbl, loopTbl)
+          val () = prune (grpTbl, packTbl)
+
           val () = Group.Tbl.appi (fn (g, pack) =>
             let val fs = S.groupFun syn g
                 val name = String.concatWithMap "," (LV.lvarName o #2)
@@ -941,7 +1057,7 @@ end = struct
           val () = PackID.Tbl.appi (fn (p, pack) =>
             app print [PackID.toString p, " --> ", packToString pack, "\n"]
           ) packTbl
-      in  grpTbl
+      in  (grpTbl, packTbl)
       end
 
       (* Generate a dot file *)
@@ -951,7 +1067,7 @@ end = struct
     let val funtbl = Summary.analyze syn
         val graph  = Graph.build (funtbl, syn, flow)
         val loopTbl = LoopNestingTree.build graph
-        val _ = SharingAnalysis.preference (cps, syn, funtbl, loopTbl)
+        val _ = SharingAnalysis.analyze (cps, syn, funtbl, loopTbl)
         (* val () = Graph.dumpDot graph *)
     in  ()
     end

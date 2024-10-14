@@ -1,8 +1,7 @@
 (* identifier-fn.sml
  *)
 
-functor IdentifierFn ( ) : sig
-
+signature IDENTIFIER = sig
     type t
 
     (* define a new variable with the given name *)
@@ -37,8 +36,9 @@ functor IdentifierFn ( ) : sig
     (* hash tables with identifier keys *)
     structure Tbl : MONO_HASH_TABLE where type Key.hash_key = t
 
-  end = struct
+end
 
+functor IdentifierFn ( ) : IDENTIFIER = struct
     datatype t = ID of {
         name : string,
         stamp : int,
