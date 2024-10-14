@@ -61,8 +61,8 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       handle e => (print "2\n"; raise e)
       val () = SyntacticInfo.dump syntactic
       (* val callgraph = ZeroCFA.analyze (syntactic, lcps) *)
-      (* val result = timeit "flow-cfa" FlowCFA.analyze (syntactic, lcps) *)
-      val result = phase "CPS 081 cfa" FlowCFA.analyze (syntactic, lcps)
+      val result = timeit "flow-cfa" FlowCFA.analyze (syntactic, lcps)
+      (* val result = phase "CPS 081 cfa" FlowCFA.analyze (syntactic, lcps) *)
       handle e => (print "3\n"; raise e)
       val decision = timeit "flat" FlatClosureDecision.produce (lcps, syntactic)
       handle e => (print "4\n"; raise e)
@@ -72,7 +72,8 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       (* val () = Web.dump web *)
 
       val () = Lifetime.analyze (lcps, syntactic)
-      val () = ControlFlow.analyze (lcps, syntactic, result)
+      val (funtbl, looptbl) = ControlFlow.analyze (lcps, syntactic, result)
+      val _ = SharingAnalysis.analyze (lcps, syntactic, funtbl, looptbl)
 
       val lcps = timeit "transform" Transform.transform (lcps, decision, web, syntactic)
       handle e => (print "6\n"; raise e)
