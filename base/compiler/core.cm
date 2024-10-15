@@ -307,6 +307,7 @@ CPS/cfa-clos/printer.sml
 CPS/cfa-clos/printer.sig
 CPS/cfa-clos/control-flow.sml
 CPS/cfa-clos/sharing-analysis.sml
+CPS/cfa-clos/pipeline.sml
 
 CPS/convert/convert.sml
 CPS/convert/cpstrans.sml

@@ -16,6 +16,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
   structure LV   = LambdaVar
   (* structure RefClosure = RefClosureFn(MachSpec) *)
   structure Cheat = Closure(MachSpec)
+  structure Pipeline = ClosureDecisionPipeline
 
   (* fun dumpSCC components = *)
   (*   let *)
@@ -39,7 +40,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
     end
   (* fun timeit' msg thnk x = *)
   (*   let val start = Timer.startCPUTimer () *)
-  (*       val result = thnk x *) 
+  (*       val result = thnk x *)
   (*       val { nongc={usr, sys}, gc={usr=gcusr, sys=gcsys} } = *)
   (*         Timer.checkCPUTimes start *)
   (*       val tos = Time.toString *)
@@ -73,34 +74,18 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
 
       val () = Lifetime.analyze (lcps, syntactic)
       val (funtbl, looptbl) = ControlFlow.analyze (lcps, syntactic, result)
-      val _ = SharingAnalysis.analyze (lcps, syntactic, funtbl, looptbl)
+      val shr = SharingAnalysis.analyze (lcps, syntactic, funtbl, looptbl)
+
+      val decision' = Pipeline.pipeline (lcps, syntactic, shr, funtbl)
 
       val lcps = timeit "transform" Transform.transform (lcps, decision, web, syntactic)
       handle e => (print "6\n"; raise e)
-
-      (* val () = print "RESULT:\n>>>>>>\n" *)
-      (* val () = PPCps.printcps0 (LCPS.unlabelF lcps) *)
-      (* val () = print "<<<<<<\n" *)
-
-      (* val repr = ClosureRep.initialize *)
-      (*              {cps=lcps, syn=syntactic, lookup=lookup, escape=escape} *)
-      (* val () = ClosureRep.dumpGraph repr *)
-      (* val () = CG.dumpStats callgraph *)
-      (* val f  = RefClosure.convert (lcps, callgraph, syntactic) *)
-      (* val () = ClosureRep.analyze (lcps, callgraph, syntactic) *)
-      (* val scc = CallGraph.scc callgraph *)
-      (* val cg  = CallGraph.callGraphDot callgraph *)
-      (* val web = CallGraph.callWebDot callgraph *)
-      (* val (lcps, lifetime) = Lifetime.analyze (lcps, callgraph) *)
-      (* val slots = ClosureRep.analyze (lcps, callgraph, lifetime) *)
-      (* val () = DotLanguage.dump cg *)
-      (* val () = dumpSCC scc *)
     in
       UnRebind.unrebind (LCPS.unlabelF lcps)
       (* Cheat.closeCPS cps *)
     end
-    handle e => 
-    (let 
+    handle e =>
+    (let
      (* val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n") *)
      in   raise e
      end)

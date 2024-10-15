@@ -195,6 +195,7 @@ end = struct
                                    (heap, sharedE, D.Record sharedV)
                              in  ([sharedE], heap)
                              end)
+                   (* TODO: Optimize for known functions *)
                    fun clos (f as (_, name, _, _, _)) =
                      (f, EnvID.wrap name, D.Code f :: map D.EnvID sharedE)
                    val closures = Vector.map clos functions

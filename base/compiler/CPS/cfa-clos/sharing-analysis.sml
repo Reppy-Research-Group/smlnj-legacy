@@ -4,14 +4,17 @@ structure SharingAnalysis :> sig
   datatype pack = Pack of {
     packs: PackID.Set.set,
     loose: LambdaVar.Set.set,
-    fv: LambdaVar.Set.set (* Invariant: disjointU (packs, loose) = fv *)
+    (* Invariant: disjointU (loose :: map #fv packs) = fv *)
+    fv: LambdaVar.Set.set
   }
 
-  val analyze
-    : LabelledCPS.function * SyntacticInfo.t
-                           * ControlFlow.funtbl
-                           * ControlFlow.looptbl
-    -> pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table
+  type result = pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table
+
+  val analyze : LabelledCPS.function
+              * SyntacticInfo.t
+              * ControlFlow.funtbl
+              * ControlFlow.looptbl
+              -> result
 end = struct
   structure PackID = IdentifierFn( )
   structure LCPS = LabelledCPS
@@ -27,6 +30,8 @@ end = struct
     loose: LV.Set.set,
     fv: LV.Set.set (* Invariant: disjointU (packs, loose) = fv *)
   }
+
+  type result = pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table
 
   fun packToString (Pack { packs, loose, fv }) =
     concat [
@@ -109,6 +114,17 @@ end = struct
     *   use groups to tile my fvs
     *   return groups: g, looseitems
     * *)
+
+  (* TODO:
+   * 1. Expansion may lead to some missed sharing opportunity.
+   *
+   * If a continuation variable is present in several closures, the current
+   * heuristics will not put it in a pack because there is no point in boxing
+   * one variable. But that variable will be expanded to 4 variables downstream.
+   * It might actually be beneficial to group the 4 variables together. An
+   * anticipatory size for each variable may be used to calculate the sizes of
+   * packs.
+   *)
 
   fun preference (
     cps: LCPS.function,
@@ -256,7 +272,7 @@ end = struct
 
               val (packs, loose) =
                 let val loose = sortBy #2 loose
-                    val distCutoff = 1 and sizeCutoff = 3
+                    val distCutoff = 2 and sizeCutoff = 3
                     fun findCandidatePacks (vs, fstDepth, currPack, packs) =
                       (case vs
                          of [] => currPack :: packs
@@ -325,7 +341,7 @@ end = struct
           (* TODO: Do this faster than n^2 ? *)
           PackID.Tbl.foldi (fn (packid1, pack1, map) =>
             PackID.Tbl.foldi (fn (packid2, pack2, map) =>
-              if not (PackID.Map.inDomain (map, packid2))
+              if not (PackID.Map.inDomain (map, packid1))
                  andalso not (PackID.same (packid1, packid2))
                  andalso samePack (pack1, pack2) then
                 PackID.Map.insert (map, packid2, packid1)
@@ -343,6 +359,10 @@ end = struct
           let val packs = PackID.Set.map replace packs
           in  Pack { packs=packs, loose=loose, fv=fv }
           end
+
+        val () = PackID.Map.appi (fn (p1, p2) =>
+          app print [PackID.toString p1, " ----> ", PackID.toString p2, "\n"]
+        ) replaceMap
 
         val () = Group.Tbl.modify replacePack grpTbl
 
