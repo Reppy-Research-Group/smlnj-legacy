@@ -76,7 +76,9 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       val (funtbl, looptbl) = ControlFlow.analyze (lcps, syntactic, result)
       val shr = SharingAnalysis.analyze (lcps, syntactic, funtbl, looptbl)
 
-      val decision' = Pipeline.pipeline (lcps, syntactic, shr, funtbl)
+      val decision' = Pipeline.pipeline (lcps, syntactic, web, shr, funtbl)
+      val lcps' = Transform.transform (lcps, decision', web, syntactic)
+       val () = (print "RESULT >>>>>\n"; PPCps.printcps0 (LCPS.unlabelF lcps'); print "<<<<<\n")
 
       val lcps = timeit "transform" Transform.transform (lcps, decision, web, syntactic)
       handle e => (print "6\n"; raise e)

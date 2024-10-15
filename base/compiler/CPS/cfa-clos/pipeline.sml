@@ -1,19 +1,20 @@
 structure ClosureDecisionPipeline :> sig
-  (* val initial : LabelledCPS.function * SyntacticInfo.t -> ClosureDecision.t *)
-  (* val share : ClosureDecision.t * SyntacticInfo.t * ControlFlow.block * SharingAnalysis.result *)
-  (*           -> ClosureDecision.t *)
-
-  val pipeline : LabelledCPS.function * SyntacticInfo.t * SharingAnalysis.result
-  * ControlFlow.funtbl -> ClosureDecision.t
+  val pipeline : LabelledCPS.function
+               * SyntacticInfo.t
+               * Web.t
+               * SharingAnalysis.result
+               * ControlFlow.funtbl
+              -> ClosureDecision.t
 end = struct
+  structure CF = ControlFlow
   structure D = ClosureDecision
   structure EnvID = D.EnvID
   structure LCPS = LabelledCPS
   structure LV = LambdaVar
+  structure PackID = SharingAnalysis.PackID
   structure S = SyntacticInfo
   structure SA = SharingAnalysis
-  structure CF = ControlFlow
-  structure PackID = SA.PackID
+  structure W = Web
 
   fun initial (cps: LCPS.function, syn: S.t) =
     let fun collect syn (group, (repr, allo, heap)) =
@@ -162,9 +163,21 @@ end = struct
     in  D.T { repr=repr, allo=allo, heap=heap }
     end
 
+  fun flattenEscapingClosures (
+    D.T {repr, allo, heap},
+    syn: S.t,
+    web: W.t
+  ) =
+    (* Step 1: allocate a bunch of NIL for all escaping closures' reprs.
+     *
+     * Step 2: replace all variables in the heap with the expansions
+     *)
+    raise Fail "unimp"
+
   fun pipeline (
     cps: LCPS.function,
     syn: S.t,
+    web: W.t,
     shr: SA.result,
     funtbl: CF.funtbl
   ): D.t =
