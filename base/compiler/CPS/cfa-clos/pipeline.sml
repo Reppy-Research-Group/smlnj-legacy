@@ -84,13 +84,14 @@ end = struct
             end
         | D.RawBlock _ => raise Fail "No raw blocks at this stage")
 
+  type rewriting = D.t -> D.t
+
   fun share (
-    D.T {repr, allo, heap},
     syn: S.t,
     entry: CF.block,
     funtbl: CF.funtbl,
     (grpTbl, packTbl): SA.result
-  ) : D.t =
+  ) (D.T {repr, allo, heap}) : D.t =
     let val envidTbl = PackID.Tbl.map (fn _ => EnvID.new ()) packTbl
         val envOfPack = PackID.Tbl.lookup envidTbl
         val entryOf = LCPS.FunTbl.lookup funtbl
@@ -164,15 +165,145 @@ end = struct
     end
 
   fun flattenEscapingClosures (
-    D.T {repr, allo, heap},
     syn: S.t,
     web: W.t
-  ) =
-    (* Step 1: allocate a bunch of NIL for all escaping closures' reprs.
-     *
-     * Step 2: replace all variables in the heap with the expansions
-     *)
-    raise Fail "unimp"
+  ) (D.T {repr, allo, heap}) =
+    (* Step 1: allocate a bunch of NIL for all escaping closures' reprs. *)
+     let fun isEscapingCont f =
+           let val w = W.webOfFun (web, f)
+           in  W.kind (web, w) = W.Cont
+               (* andalso W.polluted (web, w) = true *)
+           end
+
+         fun codePtr (D.SelectFrom { env=0, selects=[0] }, D.Boxed e) =
+               let val object = EnvID.Map.lookup (heap, e)
+               in  case object
+                     of D.Record (D.Code f :: _) => #2 f
+                      | _ => raise Fail "impossible"
+               end
+           | codePtr _ = raise Fail "unimp"
+
+         fun expandRepr (f, repr) =
+           let val D.Closure { code, env } = LCPS.FunMap.lookup (repr, f)
+               val (code, env) =
+                 (case env
+                    of D.Boxed e =>
+                         let val codep = codePtr (code, env)
+                         in  (D.Pointer codep,
+                              D.Flat [D.EnvID e, D.Null, D.Null])
+                         end
+                     | D.Flat slots =>
+                         let val length = List.length slots
+                             val diff   = 3 - length
+                         in  if diff > 0 then
+                               (code,
+                                D.Flat (slots @ List.tabulate (diff, fn _ => D.Null)))
+                             else if diff = 0 then
+                               (code, env)
+                             else
+                               raise Fail "impossible"
+                         end)
+            in  LCPS.FunMap.insert (repr, f, D.Closure { code=code, env=env })
+           end
+
+         val repr = S.foldF syn (fn (f, repr) =>
+             if isEscapingCont f then expandRepr (f, repr) else repr
+           ) repr
+
+         (* Step 2: replace all variables in the heap with the expansions *)
+         (* Do not need to go through reprs because they don't have expansions
+          * yet *)
+
+         fun isContVar (v, CPS.CNTt) = true
+           | isContVar _ = false
+
+         val bogusTy = CPSUtil.BOGt
+         fun expandObject (D.Record slots) =
+               let fun go [] = []
+                     | go ((x as D.Var (v, ty))::xs) =
+                         if isContVar (v, ty) then
+                           D.Var (v, ty)
+                           :: List.tabulate (3, fn i => D.Expand (v, i, bogusTy))
+                           @ go xs
+                         else
+                           x :: go xs
+                     | go (x :: xs) = x :: go xs
+               in  D.Record (go slots)
+               end
+           | expandObject obj = obj
+         val heap = EnvID.Map.map expandObject heap
+     in  D.T { repr=repr, allo=allo, heap=heap }
+     end
+
+  fun isFloatTy (CPS.FLTt _) = true
+    | isFloatTy _ = false
+
+  fun isUntaggedIntTy (CPS.NUMt { tag, ... }) = not tag
+    | isUntaggedIntTy _ = false
+
+  fun segregateMLValues (D.T { repr, allo, heap }): D.t =
+    let fun partitionSlots slots =
+          let fun go ([], slots, ints, flts) =
+                    (rev slots, rev ints, rev flts)
+                | go (x :: xs, slots, ints, flts) =
+                    (case x
+                       of D.Var (v, ty) =>
+                            if isUntaggedIntTy ty then
+                              go (xs, slots, v :: ints, flts)
+                            else if isFloatTy ty then
+                              go (xs, slots, ints, v :: flts)
+                            else
+                              go (xs, x :: slots, ints, flts)
+                        | _ => go (xs, x :: slots, ints, flts))
+          in  go (slots, [], [], [])
+          end
+        fun maybeAllocRaw ([], heap, _) = (NONE, heap)
+          | maybeAllocRaw (xs, heap, kind) =
+              let val env = EnvID.new ()
+                  val obj = D.RawBlock (xs, kind)
+                  val heap = EnvID.Map.insert (heap, env, obj)
+              in  (SOME env, heap)
+              end
+        val concatPartial = List.mapPartial Fn.id
+        fun scan (env, heap): EnvID.t list * D.heap =
+          let val object = EnvID.Map.lookup (heap, env)
+          in  case object
+                of D.RawBlock _ => ([], heap)
+                 | D.Record slots =>
+                     let val (slots, ints, flts) = partitionSlots slots
+                         val (intEnv, heap) =
+                           maybeAllocRaw (ints, heap, CPS.RK_RAWBLOCK)
+                         val (fltEnv, heap) =
+                           maybeAllocRaw (flts, heap, CPS.RK_RAW64BLOCK)
+                         val envs =
+                           List.mapPartial (Option.map D.EnvID) [intEnv, fltEnv]
+                         val heap =
+                           EnvID.Map.insert (heap, env, D.Record (slots @ envs))
+                     in  (concatPartial [intEnv, fltEnv], heap)
+                     end
+          end
+        val (allo, heap) = Group.Map.foldli (fn (grp, envs, (allo, heap)) =>
+            let val (envs, heap) = foldr (fn (env, (envs, heap)) =>
+                    let val (additional, heap) = scan (env, heap)
+                    in  (additional @ (env :: envs), heap)
+                    end
+                  ) ([], heap) envs
+                val allo = Group.Map.insert (allo, grp, envs)
+            in  (allo, heap)
+            end
+          ) (allo, heap) allo
+    in  D.T { repr=repr, allo=allo, heap=heap }
+    end
+
+  val _ = initial : LCPS.function * S.t -> D.t
+  val _ = share   : S.t * CF.block * CF.funtbl * SA.result -> rewriting
+  val _ = flattenEscapingClosures : S.t * W.t -> rewriting
+  val _ = segregateMLValues : rewriting
+
+  infix 2 >>>
+  fun f >>> g = fn x => g (f x)
+
+  (* TODO: clear out zero sized fields *)
 
   fun pipeline (
     cps: LCPS.function,
@@ -181,9 +312,13 @@ end = struct
     shr: SA.result,
     funtbl: CF.funtbl
   ): D.t =
-    let val decision = initial (cps, syn)
-        val decision =
-          share (decision, syn, LCPS.FunTbl.lookup funtbl cps, funtbl, shr)
+    let val process =
+              initial
+          >>> share (syn, LCPS.FunTbl.lookup funtbl cps, funtbl, shr)
+          >>> flattenEscapingClosures (syn, web)
+          >>> segregateMLValues
+
+        val decision = process (cps, syn)
         val () = ClosureDecision.dump (decision, syn)
     in  decision
     end
