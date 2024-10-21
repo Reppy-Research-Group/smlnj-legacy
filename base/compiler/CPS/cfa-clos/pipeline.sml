@@ -320,7 +320,7 @@ end = struct
               fun isCall (LCPS.APP (_, CPS.VAR v, _)) = LV.same (v, name)
                 | isCall _ = false
               val uses = S.usePoints syn name
-          in  LCPS.Set.all isCall uses
+          in  not (LCPS.Set.all isCall uses)
           end
         fun removeCodePtr (f, code, env, repr, heap) =
           (case (code, env)
@@ -565,7 +565,6 @@ end = struct
     in  D.T {repr=repr, allo=allo, heap=heap}
     end
 
-
   val _ = initial : LCPS.function * S.t -> D.t
   val _ = share   : S.t * CF.block * CF.funtbl * SA.result -> rewriting
   val _ = flattenEscapingClosures : S.t * W.t -> rewriting
@@ -575,11 +574,6 @@ end = struct
 
   infix 2 >>>
   fun f >>> g = fn x => g (f x)
-
-  (* TODO: clear out singleton envs *)
-  (* TODO: clear out one-element records *)
-  (* TODO: clear out zero sized fields *)
-  (* TODO: allocation *)
 
   fun pipeline (
     cps: LCPS.function,

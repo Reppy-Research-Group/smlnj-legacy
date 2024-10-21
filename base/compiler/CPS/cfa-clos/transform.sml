@@ -358,6 +358,8 @@ end = struct
                          in  LV.Map.insert (access, varOfEnv e,
                                Create {function=g, env=base, fields=envFields})
                          end
+                     | (D.Direct _, D.Boxed e) => access
+                         (* FIXME: This is a bogus case *)
                      | (_, D.Boxed e) => raise Fail "Check this"
                      | _ => access
               end) LV.Map.empty muts
