@@ -271,9 +271,9 @@ end = struct
                             function=function }
                 end
             | walk (LCPS.RECORD (_, _, fields, _, exp)) =
-                let val args = map #1 fields
+                let val args = map #2 fields
                     val Block { term, fix, label, uses, function } = walk exp
-                    val uses = LV.Set.addList (uses, args)
+                    val uses = mergeUses (uses, args)
                 in  Block { term=term, fix=fix, label=label, uses=uses,
                             function=function }
                 end

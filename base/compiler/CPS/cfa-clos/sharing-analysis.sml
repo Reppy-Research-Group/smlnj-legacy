@@ -170,7 +170,7 @@ end = struct
           end
         fun introducedAt (fs: LCPS.function list) v =
           let val defsite = S.defSite syn v
-          in  List.exists (fn f => LV.same (#2 f, #2 defsite)) fs
+          in  List.exists (fn f => LV.same (#2 f, v) orelse LV.same (#2 f, #2 defsite)) fs
           end
 
         val packTbl = PackID.Tbl.mkTable (S.numFuns syn, Fail "pack table")

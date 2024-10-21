@@ -174,4 +174,64 @@ structure ClosureDecision = struct
     in
       Vector.app printGroup (S.groups syn)
     end
+  fun dumpOne (T { repr, allo, heap }, syn, grp) =
+    let
+      val p = app print
+      val cwm = String.concatWithMap
+      val tyToS = CPSUtil.ctyToString
+      fun printSlot (indent, slot, printed) =
+        (case slot
+           of Var (v, ty) => p [indent, "Var ", LV.lvarName v, tyToS ty, "\n"]
+            | Code c => p [indent, "Lab ", LV.lvarName (#2 c), "\n"]
+            | Expand (v, i, ty) =>
+                p [indent, "Expand #", Int.toString i, " of ", LV.lvarName v,
+                   "(", tyToS ty, ")\n"]
+            | Null   => p [indent, "Null\n"]
+            | EnvID e =>
+                (p [indent, "Env ", EnvID.toString e, ":"];
+                 if EnvID.MonoSet.member (printed, e) then
+                   p [" <seen>\n"]
+                 else (
+                   p ["\n"];
+                   EnvID.MonoSet.add (printed, e);
+                   printObject ("  " ^ indent, EnvID.Map.lookup (heap, e),
+                                printed))))
+      and printSlots (indent, slots, printed) =
+        app (fn s => printSlot (indent, s, printed)) slots
+      and printObject (indent, obj, printed) =
+        (case obj
+           of Record slots => printSlots ("  " ^ indent, slots, printed)
+            | RawBlock (vs, _) =>
+                (p [indent, "RawBlock:\n"];
+                 app (fn v => p ["  ", indent, LV.lvarName v, "\n"]) vs))
+
+      fun kindToS CPS.CONT = "std_cont"
+        | kindToS CPS.KNOWN = "known"
+        | kindToS CPS.KNOWN_REC = "known_rec"
+        | kindToS CPS.KNOWN_CHECK = "known_chk"
+        | kindToS CPS.KNOWN_TAIL = "known_tail"
+        | kindToS CPS.KNOWN_CONT = "known_cont"
+        | kindToS CPS.ESCAPE = "std"
+        | kindToS CPS.NO_INLINE_INTO = "noinline"
+
+      fun funname ((kind, name, _, _, _): LCPS.function) =
+        concat [LV.lvarName name, "(", kindToS kind, ")"]
+
+      fun printGroup group =
+        let val functions = Vector.toList (S.groupFun syn group)
+            val () = p ["Group [", cwm "," funname functions, "]:\n"]
+            val printed = EnvID.MonoSet.mkEmpty 8
+            val alloc = Option.getOpt (Group.Map.find (allo, group), [])
+            val () = p ["  Allocating: [", cwm "," EnvID.toString alloc, "]\n"]
+            val () = app (fn f =>
+              let val cl as Closure { env, ... } = LCPS.FunMap.lookup (repr, f)
+              in  p ["  ", LV.lvarName (#2 f), " represented as ",
+                     closureToS cl, ":\n"];
+                  printSlots ("    ", envToSlots env, printed)
+              end) functions
+        in  ()
+        end
+    in
+      printGroup grp
+    end
 end
