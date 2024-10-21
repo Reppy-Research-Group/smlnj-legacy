@@ -434,21 +434,29 @@ end = struct
 
         val topPref = (10000, 1.20)
 
-        fun slotPref (slot, heap, pref) =
+        fun slotPref (slot, heap, pref, returnCont) =
           (case slot
              of D.EnvID e =>
                   (case EnvID.Map.lookup (heap, e)
                      of D.Record slots =>
                           foldl (fn (s, p) =>
-                            mergePref (p, slotPref (s, heap, pref))
+                            mergePref (p, slotPref (s, heap, pref, NONE))
                           ) (~1, ~1.0) slots
                       | D.RawBlock (vs, _) =>
                           foldl (fn (v, p) =>
                             mergePref (p, LV.Map.lookup (pref, v))
                           ) (~1, ~1.0) vs)
-              | (D.Var (v, _) | D.Expand (v, _, _)) =>
+              | (D.Var (v, _)) =>
                   (LV.Map.lookup (pref, v)
                   handle e => (print (LV.lvarName v ^ "\n") ;raise e))
+              | (D.Expand (v, _, _)) =>
+                  (case returnCont
+                     of SOME c =>
+                          if LV.same (v, c) then
+                            topPref
+                          else
+                            LV.Map.lookup (pref, v)
+                      | NONE => LV.Map.lookup (pref, v))
               | _ => (~1, ~1.0))
 
         fun sameProb (r1, r2) = Real.abs (r1 - r2) < 0.01
@@ -460,15 +468,15 @@ end = struct
               in  (x :: taken, dropped)
               end
 
-        fun pick (pref, heap, slots, n) : D.slot list * D.slot list =
+        fun pick (pref, returnCont, heap, slots, n) : D.slot list * D.slot list =
           let val slotsWithPref =
-                map (fn s => (s, slotPref (s, heap, pref))) slots
+                map (fn s => (s, slotPref (s, heap, pref, returnCont))) slots
               fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) =
                 if sameProb (prob1, prob2) then
-                  lvl1 > lvl2
+                  lvl1 < lvl2
                 else
-                  prob1 > prob2
-              val slots = rev (map #1 (ListMergeSort.sort gt slotsWithPref))
+                  prob1 < prob2
+              val slots = map #1 (ListMergeSort.sort gt slotsWithPref)
           in  take (slots, n)
           end
 
@@ -502,6 +510,7 @@ end = struct
                       | _ => heap)
                 ) heap environments
                 handle e => raise e
+              val returnC = S.returnCont syn (S.groupExp syn group)
               val (repr, heap) = Vector.foldl (fn (f, (repr, heap)) =>
                   let val D.Closure {code, env} = LCPS.FunMap.lookup (repr, f)
                       val (env, heap) =
@@ -526,7 +535,7 @@ end = struct
                                               raise Fail "impossible")
                                     val avail = List.length nulls
                                     val (taken, spilled) =
-                                      pick (pref, heap, slots, avail)
+                                      pick (pref, returnC, heap, slots, avail)
                                     val heap =
                                       EnvID.Map.insert (heap, e, D.Record spilled)
                                     val fst =
