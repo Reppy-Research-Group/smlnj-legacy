@@ -9,6 +9,7 @@ structure ControlFlow :> sig
       term: terminator,
       label: LabelledCPS.label,
       fix: fix list,
+      uses: LambdaVar.Set.set,
       function: LabelledCPS.function
     }
   withtype fix  = Group.t * LabelledCPS.function list
@@ -53,6 +54,7 @@ end = struct
       term: terminator,
       label: LCPS.label,
       fix: fix list,
+      uses: LV.Set.set,
       function: LCPS.function
     }
   withtype fix = Group.t * LCPS.function list
@@ -198,21 +200,26 @@ end = struct
           val insertInfo = LV.Tbl.insert info
           val lookupInfo = LV.Tbl.find info
           val typeof = S.typeof syn
-          fun walk (LCPS.APP (l, CPS.VAR v, args)) =
+          fun mergeUses (uses, values) =
+            foldl (fn (CPS.VAR v, uses) => LV.Set.add (uses, v)
+                    | (_, uses) => uses) uses values
+          fun walk (LCPS.APP (l, g as CPS.VAR v, args)) =
                 let val term =
                       (case typeof v
                          of CPS.CNTt => Return (v, args)
                           | _ => (case lookupInfo v
                                     of SOME Handler => Raise (v, args)
                                      | _ => Call (v, args)))
-                in  Block { term=term, fix=[], label=l, function=f }
+                    val uses = mergeUses (LV.Set.empty, g :: args)
+                in  Block { term=term, fix=[], label=l, uses=uses, function=f }
                 end
             | walk (LCPS.APP (_, _, _)) = raise Fail "App non arg"
             | walk (LCPS.FIX (l, functions, exp)) =
-                let val Block { term, fix, label, function } = walk exp
+                let val Block { term, fix, label, uses, function } = walk exp
                 in  Block {
                       term=term,
                       fix=(Group.wrap l, functions)::fix,
+                      uses=uses,
                       label=label,
                       function=function
                     }
@@ -222,9 +229,10 @@ end = struct
                     val blk2 = walk exp2
                     val prob = predict (lookupInfo, branch, args, blk1, blk2)
                     val term = Branch (branch, args, blk1, blk2, prob)
-                in  Block { term=term, fix=[], label=l, function=f }
+                    val uses = mergeUses (LV.Set.empty, args)
+                in  Block { term=term, fix=[], label=l, uses=uses, function=f }
                 end
-            | walk (LCPS.SWITCH (l, _, _, exps)) =
+            | walk (LCPS.SWITCH (l, arg, _, exps)) =
                 let (* TODO: multi-arm branch prediction?
                      *
                      * The problem with SWITCH in the CPS IR is that there is no
@@ -232,20 +240,44 @@ end = struct
                      * integer. The only heuristics that could apply is RH, and
                      * I'm not sure how useful it is. *)
                     val blocks = map (fn e => (walk e, NONE)) exps
-                in  Block { term=Switch blocks, fix=[], label=l, function=f }
+                    val uses = mergeUses (LV.Set.empty, [arg])
+                in  Block { term=Switch blocks, fix=[], label=l, uses=uses,
+                            function=f }
                 end
-            | walk (LCPS.PURE (_, (CPS.P.OBJLENGTH|CPS.P.LENGTH), _, x, _, e)) =
-                (insertInfo (x, Length); walk e)
-            | walk (LCPS.PURE (_, _, _, _, _, exp)) = walk exp
-            | walk (LCPS.LOOKER (_, CPS.P.GETHDLR, _, x, _, e)) =
+            | walk (LCPS.PURE (_, (CPS.P.OBJLENGTH|CPS.P.LENGTH), args, x, _, e)) =
+                let val () = insertInfo (x, Length)
+                    val Block { term, fix, label, uses, function } = walk e
+                    val uses = mergeUses (uses, args)
+                in  Block { term=term, fix=fix, label=label, uses=uses,
+                            function=function }
+                end
+            | walk (LCPS.LOOKER (_, CPS.P.GETHDLR, [], x, _, e)) =
                 (insertInfo (x, Handler); walk e)
-            | walk (LCPS.LOOKER (_, _, _, _, _, exp)) = walk exp
-            | walk (LCPS.RECORD (_, _, _, _, exp)) = walk exp
-            | walk (LCPS.SELECT (_, _, _, _, _, exp)) = walk exp
-            | walk (LCPS.OFFSET (_, _, _, _, exp)) = walk exp
-            | walk (LCPS.SETTER (_, _, _, exp)) = walk exp
-            | walk (LCPS.ARITH  (_, _, _, _, _, exp)) = walk exp
-            | walk (LCPS.RCC (_, _, _, _, _, _, exp)) = walk exp
+            | walk ( LCPS.PURE (_, _, args, _, _, exp)
+                   | LCPS.LOOKER (_, _, args, _, _, exp)
+                   | LCPS.SETTER (_, _, args, exp)
+                   | LCPS.ARITH  (_, _, args, _, _, exp)
+                   | LCPS.RCC (_, _, _, _, args, _, exp)) =
+                let val Block { term, fix, label, uses, function } = walk exp
+                    val uses = mergeUses (uses, args)
+                in  Block { term=term, fix=fix, label=label, uses=uses,
+                            function=function }
+                end
+            | walk ( LCPS.OFFSET (_, _, arg, _, exp)
+                   | LCPS.SELECT (_, _, arg, _, _, exp)) =
+                let val Block { term, fix, label, uses, function } = walk exp
+                    val uses = mergeUses (uses, [arg])
+                in  Block { term=term, fix=fix, label=label, uses=uses,
+                            function=function }
+                end
+            | walk (LCPS.RECORD (_, _, fields, _, exp)) =
+                let val args = map #1 fields
+                    val Block { term, fix, label, uses, function } = walk exp
+                    val uses = LV.Set.addList (uses, args)
+                in  Block { term=term, fix=fix, label=label, uses=uses,
+                            function=function }
+                end
+
           val (_, _, _, _, cexp) = f
       in  walk cexp
       end
