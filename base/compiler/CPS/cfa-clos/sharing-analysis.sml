@@ -297,7 +297,7 @@ end = struct
                     fun packSize pack =
                       let fun sz (v, _) =
                             (case S.typeof syn v
-                               of CPS.CNTt => 3
+                               of CPS.CNTt => 4
                                 | _ => 1)
                       in  foldl (fn (v, sum) => sz v + sum) 0 pack
                       end
