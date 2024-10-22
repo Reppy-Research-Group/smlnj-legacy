@@ -116,7 +116,7 @@ end = struct
     * *)
 
   (* TODO:
-   * 1. Expansion may lead to some missed sharing opportunity.
+   * 1. Expansion may lead to some missed sharing opportunities. [FIXED]
    *
    * If a continuation variable is present in several closures, the current
    * heuristics will not put it in a pack because there is no point in boxing
@@ -124,6 +124,12 @@ end = struct
    * It might actually be beneficial to group the 4 variables together. An
    * anticipatory size for each variable may be used to calculate the sizes of
    * packs.
+   *
+   * 2. Missed closure sharing opportunities from closing over recursive
+   *    functions.
+   *
+   * If a function closes over its parent function (recursively), it can access
+   * parts of its environment from the parent function.
    *)
 
   fun preference (
@@ -272,7 +278,7 @@ end = struct
 
               val (packs, loose) =
                 let val loose = sortBy #2 loose
-                    val distCutoff = 1 and sizeCutoff = 2
+                    val distCutoff = 1 and sizeCutoff = 4
                     fun findCandidatePacks (vs, fstDepth, currPack, packs) =
                       (case vs
                          of [] => currPack :: packs
@@ -337,6 +343,32 @@ end = struct
      * - If a pack is only used once, unpack it.
      * - Elide the pack that are the same.
      *)
+
+    fun thin (
+      grpTbl : pack Group.Tbl.hash_table,
+      packTbl : pack PackID.Tbl.hash_table,
+      syn : S.t
+    ) =
+    let val knownFun = S.knownFun syn
+        fun packOf f = Group.Tbl.lookup grpTbl (S.groupOf syn f)
+        fun thinning (Pack { loose, packs, fv }) =
+          let fun go (v, (loose, packs)) =
+                (case knownFun v
+                   of NONE => (loose, packs)
+                    | SOME f =>
+                        let val Pack { packs=packsF, fv=fvF, ... } = packOf f
+                            val loose = LV.Set.difference (loose, fvF)
+                            val packs = PackID.Set.difference (packs, packsF)
+                        in  (loose, packs)
+                        end)
+              val (loose, packs) =
+                LV.Set.foldl go (loose, packs) fv
+          in  Pack { loose=loose, packs=packs, fv=fv }
+          end
+        val () = Group.Tbl.modify thinning grpTbl
+        val () = PackID.Tbl.modify thinning packTbl
+    in  ()
+    end
 
     fun prune (
       grpTbl : pack Group.Tbl.hash_table,
@@ -422,6 +454,7 @@ end = struct
   ) : pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table =
     let val (grpTbl, packTbl) = preference (cps, syn, funtbl, loopTbl)
         val () = prune (grpTbl, packTbl)
+        val () = thin (grpTbl, packTbl, syn)
 
         val () = Group.Tbl.appi (fn (g, pack) =>
           let val fs = S.groupFun syn g
