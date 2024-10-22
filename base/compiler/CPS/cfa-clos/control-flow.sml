@@ -430,7 +430,15 @@ end = struct
           fun collectBlock (f, block, acc) =
             (case flow f
                of { escape=true, ... } => block :: acc
-                | _ => acc)
+                | _ =>
+                    (* There are known blocks without predecessor. E.g. If a
+                     * function is put in a ref-cell, but the ref-cell is never
+                     * dereferenced. The CFA is able to recognize that this
+                     * function is unreachable while a syntactic analysis is
+                     * not. *)
+                    (case NodeTbl.find pred (Node block)
+                       of (NONE | SOME []) => block :: acc
+                        | _ => acc))
 
           val escapingBlocks =
             LCPS.FunTbl.foldi
@@ -545,7 +553,8 @@ end = struct
 
           val () = dfs start
           val () = if !counter <> (Graph.numNodes graph) then
-                     raise Fail "???"
+                     raise Fail (concat [Int.toString (!counter), "<>",
+                     Int.toString (Graph.numNodes graph), "???"])
                    else ()
 
       in  (numberTbl, nodeTbl, lastTbl)

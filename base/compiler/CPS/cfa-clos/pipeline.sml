@@ -97,10 +97,11 @@ end = struct
         val envOfPack = PackID.Tbl.lookup envidTbl
         val entryOf = LCPS.FunTbl.lookup funtbl
         fun shares (grp, functions, availPacks, allo, heap) =
-          let val SA.Pack { packs, loose, ... } = Group.Tbl.lookup grpTbl grp
-              val packs = PackID.Set.listItems packs
+          let val SA.Pack { packs=packs', loose, ... } =
+                Group.Tbl.lookup grpTbl grp
+              val packs = PackID.Set.listItems packs'
               val packEnvs = map envOfPack packs
-              val heap = 
+              val heap =
                 (case Group.Map.lookup (allo, grp)
                    of env :: _ =>
                         let val object = EnvID.Map.lookup (heap, env)
@@ -141,7 +142,7 @@ end = struct
                 ) heap allocate
 
               (* NOTE: assumes no flattening has taken place *)
-          in  (PackID.Set.addList (availPacks, allocate), allo, heap)
+          in  (packs', allo, heap)
           end
         fun walk (CF.Block {term, fix, ... }, availPacks, allo: D.allo, heap:
           D.heap) =
@@ -388,7 +389,7 @@ end = struct
           | trueFV ((x as D.EnvID e) :: xs, repr, heap) =
               (case EnvID.Map.lookup (heap, e)
                  of D.Record [] => trueFV (xs, repr, heap)
-                  | D.Record [y] => y :: trueFV (xs, repr, heap)
+                  | D.Record [y as D.EnvID _] => y :: trueFV (xs, repr, heap)
                   | _ => x :: trueFV (xs, repr, heap))
           | trueFV (x :: xs, repr, heap) = x :: trueFV (xs, repr, heap)
 
