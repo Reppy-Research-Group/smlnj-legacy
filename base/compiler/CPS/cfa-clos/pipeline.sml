@@ -363,7 +363,7 @@ end = struct
                       let val D.Closure {code, env} =
                             LCPS.FunMap.lookup (repr, f)
                       in  case env
-                            of D.Boxed e => x :: trueFV (xs, repr, heap)
+                            of D.Boxed e => D.EnvID e :: trueFV (xs, repr, heap)
                              | D.Flat _ => trueFV (xs, repr, heap)
                       end
                   | NONE => x :: trueFV (xs, repr, heap))
@@ -432,6 +432,8 @@ end = struct
           in  build (entry, 1.0)
           end
 
+        val botPref = (~1, ~1.0)
+
         fun slotPref (slot, heap, pref) =
           (case slot
              of D.EnvID e =>
@@ -439,15 +441,20 @@ end = struct
                      of D.Record slots =>
                           foldl (fn (s, p) =>
                             mergePref (p, slotPref (s, heap, pref))
-                          ) (~1, ~1.0) slots
+                          ) botPref slots
                       | D.RawBlock (vs, _) =>
                           foldl (fn (v, p) =>
                             mergePref (p, LV.Map.lookup (pref, v))
-                          ) (~1, ~1.0) vs)
+                          ) botPref vs)
               | (D.Var (v, _) | D.Expand (v, _, _)) =>
-                  (LV.Map.lookup (pref, v)
-                  handle e => (print (LV.lvarName v ^ "\n") ;raise e))
-              | _ => (~1, ~1.0))
+                  (* This is possible because a closure may close over a known
+                   * function, and it is save to share everything in that
+                   * function's closure even though some variables may not be
+                   * used directly *)
+                  (case LV.Map.find (pref, v)
+                     of NONE => botPref
+                      | SOME p => p)
+              | _ => botPref)
 
         fun sameProb (r1, r2) = Real.abs (r1 - r2) < 0.01
 
@@ -536,8 +543,8 @@ end = struct
                                     val (fst, heap) =
                                       (case spilled
                                          of [] => (D.Null, update (heap, e, []))
-                                          | [x] => (x, update (heap, e, [])) 
-                                          | _ => 
+                                          | [x] => (x, update (heap, e, []))
+                                          | _ =>
                                               (D.EnvID e,
                                                update (heap, e, spilled)))
                                 in  (D.Flat (taken @ [fst]), heap)
