@@ -65,8 +65,8 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       val result = timeit "flow-cfa" FlowCFA.analyze (syntactic, lcps)
       (* val result = phase "CPS 081 cfa" FlowCFA.analyze (syntactic, lcps) *)
       handle e => (print "3\n"; raise e)
-      val decision = timeit "flat" FlatClosureDecision.produce (lcps, syntactic)
-      handle e => (print "4\n"; raise e)
+      (* val decision = timeit "flat" FlatClosureDecision.produce (lcps, syntactic) *)
+      (* handle e => (print "4\n"; raise e) *)
       (* val () = ClosureDecision.dump (decision, syntactic) *)
       val web = timeit "web" Web.calculate (result, syntactic)
       handle e => (print "5\n"; raise e)
@@ -79,12 +79,13 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       val decision' =
         Pipeline.pipeline (lcps, syntactic, web, shr, funtbl, looptbl)
       val lcps' = Transform.transform (lcps, decision', web, syntactic)
-       val () = (print "RESULT >>>>>\n"; PPCps.printcps0 (LCPS.unlabelF lcps'); print "<<<<<\n")
+      val lcps' = AvailableExpression.transform lcps'
+      val () = (print "RESULT >>>>>\n"; PPCps.printcps0 (LCPS.unlabelF lcps'); print "<<<<<\n")
 
-      val lcps = timeit "transform" Transform.transform (lcps, decision, web, syntactic)
-      handle e => (print "6\n"; raise e)
+      (* val lcps = timeit "transform" Transform.transform (lcps, decision, web, syntactic) *)
+      (* handle e => (print "6\n"; raise e) *)
     in
-      UnRebind.unrebind (LCPS.unlabelF lcps)
+      UnRebind.unrebind (LCPS.unlabelF lcps')
       (* Cheat.closeCPS cps *)
     end
     handle e =>

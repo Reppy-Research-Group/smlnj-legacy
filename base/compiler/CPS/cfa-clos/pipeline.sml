@@ -328,6 +328,7 @@ end = struct
                         (case EnvID.Map.lookup (heap, e)
                            of D.Record (D.Code _ :: slots) => D.Record slots
                             | _ => raise Fail "impossible")
+                      (* FIXME: Change it to Flat [EnvID e] *)
                       val closure = D.Closure {code=D.Direct f, env=D.Boxed e}
                       val heap = EnvID.Map.insert (heap, e, object)
                       val repr = LCPS.FunMap.insert (repr, f, closure)
@@ -460,11 +461,16 @@ end = struct
         fun pick (pref, heap, slots, n) : D.slot list * D.slot list =
           let val slotsWithPref =
                 map (fn s => (s, slotPref (s, heap, pref))) slots
+              (* fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) = *)
+              (*   if sameProb (prob1, prob2) then *)
+              (*     lvl1 < lvl2 *)
+              (*   else *)
+              (*     prob1 < prob2 *)
               fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) =
-                if sameProb (prob1, prob2) then
-                  lvl1 < lvl2
-                else
+                if lvl1 = lvl2 then
                   prob1 < prob2
+                else
+                  lvl1 < lvl2
               val slots = map #1 (ListMergeSort.sort gt slotsWithPref)
           in  take (slots, n)
           end
@@ -525,13 +531,15 @@ end = struct
                                     val avail = List.length nulls
                                     val (taken, spilled) =
                                       pick (pref, heap, slots, avail)
-                                    val heap =
-                                      EnvID.Map.insert (heap, e, D.Record spilled)
-                                    val fst =
+                                    fun update (heap, e, slots) =
+                                      EnvID.Map.insert (heap, e, D.Record slots)
+                                    val (fst, heap) =
                                       (case spilled
-                                         of [] => D.Null
-                                          | [x] => x
-                                          | _ => D.EnvID e)
+                                         of [] => (D.Null, update (heap, e, []))
+                                          | [x] => (x, update (heap, e, [])) 
+                                          | _ => 
+                                              (D.EnvID e,
+                                               update (heap, e, spilled)))
                                 in  (D.Flat (taken @ [fst]), heap)
                                 end
                             | D.Flat _ => raise Fail "impossible")
