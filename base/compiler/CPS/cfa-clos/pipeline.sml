@@ -388,7 +388,7 @@ end = struct
           | trueFV ((x as D.EnvID e) :: xs, repr, heap) =
               (case EnvID.Map.lookup (heap, e)
                  of D.Record [] => trueFV (xs, repr, heap)
-                  | D.Record [y] => y :: trueFV (xs, repr, heap)
+                  | D.Record [y as D.EnvID _] => y :: trueFV (xs, repr, heap)
                   | _ => x :: trueFV (xs, repr, heap))
           | trueFV (x :: xs, repr, heap) = x :: trueFV (xs, repr, heap)
 
@@ -572,7 +572,6 @@ end = struct
                   (case EnvID.Map.lookup (heap, e)
                      of D.Record [] => false
                       | D.Record [D.EnvID _] => false
-                      (* | D.Record [x] => false *)
                       | _ => true)
                 ) environments
                 handle e => raise e
