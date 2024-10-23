@@ -626,8 +626,8 @@ end = struct
           >>> allocate'n'expand (syn, funtbl, looptbl)
 
         val decision = process (cps, syn)
-        val () = print "FINAL\n"
-        val () = ClosureDecision.dump (decision, syn)
+        (* val () = print "FINAL\n" *)
+        (* val () = ClosureDecision.dump (decision, syn) *)
     in  decision
     end
 end
