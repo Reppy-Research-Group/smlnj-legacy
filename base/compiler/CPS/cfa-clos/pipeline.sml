@@ -300,9 +300,18 @@ end = struct
                      in  (concatPartial [intEnv, fltEnv], heap)
                      end
           end
+        val scanTbl = EnvID.Tbl.mkTable (32, Fail "scanTbl")
+        fun scan' (env, heap): EnvID.t list * D.heap =
+          (case EnvID.Tbl.find scanTbl env
+             of SOME additional => (additional, heap)
+              | NONE =>
+                  let val (additional, heap) = scan (env, heap)
+                  in  EnvID.Tbl.insert scanTbl (env, additional);
+                      (additional, heap)
+                  end)
         val (allo, heap) = Group.Map.foldli (fn (grp, envs, (allo, heap)) =>
             let val (envs, heap) = foldr (fn (env, (envs, heap)) =>
-                    let val (additional, heap) = scan (env, heap)
+                    let val (additional, heap) = scan' (env, heap)
                     in  (additional @ (env :: envs), heap)
                     end
                   ) ([], heap) envs
@@ -619,7 +628,7 @@ end = struct
 
         val decision = process (cps, syn)
         (* val () = print "FINAL\n" *)
-        val () = ClosureDecision.dump (decision, syn)
+        (* val () = ClosureDecision.dump (decision, syn) *)
     in  decision
     end
 end
