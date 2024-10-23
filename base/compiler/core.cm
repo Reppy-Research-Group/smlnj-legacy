@@ -309,7 +309,6 @@ CPS/cfa-clos/control-flow.sml
 CPS/cfa-clos/sharing-analysis.sml
 CPS/cfa-clos/pipeline.sml
 CPS/cfa-clos/avail-exp.sml
-CPS/cfa-clos/check.sml
 
 CPS/convert/convert.sml
 CPS/convert/cpstrans.sml

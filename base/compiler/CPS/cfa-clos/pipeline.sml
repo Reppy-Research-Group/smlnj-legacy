@@ -97,11 +97,10 @@ end = struct
         val envOfPack = PackID.Tbl.lookup envidTbl
         val entryOf = LCPS.FunTbl.lookup funtbl
         fun shares (grp, functions, availPacks, allo, heap) =
-          let val SA.Pack { packs=packs', loose, ... } =
-                Group.Tbl.lookup grpTbl grp
-              val packs = PackID.Set.listItems packs'
+          let val SA.Pack { packs, loose, ... } = Group.Tbl.lookup grpTbl grp
+              val packs = PackID.Set.listItems packs
               val packEnvs = map envOfPack packs
-              val heap =
+              val heap = 
                 (case Group.Map.lookup (allo, grp)
                    of env :: _ =>
                         let val object = EnvID.Map.lookup (heap, env)
@@ -142,7 +141,7 @@ end = struct
                 ) heap allocate
 
               (* NOTE: assumes no flattening has taken place *)
-          in  (packs', allo, heap)
+          in  (PackID.Set.addList (availPacks, allocate), allo, heap)
           end
         fun walk (CF.Block {term, fix, ... }, availPacks, allo: D.allo, heap:
           D.heap) =
@@ -300,18 +299,9 @@ end = struct
                      in  (concatPartial [intEnv, fltEnv], heap)
                      end
           end
-        val scanTbl = EnvID.Tbl.mkTable (32, Fail "scanTbl")
-        fun scan' (env, heap): EnvID.t list * D.heap =
-          (case EnvID.Tbl.find scanTbl env
-             of SOME additional => (additional, heap)
-              | NONE =>
-                  let val (additional, heap) = scan (env, heap)
-                  in  EnvID.Tbl.insert scanTbl (env, additional);
-                      (additional, heap)
-                  end)
         val (allo, heap) = Group.Map.foldli (fn (grp, envs, (allo, heap)) =>
             let val (envs, heap) = foldr (fn (env, (envs, heap)) =>
-                    let val (additional, heap) = scan' (env, heap)
+                    let val (additional, heap) = scan (env, heap)
                     in  (additional @ (env :: envs), heap)
                     end
                   ) ([], heap) envs
@@ -334,10 +324,7 @@ end = struct
               fun isCall (LCPS.APP (_, CPS.VAR v, _)) = LV.same (v, name)
                 | isCall _ = false
               val uses = S.usePoints syn name
-
-              val groupfuns = S.groupFun syn (S.groupOf syn f)
           in  not (LCPS.Set.all isCall uses)
-              orelse Vector.length groupfuns > 1
           end
         fun removeCodePtr (f, code, env, repr, heap) =
           (case (code, env)
@@ -401,7 +388,7 @@ end = struct
           | trueFV ((x as D.EnvID e) :: xs, repr, heap) =
               (case EnvID.Map.lookup (heap, e)
                  of D.Record [] => trueFV (xs, repr, heap)
-                  | D.Record [y as D.EnvID _] => y :: trueFV (xs, repr, heap)
+                  | D.Record [y] => y :: trueFV (xs, repr, heap)
                   | _ => x :: trueFV (xs, repr, heap))
           | trueFV (x :: xs, repr, heap) = x :: trueFV (xs, repr, heap)
 
@@ -517,12 +504,10 @@ end = struct
          * or singleton?
          *)
         fun collect (group, (repr, heap: D.heap, allo)) =
-          let
-
-              (* val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o *)
-              (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
-              (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
-              (* allo=allo}, syn, group) *)
+          let val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o
+              #2) (Vector.toList (S.groupFun syn group)) ^ "\n")
+              val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap,
+              allo=allo}, syn, group)
 
               val environments = Group.Map.lookup (allo, group)
               val heap = foldl (fn (e, heap) =>
@@ -592,10 +577,10 @@ end = struct
                 handle e => raise e
               val allo = Group.Map.insert (allo, group, environments)
 
-              (* val () = print ("AFTER " ^ String.concatWithMap "," (LV.lvarName o *)
-              (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
-              (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
-              (* allo=allo}, syn, group) *)
+              val () = print ("AFTER " ^ String.concatWithMap "," (LV.lvarName o
+              #2) (Vector.toList (S.groupFun syn group)) ^ "\n")
+              val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap,
+              allo=allo}, syn, group)
           in  (repr, heap, allo)
           end
         val (repr, heap, allo) =
@@ -630,8 +615,8 @@ end = struct
           >>> allocate'n'expand (syn, funtbl, looptbl)
 
         val decision = process (cps, syn)
-        (* val () = print "FINAL\n" *)
-        (* val () = ClosureDecision.dump (decision, syn) *)
+        val () = print "FINAL\n"
+        val () = ClosureDecision.dump (decision, syn)
     in  decision
     end
 end
