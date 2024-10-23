@@ -143,7 +143,7 @@ structure Main :> sig val doit : unit -> unit end =
 
     fun show pr = (app (fn s => (pr s; pr "\n"))) o plot o alive
 
-    fun doit () = show (fn _ => ()) (nthgen gun 50)
+    fun doit () = show (fn _ => ()) (nthgen gun 50000)
 
     fun testit strm = show (fn c => TextIO.output (strm, c)) (nthgen gun 50)
 
