@@ -21,12 +21,22 @@ static Unsigned32_t numGCs[MAX_NUM_GENS+1];
 
 /* _ml_RunT_gc_counter_reset : bool -> unit
  *
- * reset the counters.  If the flag is true, the we force a GC before resetting.
+ * reset the counters.  If the flag is true, the we force a GC of all
+ * generations before resetting.
  */
 ml_val_t _ml_RunT_gc_counter_reset (ml_state_t *msp, ml_val_t arg)
 {
 #ifdef GC_STATS
     heap_t	*heap = msp->ml_heap;
+
+    /* check if a full GC is requested */
+    if (arg == ML_true) {
+        // collect all generations
+        InvokeGCWithRoots (msp, heap->numGens, &arg, NIL(ml_val_t *));
+    } else {
+        // minor collection
+        InvokeGCWithRoots (msp, 0, &arg, NIL(ml_val_t *));
+    }
 
     /* we clear the allocation counters and record the number of collections so far. */
     CNTR_ZERO(&(heap->numAlloc));
@@ -38,6 +48,8 @@ ml_val_t _ml_RunT_gc_counter_reset (ml_state_t *msp, ml_val_t arg)
             CNTR_ZERO(&(heap->numCopied[i][j]));
         }
     }
+
+    return ML_unit;
 #endif
 }
 
@@ -55,10 +67,9 @@ ml_val_t _ml_RunT_gc_counter_read (ml_state_t *msp, ml_val_t arg)
 #ifdef GC_STATS
     heap_t	*heap = msp->ml_heap;
 
-    /* check if a GC is requested */
-    if (arg == ML_true) {
-        InvokeGCWithRoots (msp, heap->numGens, &arg, NIL(ml_val_t *));
-    }
+    /* count the number of bytes allocated since the last GC or reset */
+    Addr_t nbytesAlloc = (Addr_t)(msp->ml_allocPtr) - (Addr_t)(heap->allocBase);
+    CNTR_INCR(&(heap->numAlloc), nbytesAlloc);
 
     /* count the number of bytes promoted */
     cntr_t nP;
@@ -77,7 +88,7 @@ ml_val_t _ml_RunT_gc_counter_read (ml_state_t *msp, ml_val_t arg)
     ml_val_t lp = LIST_nil;
     Unsigned32_t nGCs[MAX_NUM_GENS+1];
     nGCs[0] = heap->numMinorGCs - numGCs[0];
-    if (nGCs[0] >= 0) {
+    if (nGCs[0] > 0) {
         /* allocate the list of number of collections */
         int n = 0;
         for (int i = 1;  i <= heap->numGens;  ++i) {
