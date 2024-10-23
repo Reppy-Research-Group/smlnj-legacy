@@ -9,14 +9,15 @@ unalias echo
 NCOMPS=5
 NRUNS=10
 
-if [ x"$1" = "x--llvm" ] ; then
+if [ x"$1" = "x--new" ] ; then
   LLVM=yes
   SML="../../../bin/sml -Ccg.new-closure-converter=true"
+  SML="../testml -Ccg.new-closure-converter=true"
   OUT_SUFFIX="-new"
   shift
 else
   LLVM=no
-  SML="/usr/local/smlnj/bin/sml"
+  SML=$(which sml)
   OUT_SUFFIX="-old"
 fi
 
