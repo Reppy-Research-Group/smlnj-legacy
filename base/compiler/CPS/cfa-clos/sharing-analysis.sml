@@ -446,8 +446,9 @@ end = struct
         val () = Group.Tbl.modify replacePack grpTbl
 
         (* Step 2: Clean up unused or unshared packs *)
+        val useCountCutoff = 1
         datatype usage = Unused
-                       | UsedOnlyBy of Group.t
+                       | UsedOnlyBy of Group.t list
                        (* Items used more than once are cleared out of the
                         * table *)
         val usageTbl = PackID.Tbl.map (fn _ => Unused) packTbl
@@ -455,9 +456,14 @@ end = struct
           (case PackID.Tbl.find usageTbl pack
              of NONE => ()
               | SOME Unused =>
-                  PackID.Tbl.insert usageTbl (pack, UsedOnlyBy grp)
-              | SOME (UsedOnlyBy _) =>
-                  ignore (PackID.Tbl.remove usageTbl pack))
+                  PackID.Tbl.insert usageTbl (pack, UsedOnlyBy [grp])
+              | SOME (UsedOnlyBy []) => raise Fail "impossible"
+              | SOME (UsedOnlyBy grps) =>
+                  if List.length grps < useCountCutoff then
+                    PackID.Tbl.insert usageTbl (pack, UsedOnlyBy (grp :: grps))
+                  else
+                    ignore (PackID.Tbl.remove usageTbl pack))
+
         val () = Group.Tbl.appi (fn (grp, Pack { packs, ... }) =>
             PackID.Set.app (use grp) packs
           ) grpTbl
@@ -465,23 +471,21 @@ end = struct
         (* NOTE: Currently, packs don't have other packs, so we don't need to
          * scan the packTbl. If that changes in the future, scan it. *)
 
+        fun flattenIn pckid grp =
+          let val Pack { packs, loose, fv } = Group.Tbl.lookup grpTbl grp
+              val packs = PackID.Set.delete (packs, pckid)
+              val pack  = PackID.Tbl.lookup packTbl pckid
+              val loose = LV.Set.union (loose, fvOfPack pack)
+              val newpack = Pack { packs=packs, loose=loose, fv=fv }
+          in  Group.Tbl.insert grpTbl (grp, newpack)
+          end
+
         val () = PackID.Tbl.appi (fn (pckid, usage) =>
             (case usage
                of Unused => ignore (PackID.Tbl.remove packTbl pckid)
-                | UsedOnlyBy grp =>
-                    let val Pack { packs, loose, fv } =
-                          Group.Tbl.lookup grpTbl grp
-                        val packs = PackID.Set.delete (packs, pckid)
-                        val pack = PackID.Tbl.lookup packTbl pckid
-                        val loose = LV.Set.union (loose, fvOfPack pack)
-                        val newpack = Pack {
-                            packs=packs,
-                            loose=loose,
-                            fv=fv
-                          }
-                    in  PackID.Tbl.remove packTbl pckid;
-                        Group.Tbl.insert grpTbl (grp, newpack)
-                    end)
+                | UsedOnlyBy grps =>
+                    (app (flattenIn pckid) grps;
+                     ignore (PackID.Tbl.remove packTbl pckid)))
            ) usageTbl
     in  ()
     end
@@ -497,16 +501,16 @@ end = struct
         val () = prune (grpTbl, packTbl, replaceTbl)
         val () = thin (grpTbl, packTbl, syn)
 
-        val () = Group.Tbl.appi (fn (g, pack) =>
-          let val fs = S.groupFun syn g
-              val name = String.concatWithMap "," (LV.lvarName o #2)
-                                                  (Vector.toList fs)
-          in  app print [name, " --> ", packToString pack, "\n"]
-          end) grpTbl
-        val () = print "==============\n"
-        val () = PackID.Tbl.appi (fn (p, pack) =>
-          app print [PackID.toString p, " --> ", packToString pack, "\n"]
-        ) packTbl
+(*         val () = Group.Tbl.appi (fn (g, pack) => *)
+(*           let val fs = S.groupFun syn g *)
+(*               val name = String.concatWithMap "," (LV.lvarName o #2) *)
+(*                                                   (Vector.toList fs) *)
+(*           in  app print [name, " --> ", packToString pack, "\n"] *)
+(*           end) grpTbl *)
+(*         val () = print "==============\n" *)
+(*         val () = PackID.Tbl.appi (fn (p, pack) => *)
+(*           app print [PackID.toString p, " --> ", packToString pack, "\n"] *)
+(*         ) packTbl *)
     in  (grpTbl, packTbl)
     end
 
