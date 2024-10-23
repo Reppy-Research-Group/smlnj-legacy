@@ -334,7 +334,10 @@ end = struct
               fun isCall (LCPS.APP (_, CPS.VAR v, _)) = LV.same (v, name)
                 | isCall _ = false
               val uses = S.usePoints syn name
+
+              val groupfuns = S.groupFun syn (S.groupOf syn f)
           in  not (LCPS.Set.all isCall uses)
+              orelse Vector.length groupfuns > 1
           end
         fun removeCodePtr (f, code, env, repr, heap) =
           (case (code, env)

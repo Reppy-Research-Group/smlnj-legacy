@@ -454,7 +454,7 @@ end = struct
   ) : pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table =
     let val (grpTbl, packTbl) = preference (cps, syn, funtbl, loopTbl)
         val () = prune (grpTbl, packTbl)
-        (* val () = thin (grpTbl, packTbl, syn) *)
+        val () = thin (grpTbl, packTbl, syn)
 
         (* val () = Group.Tbl.appi (fn (g, pack) => *)
         (*   let val fs = S.groupFun syn g *)
