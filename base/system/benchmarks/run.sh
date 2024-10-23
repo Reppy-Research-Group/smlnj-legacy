@@ -6,7 +6,7 @@
 
 unalias echo
 
-NCOMPS=5
+NCOMPS=1
 NRUNS=10
 
 if [ x"$1" = "x--new" ] ; then
@@ -16,7 +16,7 @@ if [ x"$1" = "x--new" ] ; then
   shift
 else
   LLVM=no
-  SML=$(which sml)
+  SML="../testml --Ccg.new-closure-converter=false"
   OUT_SUFFIX="-old"
 fi
 
