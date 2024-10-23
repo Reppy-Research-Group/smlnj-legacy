@@ -38,7 +38,8 @@ OBJS =		smlnj-runt-lib.o \
 		record1.o \
 		record-concat.o \
 		sysinfo.o \
-		setitimer.o
+		setitimer.o \
+		gc-counter.o
 
 $(LIBRARY)	: $(VERSION) $(OBJS)
 	rm -rf $(LIBRARY)

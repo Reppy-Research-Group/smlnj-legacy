@@ -71,10 +71,9 @@ struct heap {
     ml_val_t	    *weakList;		/* A list of weak pointers forwarded*/
 					/* during GC. */
 #if (defined(COLLECT_STATS) || defined(GC_STATS))
-    cntr_t	    numAlloc;		/* Keep track of the number of bytes */
-					/* allocated and the number copied into */
+    cntr_t	    numAlloc;		/* number of nursery bytes allocated */
 #ifdef GC_STATS
-    cntr_t	    numCopied		/* each arena. */
+    cntr_t	    numCopied		/* number of bytes promoted into each arena */
 			[MAX_NUM_GENS][NUM_ARENAS];
 #endif
 #endif

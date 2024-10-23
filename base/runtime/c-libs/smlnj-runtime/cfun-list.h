@@ -31,3 +31,5 @@ CFUNC("record1",	_ml_RunT_record1,	"object -> object")
 CFUNC("recordConcat",	_ml_RunT_recordconcat,	"(object * object) -> object")
 CFUNC("setIntTimer",	_ml_RunT_setitimer,	"word64 option -> unit")
 
+CFUNC("gcCounterReset", _ml_RunT_gc_counter_reset, "")
+CFUNC("gcCounterRead",  _ml_RunT_gc_counter_read, "")
