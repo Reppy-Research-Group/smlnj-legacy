@@ -11,8 +11,7 @@ NRUNS=10
 
 if [ x"$1" = "x--new" ] ; then
   LLVM=yes
-  SML="../../../bin/sml -Ccg.new-closure-converter=true"
-  SML="../testml -Ccg.new-closure-converter=true"
+  SML="../testml"
   OUT_SUFFIX="-new"
   shift
 else

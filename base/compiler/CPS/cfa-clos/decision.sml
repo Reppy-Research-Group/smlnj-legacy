@@ -11,7 +11,6 @@ structure ClosureDecision = struct
     val unwrap : t -> LV.lvar
     val dup    : t -> t
     val toString : t -> string
-    val same : t * t -> bool
 
     structure Map : ORD_MAP where type Key.ord_key = t
     structure Set : ORD_SET where type Key.ord_key = t
@@ -25,7 +24,6 @@ structure ClosureDecision = struct
     fun unwrap x = x
     val toString = LV.lvarName
     val dup = LV.dupLvar
-    val same = LV.same
 
     structure Map = LV.Map
     structure Set = LV.Set
@@ -80,7 +78,7 @@ structure ClosureDecision = struct
                 | SelectFrom of { env: int, selects: int list }
                 | Defun of LCPS.lvar * LCPS.function list
 
-  datatype environment = Boxed of EnvID.t
+  datatype environment = Boxed of EnvID.t (* FIXME: remove this *)
                        | Flat  of slot list
 
   datatype closure = Closure of { code: code, env: environment }
