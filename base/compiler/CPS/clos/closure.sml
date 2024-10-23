@@ -280,8 +280,8 @@ fun boxedKind (CONT | KNOWN_CONT) = RK_CONT
   | boxedKind _ = RK_ESCAPE
 
 (* fun COMMENT f = if !CGoptions.comment then (f(); ()) else () *)
-(* fun COMMENT f = (f (); ()) *)
-fun COMMENT f = ()
+fun COMMENT f = (f (); ())
+(* fun COMMENT f = () *)
 
 (****************************************************************************
  *                    CLOSURE REPRESENTATIONS                               *

@@ -256,10 +256,9 @@ end = struct
     if LV.same (#2 lam0, v) then
       SOME lam0
     else
-      (* GROSS HACK *)
-      #knownfun (LV.Tbl.lookup varTbl v)
-      handle SyntacticInfo => (print (LV.lvarName v ^ " missing\n");
-                               raise SyntacticInfo)
+      (case LV.Tbl.find varTbl v
+         of SOME { knownfun, ... } => knownfun
+          | NONE => NONE)
 
   fun isTopLevel (T { lam0, ... }) (f: LCPS.function) = LV.same (#2 lam0, #2 f)
 

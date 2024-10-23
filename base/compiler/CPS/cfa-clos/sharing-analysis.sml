@@ -217,11 +217,11 @@ end = struct
               val packs  = map ask fixes
               val lowerLevelPacks = allPacks (packs, [])
 
-              val () =
-                let val name = String.concatWithMap "," (LV.lvarName o #2)
-                                                     functions
-                in  app print ["IN FUNCTIONS ", name, "\n"]
-                end
+              (* val () = *)
+              (*   let val name = String.concatWithMap "," (LV.lvarName o #2) *)
+              (*                                        functions *)
+              (*   in  app print ["IN FUNCTIONS ", name, "\n"] *)
+              (*   end *)
 
               (* See if we can throw any of the lower-level packs up since if
                * not we are responsible for allocating the pack. *)
@@ -399,9 +399,9 @@ end = struct
           in  Pack { packs=packs, loose=loose, fv=fv }
           end
 
-        val () = PackID.Map.appi (fn (p1, p2) =>
-          app print [PackID.toString p1, " ----> ", PackID.toString p2, "\n"]
-        ) replaceMap
+        (* val () = PackID.Map.appi (fn (p1, p2) => *)
+        (*   app print [PackID.toString p1, " ----> ", PackID.toString p2, "\n"] *)
+        (* ) replaceMap *)
 
         val () = Group.Tbl.modify replacePack grpTbl
 
@@ -456,16 +456,16 @@ end = struct
         val () = prune (grpTbl, packTbl)
         val () = thin (grpTbl, packTbl, syn)
 
-        val () = Group.Tbl.appi (fn (g, pack) =>
-          let val fs = S.groupFun syn g
-              val name = String.concatWithMap "," (LV.lvarName o #2)
-                                                  (Vector.toList fs)
-          in  app print [name, " --> ", packToString pack, "\n"]
-          end) grpTbl
-        val () = print "==============\n"
-        val () = PackID.Tbl.appi (fn (p, pack) =>
-          app print [PackID.toString p, " --> ", packToString pack, "\n"]
-        ) packTbl
+        (* val () = Group.Tbl.appi (fn (g, pack) => *)
+        (*   let val fs = S.groupFun syn g *)
+        (*       val name = String.concatWithMap "," (LV.lvarName o #2) *)
+        (*                                           (Vector.toList fs) *)
+        (*   in  app print [name, " --> ", packToString pack, "\n"] *)
+        (*   end) grpTbl *)
+        (* val () = print "==============\n" *)
+        (* val () = PackID.Tbl.appi (fn (p, pack) => *)
+        (*   app print [PackID.toString p, " --> ", packToString pack, "\n"] *)
+        (* ) packTbl *)
     in  (grpTbl, packTbl)
     end
 
