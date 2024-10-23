@@ -188,6 +188,12 @@ end = struct
         val insertGroup = Group.Tbl.insert grpTbl
         val lookupGroup = Group.Tbl.lookup grpTbl
 
+        val replaceTbl = PackID.Tbl.mkTable (64, Fail "replace table")
+        fun replace (from, to) =
+          (case PackID.Tbl.find replaceTbl from
+             of SOME _ => raise Fail "Double replacement"
+              | NONE   => PackID.Tbl.insert replaceTbl (from, to))
+
         fun setOfKeys (map: 'a LV.Map.map) : LV.Set.set =
           let val keys = LV.Map.listKeys map
           in  LV.Set.fromList keys
@@ -217,11 +223,11 @@ end = struct
               val packs  = map ask fixes
               val lowerLevelPacks = allPacks (packs, [])
 
-              val () =
-                let val name = String.concatWithMap "," (LV.lvarName o #2)
-                                                     functions
-                in  app print ["IN FUNCTIONS ", name, "\n"]
-                end
+              (* val () = *)
+              (*   let val name = String.concatWithMap "," (LV.lvarName o #2) *)
+              (*                                        functions *)
+              (*   in  app print ["IN FUNCTIONS ", name, "\n"] *)
+              (*   end *)
 
               (* See if we can throw any of the lower-level packs up since if
                * not we are responsible for allocating the pack. *)
@@ -233,9 +239,9 @@ end = struct
               (* val () = *)
               (*   app print [ *)
               (*   "candidates=[", String.concatWithMap ", " *)
-              (*   (packToString o #2) candidates, "]\n", *)
+              (*   (PackID.toString o #1) candidates, "]\n", *)
               (*   "ineligibles=[", String.concatWithMap ", " *)
-              (*   (packToString o #2) ineligibles, "]\n"] *)
+              (*   (PackID.toString o #1) ineligibles, "]\n"] *)
 
 
               (* val (usedFV, unusedFV) = LV.Set.partition (isUsed functions) fv *)
@@ -262,6 +268,36 @@ end = struct
                               in  pick (cs, c :: chosen, remain)
                               end)
                 in  pick (candidates, [], fv)
+                end
+
+              val rejected =
+                let fun inPacks (p, _) =
+                      List.exists (fn (p', _) => PackID.same (p, p')) packs
+                in  List.filter (not o inPacks) candidates
+                end
+
+              (* val () = *)
+              (*   app print [ *)
+              (*   "picked=[", String.concatWithMap ", " *)
+              (*   (PackID.toString o #1) packs, "]\n", *)
+              (*   "rejected=[", String.concatWithMap ", " *)
+              (*   (PackID.toString o #1) rejected, "]\n"] *)
+
+
+              val () =
+                let fun replaceIfSame ((packid1, pack1), (packid2, pack2)) =
+                      if PackID.same (packid1, packid2) then
+                        raise Fail (PackID.toString packid1 ^ "?????")
+                      else if samePack (pack1, pack2) then
+                        replace (packid1, packid2)
+                      else
+                        ()
+                    fun checkDup rejected =
+                      app (fn c => replaceIfSame (rejected, c)) packs
+
+                    (* val () = app print ["#rejected=", Int.toString (List.length *)
+                    (* rejected), "\n"] *)
+                in  app checkDup rejected
                 end
 
               (* These are the free variables that the packs have not
@@ -336,7 +372,7 @@ end = struct
           in  ()
           end
 
-    in  (grpTbl, packTbl)
+    in  (grpTbl, packTbl, replaceTbl)
     end
 
     (* TODO:
@@ -372,26 +408,30 @@ end = struct
 
     fun prune (
       grpTbl : pack Group.Tbl.hash_table,
-      packTbl : pack PackID.Tbl.hash_table
+      packTbl : pack PackID.Tbl.hash_table,
+      replaceTbl : PackID.t PackID.Tbl.hash_table
     ) =
     let
         (* Step 1: Figure out what packs are the same *)
-        val replaceMap : PackID.t PackID.Map.map =
-          (* TODO: Do this faster than n^2 ? *)
-          PackID.Tbl.foldi (fn (packid1, pack1, map) =>
-            PackID.Tbl.foldi (fn (packid2, pack2, map) =>
-              if not (PackID.Map.inDomain (map, packid1))
-                 andalso not (PackID.same (packid1, packid2))
-                 andalso samePack (pack1, pack2) then
-                PackID.Map.insert (map, packid2, packid1)
-              else
-                map
-            ) map packTbl
-          ) PackID.Map.empty packTbl
+        (* val replaceMap : PackID.t PackID.Map.map = *)
+        (*   (1* TODO: Do this faster than n^2 ? *1) *)
+        (*   PackID.Tbl.foldi (fn (packid1, pack1, map) => *)
+        (*     PackID.Tbl.foldi (fn (packid2, pack2, map) => *)
+        (*       if not (PackID.Map.inDomain (map, packid1)) *)
+        (*          andalso not (PackID.same (packid1, packid2)) *)
+        (*          andalso samePack (pack1, pack2) then *)
+        (*         PackID.Map.insert (map, packid2, packid1) *)
+        (*       else *)
+        (*         map *)
+        (*     ) map packTbl *)
+        (*   ) PackID.Map.empty packTbl *)
 
         fun replace packid =
-          (case PackID.Map.find (replaceMap, packid)
-             of SOME packid' => packid'
+          (case PackID.Tbl.find replaceTbl packid
+             of SOME packid' =>
+                  let val root = replace packid'
+                  in  PackID.Tbl.insert replaceTbl (packid, root); root
+                  end
               | NONE => packid)
 
         fun replacePack (Pack {packs, loose, fv}) =
@@ -399,9 +439,9 @@ end = struct
           in  Pack { packs=packs, loose=loose, fv=fv }
           end
 
-        val () = PackID.Map.appi (fn (p1, p2) =>
-          app print [PackID.toString p1, " ----> ", PackID.toString p2, "\n"]
-        ) replaceMap
+        (* val () = PackID.Tbl.appi (fn (p1, p2) => *)
+        (*   app print [PackID.toString p1, " ----> ", PackID.toString p2, "\n"] *)
+        (* ) replaceTbl *)
 
         val () = Group.Tbl.modify replacePack grpTbl
 
@@ -452,8 +492,9 @@ end = struct
     funtbl: funtbl,
     loopTbl: looptbl
   ) : pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table =
-    let val (grpTbl, packTbl) = preference (cps, syn, funtbl, loopTbl)
-        val () = prune (grpTbl, packTbl)
+    let val (grpTbl, packTbl, replaceTbl) =
+          preference (cps, syn, funtbl, loopTbl)
+        val () = prune (grpTbl, packTbl, replaceTbl)
         val () = thin (grpTbl, packTbl, syn)
 
         val () = Group.Tbl.appi (fn (g, pack) =>

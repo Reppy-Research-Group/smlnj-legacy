@@ -100,7 +100,7 @@ end = struct
           let val SA.Pack { packs, loose, ... } = Group.Tbl.lookup grpTbl grp
               val packs = PackID.Set.listItems packs
               val packEnvs = map envOfPack packs
-              val heap = 
+              val heap =
                 (case Group.Map.lookup (allo, grp)
                    of env :: _ =>
                         let val object = EnvID.Map.lookup (heap, env)
@@ -504,10 +504,11 @@ end = struct
          * or singleton?
          *)
         fun collect (group, (repr, heap: D.heap, allo)) =
-          let val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o
-              #2) (Vector.toList (S.groupFun syn group)) ^ "\n")
-              val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap,
-              allo=allo}, syn, group)
+          let 
+              (* val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o *)
+              (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
+              (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
+              (* allo=allo}, syn, group) *)
 
               val environments = Group.Map.lookup (allo, group)
               val heap = foldl (fn (e, heap) =>
@@ -577,10 +578,10 @@ end = struct
                 handle e => raise e
               val allo = Group.Map.insert (allo, group, environments)
 
-              val () = print ("AFTER " ^ String.concatWithMap "," (LV.lvarName o
-              #2) (Vector.toList (S.groupFun syn group)) ^ "\n")
-              val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap,
-              allo=allo}, syn, group)
+              (* val () = print ("AFTER " ^ String.concatWithMap "," (LV.lvarName o *)
+              (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
+              (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
+              (* allo=allo}, syn, group) *)
           in  (repr, heap, allo)
           end
         val (repr, heap, allo) =
