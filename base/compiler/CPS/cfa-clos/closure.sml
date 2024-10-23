@@ -49,18 +49,18 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
   (*       result *)
   (*   end *)
 
-  (* fun timeit _ f x = f x *)
+  fun timeit _ f x = f x
 
   fun phase x = Stats.doPhase (Stats.makePhase x)
 
   fun test cps =
     let
-      val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n")
+      (* val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n") *)
       val lcps = timeit "label" LabelledCPS.labelF cps
       handle e => (print "1\n"; raise e)
       val syntactic = timeit "syntactic" SyntacticInfo.calculate lcps
       handle e => (print "2\n"; raise e)
-      val () = SyntacticInfo.dump syntactic
+      (* val () = SyntacticInfo.dump syntactic *)
       (* val callgraph = ZeroCFA.analyze (syntactic, lcps) *)
       val result = timeit "flow-cfa" FlowCFA.analyze (syntactic, lcps)
       (* val result = phase "CPS 081 cfa" FlowCFA.analyze (syntactic, lcps) *)
@@ -70,20 +70,25 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       handle e => (print "5\n"; raise e)
       (* val () = Web.dump web *)
 
-      val () = Lifetime.analyze (lcps, syntactic)
-      val (funtbl, looptbl) = ControlFlow.analyze (lcps, syntactic, result)
-      val shr = SharingAnalysis.analyze (lcps, syntactic, funtbl, looptbl)
+      (* val () = Lifetime.analyze (lcps, syntactic) *)
+      val (funtbl, looptbl) =
+        timeit "control-flow" ControlFlow.analyze (lcps, syntactic, result)
+      val shr =
+        timeit "sharing" SharingAnalysis.analyze (lcps, syntactic, funtbl, looptbl)
 
       val decision' =
-        Pipeline.pipeline (lcps, syntactic, web, shr, funtbl, looptbl)
-      val lcps' = Transform.transform (lcps, decision', web, syntactic)
-      val lcps' = AvailableExpression.transform lcps'
-      val () = (print "RESULT >>>>>\n"; PPCps.printcps0 (LCPS.unlabelF lcps'); print "<<<<<\n")
+        timeit "pipe" Pipeline.pipeline (lcps, syntactic, web, shr, funtbl, looptbl)
+      val lcps' =
+        timeit "transform" Transform.transform (lcps, decision', web, syntactic)
+      val lcps' =
+        timeit "avail exp" AvailableExpression.transform lcps'
+      (* val () = (print "RESULT >>>>>\n"; PPCps.printcps0 (LCPS.unlabelF lcps'); print "<<<<<\n") *)
 
       (* val decision = timeit "flat" FlatClosureDecision.produce (lcps, syntactic) *)
       (* handle e => (print "4\n"; raise e) *)
       (* val lcps = timeit "transform" Transform.transform (lcps, decision, web, syntactic) *)
       (* handle e => (print "6\n"; raise e) *)
+      (* val () = InvariantChecker.check (decision', syntactic) *)
     in
       UnRebind.unrebind (LCPS.unlabelF lcps')
       (* Cheat.closeCPS cps *)
