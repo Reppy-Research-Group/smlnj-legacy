@@ -33,10 +33,22 @@ struct
     | mapzip f (x::xs, y::ys) = f (x, y) :: mapzip f (xs, ys)
     | mapzip _ _ = raise Subscript
 
+  (* fun matMul (m1 : int list list, m2 : int list list) = *)
+  (*   map (fn row => *)
+  (*         mapAll *)
+  (*           (fn col => foldl (op+) 0 (mapzip (op* ) (row, col))) *)
+  (*           m2) *)
+  (*       m1 *)
+
+  (* val m1 = [[1, 2], *)
+  (*           [3, 4]] *)
+  (* val m2 = [[3, 8, 3], *)
+  (*           [2, 1, 4]] *)
+
   fun matMul (m1 : real list list, m2 : real list list) =
     map (fn row =>
           mapAll
-            (fn col => foldl (Real.+) 0.0 (mapzip (Real.*) (row, col)))
+            (fn col => foldl (op+) 0.0 (mapzip (op*) (row, col)))
             m2)
         m1
 
@@ -44,7 +56,6 @@ struct
             [3.0, 4.0]]
   val m2 = [[3.0, 8.0, 3.0],
             [2.0, 1.0, 4.0]]
-
   fun show xs =
     let fun showRow row =
           (print (String.concatWithMap "\t" Real.toString row);

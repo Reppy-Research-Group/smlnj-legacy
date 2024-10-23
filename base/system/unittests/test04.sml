@@ -4,6 +4,9 @@ structure A : sig val result : (unit -> (unit -> int) * int) list end = struct
   (* val x: (unit -> int list) ref = ref (fn () => []) *)
   (* fun blackhole v = (x := v; x := (fn () => [])) *)
 
+  fun hd (x :: xs) = x
+    | hd [] = raise Subscript
+
   fun f (v, w, x, y, z) =
     let fun g () =
           let val u = hd v
