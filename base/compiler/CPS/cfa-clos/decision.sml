@@ -11,6 +11,7 @@ structure ClosureDecision = struct
     val unwrap : t -> LV.lvar
     val dup    : t -> t
     val toString : t -> string
+    val compare : t * t -> order
 
     structure Map : ORD_MAP where type Key.ord_key = t
     structure Set : ORD_SET where type Key.ord_key = t
@@ -20,10 +21,11 @@ structure ClosureDecision = struct
     type t = LV.lvar
 
     val new = LV.mkLvar
-    fun wrap x = x
-    fun unwrap x = x
+    val wrap = Fn.id
+    val unwrap = Fn.id
     val toString = LV.lvarName
     val dup = LV.dupLvar
+    val compare = LV.compare
 
     structure Map = LV.Map
     structure Set = LV.Set
@@ -110,6 +112,32 @@ structure ClosureDecision = struct
 
   fun envToSlots (Boxed e) = [EnvID e]
     | envToSlots (Flat slots) = slots
+
+  fun compareSlot (EnvID e1, EnvID e2) = EnvID.compare (e1, e2)
+    | compareSlot (EnvID _, _) = GREATER
+    | compareSlot (_, EnvID _) = LESS
+    | compareSlot (Var (v1, _), Var (v2, _)) = LV.compare (v1, v2)
+    | compareSlot (Var _, _) = GREATER
+    | compareSlot (_, Var _) = LESS
+    | compareSlot (Expand (v1, i1, _), Expand (v2, i2, _)) =
+        (case LV.compare (v1, v2)
+           of EQUAL => Int.compare (i1, i2)
+            | order => order)
+    | compareSlot (Expand _, _) = GREATER
+    | compareSlot (_, Expand _) = LESS
+    | compareSlot (Code (_, name1, _, _, _), Code (_, name2, _, _, _)) =
+        LV.compare (name1, name2)
+    | compareSlot (Code _, _) = GREATER
+    | compareSlot (_, Code _) = LESS
+    | compareSlot (Null, Null) = EQUAL
+
+  structure SlotKey : ORD_KEY = struct
+    type ord_key = slot
+    val compare = compareSlot
+  end
+
+  structure SlotSet = RedBlackSetFn(SlotKey)
+  structure SlotMap = RedBlackMapFn(SlotKey)
 
   fun closureToS (Closure {code, env}) =
     concat [codeToS code, "(", envToS env, "...)"]

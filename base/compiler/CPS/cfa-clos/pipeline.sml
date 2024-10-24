@@ -403,6 +403,8 @@ end = struct
                   | _ => x :: trueFV (xs, repr, heap))
           | trueFV (x :: xs, repr, heap) = x :: trueFV (xs, repr, heap)
 
+        val removeDup = D.SlotSet.toList o D.SlotSet.fromList
+              
         (* fun removeConstants [] = [] *)
         (*   | removeConstants (D.Null :: xs) = removeConstants xs *)
         (*   | removeConstants (x :: xs) = x :: removeConstants xs *)
@@ -526,6 +528,7 @@ end = struct
                   (case EnvID.Map.lookup (heap, e)
                      of D.Record slots =>
                           let val slots = trueFV (slots, repr, heap)
+                              val slots = removeDup slots
                           in  EnvID.Map.insert (heap, e, D.Record slots)
                           end
                       | _ => heap)
