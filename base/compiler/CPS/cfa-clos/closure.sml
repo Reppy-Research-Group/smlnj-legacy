@@ -49,7 +49,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
   (*       result *)
   (*   end *)
 
-  fun timeit _ f x = f x
+  (* fun timeit _ f x = f x *)
 
   fun phase x = Stats.doPhase (Stats.makePhase x)
 

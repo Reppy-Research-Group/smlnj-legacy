@@ -404,7 +404,7 @@ end = struct
           | trueFV (x :: xs, repr, heap) = x :: trueFV (xs, repr, heap)
 
         val removeDup = D.SlotSet.toList o D.SlotSet.fromList
-              
+
         (* fun removeConstants [] = [] *)
         (*   | removeConstants (D.Null :: xs) = removeConstants xs *)
         (*   | removeConstants (x :: xs) = x :: removeConstants xs *)
@@ -517,7 +517,7 @@ end = struct
          * or singleton?
          *)
         fun collect (group, (repr, heap: D.heap, allo)) =
-          let 
+          let
               (* val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o *)
               (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
               (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)

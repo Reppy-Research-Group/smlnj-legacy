@@ -44,6 +44,17 @@ end = struct
   structure Prob = Probability
   type prob = Prob.prob
 
+  fun timeit str f x =
+    let
+      val start = Time.now ()
+      val result = f x
+      val stop = Time.now ()
+      val diff = Time.- (stop, start)
+      val () = app print ["Timing: ", str, " ", Time.toString diff, "\n"]
+    in
+      result
+    end
+
   datatype terminator
     = Return of CPS.lvar * CPS.value list
     | Call   of CPS.lvar * CPS.value list
@@ -360,10 +371,6 @@ end = struct
       pred   : node list NodeTbl.hash_table
     }
 
-    fun appendUniq ([], node) = [node]
-      | appendUniq (n :: ns, node) =
-          if sameNode (n, node) then n :: ns else n :: appendUniq (ns, node)
-
     fun build (funtbl: funtbl, syn: S.t, {lookup, flow}: FlowCFA.result) : t =
       let val succ : edge      NodeTbl.hash_table =
             NodeTbl.mkTable (2 * S.numFuns syn, Fail "succ")
@@ -377,11 +384,12 @@ end = struct
               of SOME _ => raise Fail "Multiple insertion"
                | NONE => NodeTbl.insert succ (src, dests)
 
-
           fun insertPred (dest, src) =
             case NodeTbl.find pred dest
               of SOME srcs =>
-                   NodeTbl.insert pred (dest, appendUniq (srcs, src))
+                   (* There is no need to check if src is in srcs because each
+                    * edge is inserted only once. *)
+                   NodeTbl.insert pred (dest, src :: srcs)
                | NONE =>
                    NodeTbl.insert pred (dest, [src])
 
@@ -438,7 +446,7 @@ end = struct
                      * not. *)
                     (case NodeTbl.find pred (Node block)
                        of (NONE | SOME []) => block :: acc
-                        | _ => acc))
+                        | SOME _ => acc))
 
           val escapingBlocks =
             LCPS.FunTbl.foldi
@@ -594,8 +602,8 @@ end = struct
     (* Paul Havlak. "Nesting of Reducible and Irreducible Loops." TOPLAS'97 *)
     fun analyzeLoops (graph, numTbl, lastTbl) =
       let val numNodes     = Graph.numNodes graph
-          val backPreds    = Array.tabulate (numNodes, fn _ => [])
-          val nonBackPreds = Array.tabulate (numNodes, fn _ => [])
+          val backPreds    = Array.tabulate (numNodes, fn _ => IntSet.empty)
+          val nonBackPreds = Array.tabulate (numNodes, fn _ => IntSet.empty)
           val header       = Array.tabulate (numNodes, fn _ => 0) (* start *)
           val tyTbl        = Array.tabulate (numNodes, fn _ => NonHeader)
 
@@ -604,11 +612,17 @@ end = struct
 
           fun partitionPred (node, preds) =
             let val w = numberOf node
-                val vs = map numberOf preds
                 (* For an edge (v -> w), if w is an ancestor of v, then v -> w
                  * is a back edge. *)
                 val (back, nonBack) =
-                  List.partition (fn v => isAncestor (w, v)) vs
+                  foldl (fn (p, (b, nb)) =>
+                    let val v = numberOf p
+                    in  if isAncestor (w, v) then
+                          (IntSet.add (b, v), nb)
+                        else
+                          (b, IntSet.add (nb, v))
+                    end
+                  ) (IntSet.empty, IntSet.empty) preds
             in  Array.update (backPreds, w, back);
                 Array.update (nonBackPreds, w, nonBack)
             end
@@ -619,9 +633,9 @@ end = struct
           val find  = find trees
           val union = union trees
 
-          fun prependNonBackPreds (w, y) =
+          fun addNonBackPreds (w, y) =
             let val nonBack = Array.sub (nonBackPreds, w)
-            in  Array.update (nonBackPreds, w, y :: nonBack)
+            in  Array.update (nonBackPreds, w, IntSet.add (nonBack, y))
             end
 
           (* Main analysis loop *)
@@ -629,7 +643,7 @@ end = struct
             | loop w =
               let (* Get all back-edge predecessors *)
                   val (preds, ty) =
-                    foldl (fn (v, (preds, hasSelf)) =>
+                    IntSet.foldl (fn (v, (preds, hasSelf)) =>
                       if v = w then
                         (preds, Self)
                       else
@@ -647,7 +661,7 @@ end = struct
                                     (* if w is not an ancestor of y', there is
                                      * another path into w's loop that avoids w.
                                      * This loop is irreducible. *)
-                                    (prependNonBackPreds (w, y');
+                                    (addNonBackPreds (w, y');
                                      (wl, preds, Irreducible))
                                   else if (not (IntSet.member (preds, y')))
                                           andalso (y' <> w) then
@@ -656,8 +670,8 @@ end = struct
                                     (wl, preds, ty)
                               end
                             val (wl, preds, ty) =
-                              foldl chase (wl, preds, ty)
-                                          (Array.sub (nonBackPreds, x))
+                              IntSet.foldl chase (wl, preds, ty)
+                                                 (Array.sub (nonBackPreds, x))
                         in  chaseUpward (wl, preds, ty)
                         end
 
@@ -721,7 +735,6 @@ end = struct
                   Int.toString nestingDepth, ",", nodeTyToString ty, ")"]
       end
 
-
     fun build (graph: Graph.t) =
       let val (numTbl, nodeTbl, lastTbl) = getPreorderNumbers graph
           val (header, tyTbl) = analyzeLoops (graph, numTbl, lastTbl)
@@ -733,11 +746,10 @@ end = struct
 
   type looptbl = loop_info Graph.NodeTbl.hash_table
 
-
   fun analyze (cps, syn, flow: FlowCFA.result) =
     let val funtbl = Summary.analyze syn
-        val graph  = Graph.build (funtbl, syn, flow)
-        val looptbl = LoopNestingTree.build graph
+        val graph  = timeit "  build-graph" Graph.build (funtbl, syn, flow)
+        val looptbl = timeit "  loop-nest" LoopNestingTree.build graph
         (* val _ = SharingAnalysis.analyze (cps, syn, funtbl, loopTbl) *)
     in  (funtbl, looptbl)
     end
