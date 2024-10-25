@@ -33,7 +33,7 @@ end = struct
                   if inDataStructure uses then
                     NONE
                   else
-                    NONE
+                    SOME 1
               | _ => NONE)
     in  arity
     end
