@@ -29,11 +29,11 @@ end = struct
           (case Web.content (web, id)
              of { kind=W.Cont, ... } => SOME 3
               | { polluted=true, kind=W.User, ... } => NONE
-              | { polluted=false, defs=(#[f]), uses, ... } =>
+              | { polluted=false, defs=(#[f]), uses=(uses as #[_]), ... } =>
                   if inDataStructure uses then
                     NONE
                   else
-                    SOME 1
+                    NONE
               | _ => NONE)
     in  arity
     end

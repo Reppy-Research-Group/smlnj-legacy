@@ -744,6 +744,8 @@ end = struct
       end
   end
 
+  fun timeit _ f x = f x
+
   type looptbl = loop_info Graph.NodeTbl.hash_table
 
   fun analyze (cps, syn, flow: FlowCFA.result) =

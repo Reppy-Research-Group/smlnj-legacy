@@ -231,6 +231,40 @@ end = struct
   fun singlevec #[f] = SOME f
     | singlevec _ = NONE
 
+  fun checkWeb (repr, defs) : unit =
+    let val (f, fs) =
+          (case Vector.toList defs
+             of [] => raise Fail "empty web"
+              | (f :: fs) => (f, fs))
+        fun getCodeEnv f =
+          let val D.Closure {code, env} = LCPS.FunMap.lookup (repr, f)
+          in  (code, env)
+          end
+        fun checkCode (D.Direct _, D.Direct _) = ()
+          | checkCode (D.Pointer _, D.Pointer _) = ()
+          | checkCode (D.SelectFrom _, D.SelectFrom _) = ()
+          | checkCode (D.Defun _, D.Defun _) = ()
+          | checkCode _ = raise Fail "Inconsistent code pointer"
+        fun checkEnv (D.Boxed _, D.Boxed _) = ()
+          | checkEnv (D.Flat slots, D.Flat slots2) =
+              if List.length slots = List.length slots2 then
+                ()
+              else
+                raise Fail "arity"
+          | checkEnv _ = raise Fail "Flat Boxed"
+        val (refcode, refenv) = getCodeEnv f
+        val () =
+          (case (refcode, refenv)
+             of (D.Pointer _, D.Boxed _) => raise Fail "pointer - boxed"
+              | (D.SelectFrom _, D.Flat _) => raise Fail "select - flat"
+              | _ => ())
+    in  List.app (fn g =>
+          let val (code, env) = getCodeEnv g
+          in  checkCode (code, refcode); checkEnv (env, refenv)
+          end
+        ) fs
+    end
+
   fun webenv ((ctx, D.T {repr, ...}, web, syn): env, v) :
     Web.kind * D.code * D.environment * LCPS.function option =
     (case Web.webOfVar (web, v)
@@ -266,6 +300,7 @@ end = struct
                                  D.Flat
                                    (map (fn s => D.Var (freshLV v, slotToTy s))
                                         slots))
+                       val () = checkWeb (repr, defs)
                    in  (kind, code, env, singlevec defs)
                    end)
         | NONE =>
@@ -715,7 +750,12 @@ end = struct
         end
 
   fun transform ((fk, name, args, tys, body): LCPS.function, dec, web, syn) =
-    let val ctx = C.initial ()
+    let val () =
+          let val D.T { repr, ... } = dec
+          in  Web.fold (fn (id, { defs, polluted, ... }, ()) =>
+                if not polluted then checkWeb (repr, defs) else ()) () web
+          end
+        val ctx = C.initial ()
         val (ctx, args, tys) =
           (case (args, tys)
              of (ret::args, CPS.CNTt::tys) =>

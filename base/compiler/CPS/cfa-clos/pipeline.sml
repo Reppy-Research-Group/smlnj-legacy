@@ -344,9 +344,22 @@ end = struct
     end
 
   fun removeKnownCodePtr (web: W.t, syn: S.t) (D.T {repr, allo, heap}): D.t =
-    let fun needCodePtrWeb (web, w) =
+    let 
+        fun inDataStructureOne name =
+          let fun construct (LCPS.RECORD _) = true
+                | construct (LCPS.PURE _) = true
+                | construct (LCPS.SETTER _) = true
+                | construct (LCPS.LOOKER _) = true
+                | construct (LCPS.ARITH _) = true
+                | construct _ = false
+              val uses = S.usePoints syn name
+          in  LCPS.Set.exists construct uses
+          end
+        fun inDataStructure uses = Vector.exists inDataStructureOne uses
+        fun needCodePtrWeb (web, w) =
             case W.content (web, w)
-              of { polluted=false, defs=(#[_]), ... } => false
+              of { polluted=false, defs=(#[_]), uses=(#[v]), kind=W.User, ... } =>
+                   inDataStructureOne v
                | _ => true
         fun needCodePtr f = needCodePtrWeb (web, W.webOfFun (web, f))
         (* fun needCodePtr (f: LCPS.function) = *)
@@ -356,7 +369,7 @@ end = struct
         (*       val uses = S.usePoints syn name *)
         (*       val groupfuns = S.groupFun syn (S.groupOf syn f) *)
         (*   in  not (LCPS.Set.all isCall uses) *)
-        (*       orelse Vector.length groupfuns > 1 *)
+        (*       (1* orelse Vector.length groupfuns > 1 *1) *)
         (*   end *)
         fun removeCodePtr (f, code, env, repr, heap) =
           (case (code, env)
@@ -585,9 +598,10 @@ end = struct
                                          * structure, but it doesn't need an
                                          * environment or a code pointer, we
                                          * supply a placeholder *)
-                                        (D.Boxed e,
-                                         EnvID.Map.insert (heap, e,
-                                                             D.Record [D.Null]))
+                                        (* (D.Boxed e, *)
+                                        (*  EnvID.Map.insert (heap, e, *)
+                                        (*                      D.Record [D.Null])) *)
+                                        (D.Flat [], heap)
                                     | D.Record [D.EnvID e'] =>
                                         (D.Boxed e', heap)
                                     (* | D.Record [D.Code _] => *)
