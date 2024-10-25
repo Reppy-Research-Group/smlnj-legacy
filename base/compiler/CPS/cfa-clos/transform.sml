@@ -15,14 +15,15 @@ end = struct
   val defunTy = CPS.NUMt { sz=Target.defaultIntSz, tag=true }
 
   datatype path = Path of { base: LV.lvar, selects: int list }
-                | Create of { function: LCPS.function, env: LV.lvar,
-                              fields: int list }
+                | Create of { function: LCPS.function,
+                              env: { base: LV.lvar, selects: int list } }
 
   fun pathToS (Path {base, selects}) =
         concat (LV.lvarName base :: map (fn i => "." ^ Int.toString i) selects)
-    | pathToS (Create {function, env, fields}) =
-        concat ["{", LV.lvarName (#2 function), ",", LV.lvarName env,
-                ":", String.concatWithMap "," Int.toString fields, "}"]
+    | pathToS (Create {function, env={ base, selects }}) =
+        concat (["{", LV.lvarName (#2 function), ","] @
+                (LV.lvarName base ::
+                 map (fn i => "." ^ Int.toString i) selects))
 
   fun mergePath (Path { base=b1, selects=s1 }, Path { base=b2, selects=s2 }) =
         if List.length s1 <= List.length s2 then
@@ -299,7 +300,7 @@ end = struct
 
   fun buildAccessMap (env: env, f: LCPS.function, muts) : path LV.Map.map =
     let val (ctx, D.T { repr, heap, ... }, _, _) = env
-        val roots  = LCPS.FunMap.lookup (repr, f)
+        (* val roots  = LCPS.FunMap.lookup (repr, f) *)
         val insert = LV.Map.insertWith mergePath
         fun nexts (e, { base, selects }, todo) =
           (case EnvID.Map.find (heap, e)
@@ -337,7 +338,9 @@ end = struct
         val bases =
           ListPair.foldl (fn (name, slot, bases) =>
             (slot, { base=name, selects=[] }) :: bases) [] (names, slots)
-        val initial =
+        val access = dfs (bases, LV.Map.empty)
+
+        val access =
           foldl (fn (g, access) =>
             if sameF f g then
               access
@@ -345,25 +348,30 @@ end = struct
               let val D.Closure { code, env } = LCPS.FunMap.lookup (repr, g)
               in  case (code, env)
                     of (D.SelectFrom _, D.Boxed e) =>
-                         (* If the mutually recursive functions need a pointer,
-                          * we create one from the base. *)
-                         let val envFields =
-                               (case EnvID.Map.lookup (heap, e)
-                                  of D.RawBlock _ => raise Fail "how?"
-                                   | D.Record slots =>
-                                       List.mapPartiali
-                                         (fn (i, D.Code _) => NONE
-                                           | (i, _) => SOME i) slots)
-                             val base = List.hd names
-                         in  LV.Map.insert (access, varOfEnv e,
-                               Create {function=g, env=base, fields=envFields})
-                         end
-                     | (D.Direct _, D.Boxed e) => access
-                         (* FIXME: This is a bogus case *)
-                     | (_, D.Boxed e) => raise Fail "Check this"
-                     | _ => access
-              end) LV.Map.empty muts
-    in  dfs (bases, initial)
+                          (* If the mutually recursive functions need a pointer,
+                           * we create one from the base. *)
+                          let val sharedEnv =
+                                (case EnvID.Map.lookup (heap, e)
+                                   of D.Record [D.Code _, D.EnvID env] => env
+                                    | _ => raise Fail "unexpected repr")
+                              (* REFACTOR: I don't really like the fact that we
+                               * are getting the name of the shared env via its
+                               * position. Maybe repr should be a map from
+                               * Group instead of functions, and a closure has a
+                               * list of functions. *)
+                              val path =
+                                (case LV.Map.lookup (access, varOfEnv sharedEnv)
+                                   of Path path => path
+                                    | Create _ => raise Fail "impossible")
+                          in  insert (access, varOfEnv e,
+                                Create { function=g, env=path })
+                          end
+                    | (D.Direct _, D.Boxed e) => access
+                    | (_, D.Boxed _) => raise Fail "check this"
+                    | _ => access
+              end
+            ) access muts
+    in  access
     end
 
   fun indexOf (pred: 'a -> bool) (xs: 'a list) : int =
@@ -392,9 +400,10 @@ end = struct
                   end
         in  select selects base
         end
-    | pathToHdr (SOME (Create { function, env=base, fields=fs }), name, cty) =
-        let val fields = map (fn i =>
-              (LCPS.mkLabel (), CPS.VAR base, CPS.SELp (i, CPS.OFFp 0))) fs
+    | pathToHdr (SOME (Create { function, env={base, selects} }), name, cty) =
+        let fun accesspath [] = CPS.OFFp 0
+              | accesspath (i :: is) = CPS.SELp (i, accesspath is)
+            val fields = [(LCPS.mkLabel (), CPS.VAR base, accesspath selects)]
             val fields =
               (LCPS.mkLabel (), CPS.LABEL (#2 function), CPS.OFFp 0) :: fields
         in  fn cexp =>
@@ -551,9 +560,10 @@ end = struct
           (case env
              of D.Boxed e => D.Boxed e
               | D.Flat slots =>
-                  let val slots =
-                        ListPair.mapEq (fn (D.Null, v) => D.Var (v, bogusTy)
-                                         | (s, _) => s) (slots, envs)
+                  let
+                      (* val slots = *)
+                      (*   ListPair.mapEq (fn (D.Null, v) => D.Var (v, bogusTy) *)
+                      (*                    | (s, _) => s) (slots, envs) *)
                   in  D.Flat slots
                   end)
         val env =
