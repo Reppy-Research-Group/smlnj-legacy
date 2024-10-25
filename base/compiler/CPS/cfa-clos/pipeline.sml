@@ -548,10 +548,10 @@ end = struct
          *)
         fun collect (group, (repr, heap: D.heap, allo)) =
           let
-              val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o
-              #2) (Vector.toList (S.groupFun syn group)) ^ "\n")
-              val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap,
-              allo=allo}, syn, group)
+              (* val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o *)
+              (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
+              (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
+              (* allo=allo}, syn, group) *)
 
               fun isFirstOrder (f: LCPS.function) =
                 let val name = #2 f
@@ -647,10 +647,10 @@ end = struct
                 handle e => raise e
               val allo = Group.Map.insert (allo, group, environments)
 
-              val () = print ("AFTER " ^ String.concatWithMap "," (LV.lvarName o
-              #2) (Vector.toList (S.groupFun syn group)) ^ "\n")
-              val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap,
-              allo=allo}, syn, group)
+              (* val () = print ("AFTER " ^ String.concatWithMap "," (LV.lvarName o *)
+              (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
+              (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
+              (* allo=allo}, syn, group) *)
           in  (repr, heap, allo)
           end
         val (repr, heap, allo) =
@@ -685,8 +685,8 @@ end = struct
           >>> allocate'n'expand (syn, web, funtbl, looptbl)
 
         val decision = process (cps, syn)
-        val () = print "FINAL\n"
-        val () = ClosureDecision.dump (decision, syn)
+        (* val () = print "FINAL\n" *)
+        (* val () = ClosureDecision.dump (decision, syn) *)
     in  decision
     end
 end
