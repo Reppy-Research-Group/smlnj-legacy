@@ -16,14 +16,17 @@ end = struct
 
   datatype path = Path of { base: LV.lvar, selects: int list }
                 | Create of { function: LCPS.function,
-                              env: { base: LV.lvar, selects: int list } }
+                              env: { base: LV.lvar, selects: int list } option }
 
   fun pathToS (Path {base, selects}) =
         concat (LV.lvarName base :: map (fn i => "." ^ Int.toString i) selects)
-    | pathToS (Create {function, env={ base, selects }}) =
+    | pathToS (Create {function, env}) =
         concat (["{", LV.lvarName (#2 function), ","] @
-                (LV.lvarName base ::
-                 map (fn i => "." ^ Int.toString i) selects))
+                (case env
+                   of NONE => []
+                    | SOME { base, selects } =>
+                        LV.lvarName base ::
+                        map (fn i => "." ^ Int.toString i) selects))
 
   fun mergePath (Path { base=b1, selects=s1 }, Path { base=b2, selects=s2 }) =
         if List.length s1 <= List.length s2 then
@@ -352,7 +355,9 @@ end = struct
                            * we create one from the base. *)
                           let val sharedEnv =
                                 (case EnvID.Map.lookup (heap, e)
-                                   of D.Record [D.Code _, D.EnvID env] => env
+                                   of D.Record [D.Code _, D.EnvID env] =>
+                                        SOME env
+                                    | D.Record [D.Code _] => NONE
                                     | _ => raise Fail "unexpected repr")
                               (* REFACTOR: I don't really like the fact that we
                                * are getting the name of the shared env via its
@@ -360,9 +365,11 @@ end = struct
                                * Group instead of functions, and a closure has a
                                * list of functions. *)
                               val path =
-                                (case LV.Map.lookup (access, varOfEnv sharedEnv)
-                                   of Path path => path
-                                    | Create _ => raise Fail "impossible")
+                                Option.map (fn env =>
+                                  (case LV.Map.lookup (access, varOfEnv env)
+                                     of Path path => path
+                                      | Create _ => raise Fail "impossible")
+                                ) sharedEnv
                           in  insert (access, varOfEnv e,
                                 Create { function=g, env=path })
                           end
@@ -400,10 +407,14 @@ end = struct
                   end
         in  select selects base
         end
-    | pathToHdr (SOME (Create { function, env={base, selects} }), name, cty) =
+    | pathToHdr (SOME (Create { function, env }), name, cty) =
         let fun accesspath [] = CPS.OFFp 0
               | accesspath (i :: is) = CPS.SELp (i, accesspath is)
-            val fields = [(LCPS.mkLabel (), CPS.VAR base, accesspath selects)]
+            val fields =
+              (case env
+                 of SOME {base, selects} =>
+                      [(LCPS.mkLabel (), CPS.VAR base, accesspath selects)]
+                  | NONE => [])
             val fields =
               (LCPS.mkLabel (), CPS.LABEL (#2 function), CPS.OFFp 0) :: fields
         in  fn cexp =>
