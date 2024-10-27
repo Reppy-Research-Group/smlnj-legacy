@@ -15,7 +15,7 @@ structure LabelledCPS :> sig
     = RECORD of label * record_kind * (lvar * value * accesspath) list * lvar * cexp
     | SELECT of label * int * value * lvar * cty * cexp
     | OFFSET of label * int * value * lvar * cexp
-    | APP of label * value * value list
+    | APP of app
     | FIX of label * function list * cexp
     | SWITCH of label * value * lvar * cexp list
     | BRANCH of label * CPS.P.branch * value list * lvar * cexp * cexp
@@ -26,6 +26,8 @@ structure LabelledCPS :> sig
     | RCC of label * bool * string * CTypes.c_proto * value list *
              (lvar * cty) list * cexp
     withtype function = fun_kind * lvar * lvar list * cty list * cexp
+         and app = label * value * value list
+
 
   val mkLabel : unit -> label
 
@@ -75,6 +77,7 @@ end = struct
     | RCC of label * bool * string * CTypes.c_proto * value list *
              (lvar * cty) list * cexp
     withtype function = fun_kind * lvar * lvar list * cty list * cexp
+         and app = label * value * value list
 
   val mkLabel = LambdaVar.mkLvar
 

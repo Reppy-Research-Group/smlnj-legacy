@@ -95,7 +95,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
     end
     handle e =>
     (let
-     (* val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n") *)
+     val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n")
      in   raise e
      end)
 

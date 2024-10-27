@@ -315,7 +315,7 @@ end = struct
                | _ =>
                    (Web.User,
                     D.SelectFrom { env=0, selects=[0] },
-                    D.Flat [D.Var (v, bogusTy)],
+                    D.Boxed (EnvID.wrap v),
                     NONE)))
 
   fun funkind (env as (_, dec, _, syn): env, function: LCPS.function) =

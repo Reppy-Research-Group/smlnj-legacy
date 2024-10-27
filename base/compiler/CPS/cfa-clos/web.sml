@@ -98,7 +98,6 @@ end = struct
     let val funTbl = LCPS.FunTbl.mkTable (S.numFuns syn, Fail "funmap")
         val varTbl = LV.Tbl.mkTable (S.numVars syn, Fail "varmap")
 
-        (* TODO: specialize *)
         val stdfunWeb =
           let 
             (* val web = { defs=LCPS.FunSet.empty, uses=LV.Set.empty, *)
@@ -177,17 +176,32 @@ end = struct
 
         val union = UF.merge mergeInfo
 
+        fun hasFunTy v =
+          (case S.typeof syn v
+             of (CPS.CNTt | CPS.FUNt) => true
+              | _ => false)
+
+        val defaultW = { known=[], unknown=true } : FlowCFA.functions
+
         fun initialize () =
           let val fs = S.foldF syn (fn (f, acc) => initF (f, flow f) :: acc) []
               val vs = S.foldV syn (fn (v, acc) =>
                          (case lookup v
-                            of NONE => acc
+                            of NONE => if hasFunTy v then
+                                         initV (v, defaultW) :: acc
+                                       else
+                                         acc
                              | SOME info => initV (v, info) :: acc)) []
           in  (fs, vs)
           end
 
         fun lookupF f = LCPS.FunTbl.lookup funTbl f
         fun lookupV v = LV.Tbl.lookup varTbl v
+                        handle e => (print (LV.lvarName v ^ "\n"); raise e)
+        fun lookupOrInitV v =
+          (case LV.Tbl.find varTbl v
+             of SOME cell => cell
+              | NONE => #1 (initV (v, defaultW)))
 
         fun processF (fcell, known) =
           let val _ = foldl (fn (v, c) => union (lookupV v, c)) fcell known
@@ -199,7 +213,44 @@ end = struct
           in  ()
           end
 
-        fun build (fs, vs) = (app processF fs; app processV vs)
+        fun unionStd cell =
+          (case UF.get cell
+             of Sealed _ => raise Fail "unexpected sealed"
+              | Partial { kind=User, ... } => ignore (union (cell, stdfunWeb))
+              | Partial { kind=Cont, ... } => ignore (union (cell, stdcntWeb))
+              | Standard _ => ())
+
+        fun processCallConv (_, f, args) =
+          let val f = (case f of CPS.VAR f => f | _ => raise Fail "call non-var")
+              fun setStd args =
+                app (fn (CPS.VAR v) =>
+                        (case LV.Tbl.find varTbl v
+                           of SOME cell => unionStd cell
+                            | NONE => ())
+                      | _ => ()) args
+              fun align (formals, tys, actuals) =
+                let fun go ([], [], []) = ()
+                      | go (f :: formals, t :: tys, a :: actuals) =
+                          (case (t, a)
+                             of ((CPS.FUNt | CPS.CNTt), CPS.VAR a) =>
+                                let val fcell = lookupV f
+                                    val acell = lookupOrInitV a
+                                in  union (fcell, acell);
+                                    go (formals, tys, actuals)
+                                end
+                              | _ => ())
+                      | go _ = raise ListPair.UnequalLengths
+                in  go (formals, tys, actuals)
+                end
+          in  case lookup f
+                of (NONE | SOME { unknown=true, ... })=> setStd args
+                 | SOME { known, unknown=false } =>
+                     app (fn (_, _, formals, tys, _) =>
+                            align (formals, tys, args)) known
+          end
+
+        fun build (fs, vs) = 
+          (app processF fs; app processV vs; S.appApp syn processCallConv)
 
         fun finalize () =
           let fun convertWeb { defs, uses, polluted, kind } : info =
