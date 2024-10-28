@@ -314,7 +314,7 @@ end = struct
 
               val (packs, loose) =
                 let val loose = sortBy #2 loose
-                    val distCutoff = 1 and sizeCutoff = 4
+                    val distCutoff = 2 and sizeCutoff = 4
                     fun findCandidatePacks (vs, fstDepth, currPack, packs) =
                       (case vs
                          of [] => currPack :: packs

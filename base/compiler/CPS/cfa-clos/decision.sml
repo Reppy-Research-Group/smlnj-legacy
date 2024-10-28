@@ -12,6 +12,7 @@ structure ClosureDecision = struct
     val dup    : t -> t
     val toString : t -> string
     val compare : t * t -> order
+    val same : t * t -> bool
 
     structure Map : ORD_MAP where type Key.ord_key = t
     structure Set : ORD_SET where type Key.ord_key = t
@@ -26,6 +27,7 @@ structure ClosureDecision = struct
     val toString = LV.lvarName
     val dup = LV.dupLvar
     val compare = LV.compare
+    val same = LV.same
 
     structure Map = LV.Map
     structure Set = LV.Set

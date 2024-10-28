@@ -220,7 +220,10 @@ end = struct
          val (repr, heap) = S.foldF syn (fn (f, (repr, heap)) =>
              (case needsFlatteningF f
                 of NONE => (repr, heap)
-                 | SOME arity => expandRepr (f, arity, repr, heap))
+                 | SOME arity =>
+
+                     (app print [LV.lvarName (#2 f) , " ---> ", Int.toString arity, "\n"];
+                     expandRepr (f, arity, repr, heap)))
            ) (repr, heap)
 
          (* Step 2: replace all variables in the heap with the expansions *)
@@ -270,7 +273,7 @@ end = struct
      end
 
   fun analyze'n'flatten (syn, web) dec =
-    let val arity = FlatteningAnalysis.simple (dec, web, syn)
+    let val arity = FlatteningAnalysis.medium (dec, web, syn)
     in  flatten (arity, syn, web) dec
     end
 
@@ -358,7 +361,9 @@ end = struct
         fun inDataStructure uses = Vector.exists inDataStructureOne uses
         fun needCodePtrWeb (web, w) =
             case W.content (web, w)
-              of { polluted=false, defs=(#[_]), uses, kind=W.User, ... } =>
+              of { polluted=false, defs=(#[_]), uses=(#[v]), kind=W.Cont } =>
+                   false (* Continuations do not appear in data structures *)
+               | { polluted=false, defs=(#[_]), uses, kind=W.User } =>
                    inDataStructure uses
                | _ => true
         fun needCodePtr f = needCodePtrWeb (web, W.webOfFun (web, f))
@@ -477,6 +482,7 @@ end = struct
                            of D.Boxed e =>
                                 (case EnvID.Map.lookup (heap, e)
                                    of D.Record [] => D.Flat []
+                                    | D.Record [D.EnvID e'] => D.Boxed e'
                                     | _ => env)
                             | D.Flat slots =>
                                 D.Flat (purgeSlots (slots, heap)))
@@ -488,6 +494,7 @@ end = struct
                 List.filter (fn e =>
                   (case EnvID.Map.lookup (heap, e)
                      of D.Record [] => false
+                      | D.Record [D.EnvID _] => false
                       | _ => true)
                 ) environments
               val allo = Group.Map.insert (allo, grp, environments)
@@ -659,10 +666,10 @@ end = struct
          *)
         fun collect (group, (repr, heap: D.heap, allo)) =
           let
-              (* val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o *)
-              (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
-              (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
-              (* allo=allo}, syn, group) *)
+              val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o
+              #2) (Vector.toList (S.groupFun syn group)) ^ "\n")
+              val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap,
+              allo=allo}, syn, group)
 
               fun isFirstOrder (f: LCPS.function) =
                 let val name = #2 f
@@ -683,6 +690,8 @@ end = struct
                       | _ => heap)
                 ) heap environments
                 handle e => raise e
+              fun isOwnerOf e =
+                List.exists (fn e' => EnvID.same (e, e')) environments
               (* val returnC = S.returnCont syn (S.groupExp syn group) *)
               val (repr, heap) = Vector.foldl (fn (f, (repr, heap)) =>
                   let val D.Closure {code, env} = LCPS.FunMap.lookup (repr, f)
@@ -723,7 +732,14 @@ end = struct
                                     val (taken, spilled) =
                                       pick (pref, heap, slots, avail)
                                     fun update (heap, e, slots) =
-                                      EnvID.Map.insert (heap, e, D.Record slots)
+                                      (* FIXME BUG!: do not change the content
+                                       * of env if it is shared by some other
+                                       * functions *)
+                                      if isOwnerOf e then
+                                        EnvID.Map.insert
+                                          (heap, e, D.Record slots)
+                                      else
+                                        heap
                                     val (fst, heap) =
                                       (case spilled
                                          of [] => (D.Null, update (heap, e, []))
@@ -760,10 +776,10 @@ end = struct
                 handle e => raise e
               val allo = Group.Map.insert (allo, group, environments)
 
-              (* val () = print ("AFTER " ^ String.concatWithMap "," (LV.lvarName o *)
-              (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
-              (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
-              (* allo=allo}, syn, group) *)
+              val () = print ("AFTER " ^ String.concatWithMap "," (LV.lvarName o
+              #2) (Vector.toList (S.groupFun syn group)) ^ "\n")
+              val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap,
+              allo=allo}, syn, group)
           in  (repr, heap, allo)
           end
         val (repr, heap, allo) =
@@ -804,7 +820,7 @@ end = struct
 
         val decision = process (cps, syn)
         (* val () = print "FINAL\n" *)
-        (* val () = ClosureDecision.dump (decision, syn) *)
+        val () = ClosureDecision.dump (decision, syn)
     in  decision
     end
 end
