@@ -29,7 +29,7 @@ structure Timing : sig
     fun pad (s, n) = StringCvt.padLeft #" " n s
 
     fun start () = (
-	  SMLofNJ.Internals.GC.doGC 1000;
+          SMLofNJ.Internals.GC.doGC 1000;
           Time.now())
 
     fun stop startT = Time.-(Time.now(), startT)
@@ -41,37 +41,70 @@ structure Timing : sig
 
   (* measure the compile time for a file *)
     fun timeUse (outstrm, file) = let
-	  val t0 = start()
-	  in
-	    use file;
-	    output (outstrm, stop t0)
-	  end
+          val t0 = start()
+          in
+            use file;
+            output (outstrm, stop t0)
+          end
 
   (* Time one run of the benchmark *)
     fun timeOne doit = let
-	  val t0 = start()
-	  in
-	    doit();
-	    stop t0
-	  end
+          val t0 = start()
+          in
+            doit();
+            stop t0
+          end
 
     fun timeIt (outstrm, doit) = let
-	    val t = timeOne doit
-	    in
-	      TextIO.output1 (outstrm, #"\t");
-	      output (outstrm, t);
-	      TextIO.output1 (outstrm, #"\n")
-	    end
+            val t = timeOne doit
+            in
+              TextIO.output1 (outstrm, #"\t");
+              output (outstrm, t);
+              TextIO.output1 (outstrm, #"\n")
+            end
 
   (* Time n runs of the benchmark *)
     fun time (n, outstrm, doit) = let
-	  fun loop 0 = ()
-	    | loop i = (
-		output (outstrm, timeOne doit);
-		if (i > 1) then TextIO.output (outstrm, ", ") else ();
-		loop (i-1))
-	  in
-	    loop n
-	  end
+          fun loop 0 = ()
+            | loop i = (
+                output (outstrm, timeOne doit);
+                if (i > 1) then
+                  TextIO.output (outstrm, ", ")
+                else
+                  TextIO.output (outstrm, "\n");
+                loop (i-1))
+          in
+            loop n
+          end
 
   end
+
+structure Measuring : sig
+  val measure : TextIO.outstream * (unit -> 'a) -> unit
+end = struct
+  structure CI = Unsafe.CInterface
+  val read' : unit -> word * word * word list = CI.c_function "SMLNJ-RunT" "gcCounterRead"
+  val reset : bool -> unit = CI.c_function "SMLNJ-RunT" "gcCounterReset"
+  fun read () = let
+        val (a, p, ngcs) = read'()
+        in {
+          nbAlloc = Word.toLargeInt a,
+          nbPromote = Word.toLargeInt p,
+          nGCs = List.map Word.toLargeInt ngcs
+        } end
+
+  fun measurementToString { nbAlloc, nbPromote, nGCs } =
+    concat ["nbAlloc=", IntInf.toString nbAlloc, ", nbPromote=", IntInf.toString
+    nbPromote, ", nGCs=[",  String.concatWithMap "," IntInf.toString nGCs, "]\n"]
+
+  fun report (outstrm, measurement) =
+    TextIO.output (outstrm, measurementToString measurement)
+
+  fun measure (outstrm, doit) =
+    let val () = reset true
+        val _ = doit ()
+        val measurement = read ()
+    in  report (outstrm, measurement)
+    end
+end
+

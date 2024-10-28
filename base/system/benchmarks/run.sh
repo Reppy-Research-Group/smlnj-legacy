@@ -7,7 +7,7 @@
 unalias echo
 
 NCOMPS=1
-NRUNS=10
+NRUNS=1
 
 if [ x"$1" = "x--new" ] ; then
   LLVM=yes
@@ -16,7 +16,7 @@ if [ x"$1" = "x--new" ] ; then
   shift
 else
   LLVM=no
-  SML="../testml --Ccg.new-closure-converter=false"
+  SML="../testml -Ccg.new-closure-converter=false"
   OUT_SUFFIX="-old"
 fi
 
@@ -60,6 +60,8 @@ $SML <<EOF 2>&1
   use "$prog.sml";
   val outS = TextIO.openAppend("$OUT_FILE");
   Timing.time($NRUNS, outS, Main.doit);
+  TextIO.flushOut outS;
+  Measuring.measure(outS, Main.doit);
   TextIO.flushOut outS;
   TextIO.closeOut outS;
 EOF
