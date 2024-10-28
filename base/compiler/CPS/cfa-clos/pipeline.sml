@@ -344,7 +344,7 @@ end = struct
     end
 
   fun removeKnownCodePtr (web: W.t, syn: S.t) (D.T {repr, allo, heap}): D.t =
-    let 
+    let
         fun inDataStructureOne name =
           let fun construct (LCPS.RECORD _) = true
                 | construct (LCPS.PURE _) = true
@@ -400,6 +400,104 @@ end = struct
           ) (repr, heap) repr
     in  D.T { repr=repr, heap=heap, allo=allo }
     end
+
+  fun removeEmptyEnv (syn: S.t, web: W.t) (D.T {repr, heap, allo}) : D.t =
+    let fun collect (id, { defs, uses, polluted, ... }: W.info, arity0webs) =
+          let fun isArity0V v =
+                (case W.webOfVar (web, v)
+                   of NONE => false
+                    | SOME id => W.Set.member (arity0webs, id))
+              fun isArity0S (D.EnvID e) =
+                    (case EnvID.Map.lookup (heap, e)
+                       of D.Record slots => List.all isArity0S slots
+                        | D.RawBlock ([_], _) => raise Fail "empty raw"
+                        | D.RawBlock _ => false)
+                | isArity0S (D.Var (v, _)) = isArity0V v
+                | isArity0S (D.Expand (v, _, _)) = isArity0V v
+                | isArity0S (D.Code _) = false
+                | isArity0S D.Null = raise Fail "unexpected null"
+              fun isArity0F f =
+                let val D.Closure { code, env } = LCPS.FunMap.lookup (repr, f)
+                in  case (code, env)
+                      of (_, D.Boxed e) => isArity0S (D.EnvID e)
+                       | (D.Direct _, D.Flat []) => true
+                       | _ => false
+                end
+          in  if polluted then
+                arity0webs
+              else if Vector.all isArity0F defs then
+                W.Set.add (arity0webs, id)
+              else
+                arity0webs
+          end
+        fun fixpt (n, arity0webs) =
+          let val arity0webs' = W.fold collect arity0webs web
+          in  if W.Set.equal (arity0webs, arity0webs') then
+                arity0webs'
+              else
+                fixpt (n + 1, arity0webs')
+          end
+        val arity0webs = fixpt (0, W.Set.empty)
+        (* val () = app print [ *)
+        (*     "arity0webs: ", String.concatWithMap "," W.idToString *)
+        (*     (W.Set.listItems arity0webs), *)
+        (*     "\n" *)
+        (*   ] *)
+
+        fun purge (grp, (repr, heap, allo)) =
+          let val functions = S.groupFun syn grp
+              fun purgeSlots ([], heap) = []
+                | purgeSlots ((x as (D.Var (v, _) | D.Expand (v, _, _))) :: xs,
+                              heap) =
+                    (case W.webOfVar (web, v)
+                       of NONE => x :: purgeSlots (xs, heap)
+                        | SOME id =>
+                            if W.Set.member (arity0webs, id) then
+                              purgeSlots (xs, heap)
+                            else
+                              x :: purgeSlots (xs, heap))
+                | purgeSlots ((x as D.EnvID e) :: xs, heap) =
+                    (case EnvID.Map.lookup (heap, e)
+                       of D.Record [] => purgeSlots (xs, heap)
+                        | _ => x :: purgeSlots (xs, heap))
+                | purgeSlots (x :: xs, heap) = x :: purgeSlots (xs, heap)
+              val environments = Group.Map.lookup (allo, grp)
+              val heap = foldl (fn (e, heap) =>
+                  (case EnvID.Map.lookup (heap, e)
+                     of D.Record slots =>
+                          let val slots = purgeSlots (slots, heap)
+                          in  EnvID.Map.insert (heap, e, D.Record slots)
+                          end
+                      | _ => heap)
+                ) heap environments
+              val repr = Vector.foldl (fn (f, repr) =>
+                  let val D.Closure { code, env } = LCPS.FunMap.lookup (repr, f)
+                      val env =
+                        (case env
+                           of D.Boxed e =>
+                                (case EnvID.Map.lookup (heap, e)
+                                   of D.Record [] => D.Flat []
+                                    | _ => env)
+                            | D.Flat slots =>
+                                D.Flat (purgeSlots (slots, heap)))
+                      val closure =D.Closure { code=code, env=env }
+                  in  LCPS.FunMap.insert (repr, f, closure)
+                  end
+                ) repr functions
+              val environments =
+                List.filter (fn e =>
+                  (case EnvID.Map.lookup (heap, e)
+                     of D.Record [] => false
+                      | _ => true)
+                ) environments
+              val allo = Group.Map.insert (allo, grp, environments)
+          in  (repr, heap, allo)
+          end
+        val (repr, heap, allo) =
+          Vector.foldl purge (repr, heap, allo) (S.groups syn)
+    in  D.T {repr=repr, allo=allo, heap=heap}
+    end
+
 
   fun allocate'n'expand
     (syn: S.t, web: W.t, funtbl: CF.funtbl, looptbl: CF.looptbl)
@@ -610,6 +708,7 @@ end = struct
                                     (*     (D.Flat [s], heap) *)
                                     | _ => (env, heap)
                                 handle e => raise e)
+                            | D.Flat [] => (D.Flat [], heap)
                             | D.Flat (D.EnvID e :: nulls) =>
                                 let val entry = LCPS.FunTbl.lookup funtbl f
                                                 handle e => raise e
@@ -671,13 +770,17 @@ end = struct
           Vector.foldl collect (repr, heap, allo) (S.groups syn)
     in  D.T {repr=repr, allo=allo, heap=heap}
     end
+    handle e => (D.dump (D.T {repr=repr, allo=allo, heap=heap}, syn); raise e)
 
   val _ = initial : LCPS.function * S.t -> D.t
   val _ = share   : S.t * CF.block * CF.funtbl * SA.result -> rewriting
   val _ = analyze'n'flatten : S.t * W.t -> rewriting
   val _ = segregateMLValues  : rewriting
   val _ = removeKnownCodePtr : W.t * S.t -> rewriting
+  val _ = removeEmptyEnv : S.t * W.t -> rewriting
   val _ = allocate'n'expand  : S.t * W.t * CF.funtbl * CF.looptbl -> rewriting
+
+  fun fake syn (f : rewriting) : rewriting = fn dec => (D.dump (f dec, syn); dec)
 
   infix 2 >>>
   fun f >>> g = fn x => g (f x)
@@ -694,6 +797,7 @@ end = struct
               initial
           >>> share (syn, LCPS.FunTbl.lookup funtbl cps, funtbl, shr)
           >>> removeKnownCodePtr (web, syn)
+          >>> removeEmptyEnv (syn, web)
           >>> analyze'n'flatten (syn, web)
           >>> segregateMLValues
           >>> allocate'n'expand (syn, web, funtbl, looptbl)

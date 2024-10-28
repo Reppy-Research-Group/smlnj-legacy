@@ -25,6 +25,10 @@ end = struct
           in  LCPS.Set.exists construct uses
           end
         fun inDataStructure uses = Vector.exists inDataStructureOne uses
+        fun arity0F f =
+          (case LCPS.FunMap.lookup (repr, f)
+             of D.Closure {env=D.Flat [], ...} => true
+              | _ => false)
         fun arity id =
           (case Web.content (web, id)
              of { kind=W.Cont, ... } => SOME 3
@@ -32,6 +36,8 @@ end = struct
               | { polluted=false, defs=(#[f]), uses=(uses as #[_]), ... } =>
                   if inDataStructure uses then
                     NONE
+                  else if arity0F f then
+                    SOME 0
                   else
                     SOME 1
               | _ => NONE)

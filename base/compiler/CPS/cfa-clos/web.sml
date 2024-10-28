@@ -24,6 +24,7 @@ structure Web :> sig
 
   val fold : (id * info * 'a -> 'a) -> 'a -> t -> 'a
 
+  val idToString : id -> string
   val toString : info -> string
 
   val dump : t -> unit
@@ -99,7 +100,7 @@ end = struct
         val varTbl = LV.Tbl.mkTable (S.numVars syn, Fail "varmap")
 
         val stdfunWeb =
-          let 
+          let
             (* val web = { defs=LCPS.FunSet.empty, uses=LV.Set.empty, *)
             (*               polluted=true, kind=User } *)
           in  UF.make (Standard User)
@@ -249,7 +250,7 @@ end = struct
                             align (formals, tys, args)) known
           end
 
-        fun build (fs, vs) = 
+        fun build (fs, vs) =
           (app processF fs; app processV vs; S.appApp syn processCallConv)
 
         fun finalize () =
@@ -345,6 +346,8 @@ end = struct
 
   fun kindOfCty CPS.CNTt = Cont
     | kindOfCty _ = User
+
+  val idToString = Int.toString
 
   fun toString ({defs, uses, polluted, kind}: info) =
     let val fs = String.concatWith "," (mapL (LV.lvarName o #2) defs)
