@@ -283,6 +283,8 @@ end = struct
   fun isUntaggedIntTy (CPS.NUMt { tag, ... }) = not tag
     | isUntaggedIntTy _ = false
 
+  fun isMLTy ty = not (isFloatTy ty) andalso not (isUntaggedIntTy ty)
+
   fun segregateMLValues (D.T { repr, allo, heap }): D.t =
     let fun partitionSlots slots =
           let fun go ([], slots, ints, flts) =
@@ -678,10 +680,10 @@ end = struct
          *)
         fun collect (group, (repr, heap: D.heap, allo)) =
           let
-              val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o
-              #2) (Vector.toList (S.groupFun syn group)) ^ "\n")
-              val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap,
-              allo=allo}, syn, group)
+              (* val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o *)
+              (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
+              (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
+              (* allo=allo}, syn, group) *)
 
               fun isFirstOrder (f: LCPS.function) =
                 let val name = #2 f
@@ -690,6 +692,10 @@ end = struct
                     val uses = S.usePoints syn name
                 in  LCPS.Set.all isCall uses
                 end
+
+              fun isMLSlot (D.Var (_, ty)) = isMLTy ty
+                | isMLSlot (D.Expand (_, _, ty)) = isMLTy ty
+                | isMLSlot _ = true
 
               val environments = Group.Map.lookup (allo, group)
               val heap = foldl (fn (e, heap) =>
@@ -740,11 +746,19 @@ end = struct
                                       handle e => raise e
                                     val avail = List.length nulls
                                     val (taken, spilled) =
-                                      pick (pref, heap, slots, avail)
+                                      let val (slots, spilled) =
+                                            if isFirstOrder f then
+                                              (slots, [])
+                                            else
+                                              List.partition isMLSlot slots
+                                          (* val avail = *)
+                                          (*   Int.max (0, *)
+                                          (*           avail - List.length spilled) *)
+                                          val (taken, spilled') =
+                                            pick (pref, heap, slots, avail)
+                                      in  (taken, spilled @ spilled')
+                                      end
                                     fun update (heap, e, slots) =
-                                      (* FIXME BUG!: do not change the content
-                                       * of env if it is shared by some other
-                                       * functions *)
                                         EnvID.Map.insert
                                           (heap, e, D.Record slots)
                                     (* FIXME: This is terrible *)
@@ -760,8 +774,10 @@ end = struct
                                           | [x] =>
                                               if isShared e then
                                                 (D.EnvID e, heap)
+                                              else if isMLSlot x then
+                                                  (x, update (heap, e, []))
                                               else
-                                                (x, update (heap, e, []))
+                                                (D.EnvID e, update (heap, e, [x]))
                                           | _ =>
                                               if isShared e then
                                                 (D.EnvID e, heap)
@@ -797,10 +813,10 @@ end = struct
                 handle e => raise e
               val allo = Group.Map.insert (allo, group, environments)
 
-              val () = print ("AFTER " ^ String.concatWithMap "," (LV.lvarName o
-              #2) (Vector.toList (S.groupFun syn group)) ^ "\n")
-              val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap,
-              allo=allo}, syn, group)
+              (* val () = print ("AFTER " ^ String.concatWithMap "," (LV.lvarName o *)
+              (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
+              (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
+              (* allo=allo}, syn, group) *)
           in  (repr, heap, allo)
           end
         val (repr, heap, allo) =
@@ -836,12 +852,12 @@ end = struct
           >>> removeKnownCodePtr (web, syn)
           >>> removeEmptyEnv (syn, web)
           >>> analyze'n'flatten (syn, web)
-          >>> segregateMLValues
           >>> allocate'n'expand (syn, web, funtbl, looptbl)
+          >>> segregateMLValues
 
         val decision = process (cps, syn)
         (* val () = print "FINAL\n" *)
-        val () = ClosureDecision.dump (decision, syn)
+        (* val () = ClosureDecision.dump (decision, syn) *)
     in  decision
     end
 end

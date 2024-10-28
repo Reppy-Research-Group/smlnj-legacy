@@ -61,7 +61,7 @@ end = struct
               | SOME envs => List.length envs)
         fun arityOfV (flatten, v, ty) =
           (case W.webOfVar (web, v)
-             of SOME id => Option.getOpt (W.Map.find (flatten, id), 0) + 1
+             of SOME id => Option.getOpt (W.Map.find (flatten, id), 1)
               | NONE => (case ty of CPS.CNTt => 4 | _ => 1))
         fun arityOfSlot (flatten, D.Var (v, ty)) = arityOfV (flatten, v, ty)
           | arityOfSlot (flatten, D.Expand _) = raise Fail "expand before flat"
@@ -73,12 +73,17 @@ end = struct
              of D.Closure {env=D.Flat slots, ...} =>
                   arityOfSlots (flatten, slots)
               | D.Closure {env=D.Boxed e, ...} =>
-                  (* if isShared e then *)
-                  (*   1 *)
-                  (* else *)
+                  if isShared e then
+                    1
+                  else
                     (case EnvID.Map.lookup (heap, e)
                        of D.Record slots => arityOfSlots (flatten, slots)
                         | D.RawBlock _ => 1))
+        (* val arityOf = fn (flatten, f) => *)
+        (*   let val n = arityOf (flatten, f) *)
+        (*   in  print (LV.lvarName (#2 f) ^ " ---> " ^ Int.toString n ^ "\n"); *)
+        (*       n *)
+        (*   end *)
         fun collect (id, info: W.info, flatten: int W.Map.map) =
           (case info
              of { polluted=false, defs=(#[f]), uses=(uses as #[_]), ... } =>
@@ -86,25 +91,31 @@ end = struct
                     flatten
                   else if arityOf (flatten, f) = 0 then
                     W.Map.insert (flatten, id, 0)
-                  else if usecnt id < 1 then
-                    W.Map.insert (flatten, id, arityOf (flatten, f))
+                  (* else if usecnt id < 1 then *)
+                  (*   W.Map.insert (flatten, id, arityOf (flatten, f)) *)
                   else
                     flatten
               | { polluted=true, kind=W.User, ... } => flatten
-              | { kind=W.Cont, ... } => W.Map.insert (flatten, id, 3)
+              | { polluted=true, kind=W.Cont, ... } => W.Map.insert (flatten, id, 3)
               | _ => flatten)
         fun update flatten = W.fold collect flatten web
         fun fixpt (n, flatten) =
           let 
-              val () = print ("iter " ^ Int.toString n ^ "\n")
+              (* val () = print ("iter " ^ Int.toString n ^ "\n") *)
               val flatten' = update flatten
           in  if W.Map.collate Int.compare (flatten, flatten') = EQUAL then
                 flatten'
               else
                 fixpt (n + 1, flatten')
           end
+        (* val () = print "Flatten:\n" *)
+        (* val () = D.dump (D.T {repr=repr, allo=allo, heap=heap}, syn) *)
         val flatten = fixpt (0, W.Map.empty)
-        fun arity id = W.Map.find (flatten, id)
+        fun arity id =
+          (case Web.content (web, id)
+             of { kind=W.Cont, uses=(#[_]), ... } => W.Map.find (flatten, id)
+              | { kind=W.Cont, ... } => SOME 3
+              | _ => W.Map.find (flatten, id))
     in  arity
     end
 
