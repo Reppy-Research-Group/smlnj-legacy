@@ -222,8 +222,8 @@ end = struct
                 of NONE => (repr, heap)
                  | SOME arity =>
 
-                     (app print [LV.lvarName (#2 f) , " ---> ", Int.toString arity, "\n"];
-                     expandRepr (f, arity, repr, heap)))
+                     (* (app print [LV.lvarName (#2 f) , " ---> ", Int.toString arity, "\n"]; *)
+                     expandRepr (f, arity, repr, heap))
            ) (repr, heap)
 
          (* Step 2: replace all variables in the heap with the expansions *)
@@ -650,6 +650,18 @@ end = struct
           in  take (slots, n)
           end
 
+        fun isShared e =
+          let fun inObj (D.Record slots) =
+                    List.exists (fn D.EnvID e' => EnvID.same (e, e')
+                                  | _ => false) slots
+                | inObj _ = false
+          in  EnvID.Map.exists inObj heap
+          end
+        val sharedEnvs =
+          EnvID.Map.foldli (fn (env, _, envs) =>
+              if isShared env then EnvID.Set.add (envs, env) else envs
+            ) EnvID.Set.empty heap
+        fun isShared e = EnvID.Set.member (sharedEnvs, e)
         (* Environments now look like one of the following:
          * 1. Boxed e
          * 2. Flat [EnvID e, NULL, NULL]
@@ -690,8 +702,6 @@ end = struct
                       | _ => heap)
                 ) heap environments
                 handle e => raise e
-              fun isOwnerOf e =
-                List.exists (fn e' => EnvID.same (e, e')) environments
               (* val returnC = S.returnCont syn (S.groupExp syn group) *)
               val (repr, heap) = Vector.foldl (fn (f, (repr, heap)) =>
                   let val D.Closure {code, env} = LCPS.FunMap.lookup (repr, f)
@@ -735,18 +745,29 @@ end = struct
                                       (* FIXME BUG!: do not change the content
                                        * of env if it is shared by some other
                                        * functions *)
-                                      if isOwnerOf e then
                                         EnvID.Map.insert
                                           (heap, e, D.Record slots)
-                                      else
-                                        heap
+                                    (* FIXME: This is terrible *)
                                     val (fst, heap) =
                                       (case spilled
-                                         of [] => (D.Null, update (heap, e, []))
-                                          | [x] => (x, update (heap, e, []))
+                                         of [] =>
+                                              if isShared e then
+                                                (D.Null, heap)
+                                              else
+                                                (D.Null, update (heap, e, []))
+                                          | [D.EnvID e'] =>
+                                                (D.EnvID e', heap)
+                                          | [x] =>
+                                              if isShared e then
+                                                (D.EnvID e, heap)
+                                              else
+                                                (x, update (heap, e, []))
                                           | _ =>
-                                              (D.EnvID e,
-                                               update (heap, e, spilled)))
+                                              if isShared e then
+                                                (D.EnvID e, heap)
+                                              else
+                                                (D.EnvID e,
+                                                 update (heap, e, spilled)))
                                     val slots = taken @ [fst]
 
                                     val allnull =

@@ -45,8 +45,16 @@ end = struct
 
   fun inDataStructure syn uses = Vector.exists (inDataStructureOne syn) uses
 
+
   fun medium (D.T {repr, allo, heap}, web: W.t, syn: S.t) =
     let val census = webcensus (heap, web)
+        fun isShared e =
+          let fun inObj (D.Record slots) =
+                    List.exists (fn D.EnvID e' => EnvID.same (e, e')
+                                  | _ => false) slots
+                | inObj _ = false
+          in  EnvID.Map.exists inObj heap
+          end
         fun usecnt id =
           (case W.Map.find (census, id)
              of NONE => 0
@@ -65,9 +73,12 @@ end = struct
              of D.Closure {env=D.Flat slots, ...} =>
                   arityOfSlots (flatten, slots)
               | D.Closure {env=D.Boxed e, ...} =>
-                  (case EnvID.Map.lookup (heap, e)
-                     of D.Record slots => arityOfSlots (flatten, slots)
-                      | D.RawBlock _ => 1))
+                  (* if isShared e then *)
+                  (*   1 *)
+                  (* else *)
+                    (case EnvID.Map.lookup (heap, e)
+                       of D.Record slots => arityOfSlots (flatten, slots)
+                        | D.RawBlock _ => 1))
         fun collect (id, info: W.info, flatten: int W.Map.map) =
           (case info
              of { polluted=false, defs=(#[f]), uses=(uses as #[_]), ... } =>
@@ -75,7 +86,7 @@ end = struct
                     flatten
                   else if arityOf (flatten, f) = 0 then
                     W.Map.insert (flatten, id, 0)
-                  else if usecnt id = 0 then
+                  else if usecnt id < 1 then
                     W.Map.insert (flatten, id, arityOf (flatten, f))
                   else
                     flatten
@@ -84,7 +95,8 @@ end = struct
               | _ => flatten)
         fun update flatten = W.fold collect flatten web
         fun fixpt (n, flatten) =
-          let val () = print ("iter " ^ Int.toString n ^ "\n")
+          let 
+              val () = print ("iter " ^ Int.toString n ^ "\n")
               val flatten' = update flatten
           in  if W.Map.collate Int.compare (flatten, flatten') = EQUAL then
                 flatten'
