@@ -358,8 +358,8 @@ end = struct
         fun inDataStructure uses = Vector.exists inDataStructureOne uses
         fun needCodePtrWeb (web, w) =
             case W.content (web, w)
-              of { polluted=false, defs=(#[_]), uses=(#[v]), kind=W.User, ... } =>
-                   inDataStructureOne v
+              of { polluted=false, defs=(#[_]), uses, kind=W.User, ... } =>
+                   inDataStructure uses
                | _ => true
         fun needCodePtr f = needCodePtrWeb (web, W.webOfFun (web, f))
         (* fun needCodePtr (f: LCPS.function) = *)
