@@ -101,7 +101,8 @@ end = struct
     TextIO.output (outstrm, measurementToString measurement)
 
   fun measure (outstrm, doit) =
-    let val () = reset true
+    let val () = SMLofNJ.Internals.GC.doGC 1000;
+        val () = reset true
         val _ = doit ()
         val measurement = read ()
     in  report (outstrm, measurement)

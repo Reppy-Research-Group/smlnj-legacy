@@ -60,15 +60,15 @@ structure Rand =
  * All rights reserved.
  *)
 
-structure Interval (* : sig
+structure Interval : sig
 
     type t = (real * real)
 
     val within : real * t -> bool
 
-    val toString : t -> string
+    (* val toString : t -> string *)
 
-  end *) = struct
+  end = struct
 
     type t = (real * real)
 
@@ -84,7 +84,7 @@ structure Interval (* : sig
  * All rights reserved.
  *)
 
-structure RGB (* : sig
+structure RGB : sig
 
     type t = (real * real * real)
 
@@ -105,7 +105,7 @@ structure RGB (* : sig
     val white : t
     val gray : real -> t
 
-  end *) = struct
+  end = struct
 
     type t = (real * real * real)
 
@@ -135,16 +135,16 @@ structure RGB (* : sig
  * All rights reserved.
  *)
 
-structure Color (* : sig
+structure Color : sig
 
-    type t = Word8.word * Word8.word * Word8.word
+    type t = int * int * int
 
     val fromRGB : RGB.t -> t
 
   (* convert an RGB value to an image color value with a gamma correction of 1/2 *)
     val fromRGBWithGamma : RGB.t -> t
 
-  end *) = struct
+  end = struct
 
     type t = int * int * int
 
@@ -176,11 +176,11 @@ structure Color (* : sig
  * Operations on vectors in R^3 (scalar version)
  *)
 
-structure Vec3 (* : sig
+structure Vec3 : sig
 
     type t = (real * real * real)
 
-    val toString : t -> string
+    (* val toString : t -> string *)
 
   (* zero vector *)
     val zero : t
@@ -223,7 +223,7 @@ structure Vec3 (* : sig
 
     val randomPointInSphere : unit -> t
 
-  end *) = struct
+  end  = struct
 
     val epsilon = 0.0001
 
@@ -325,7 +325,7 @@ structure Vec3 (* : sig
  * All rights reserved.
  *)
 
-structure Ray (* : sig
+structure Ray : sig
 
     type t = Vec3.t * Vec3.t
 
@@ -333,7 +333,7 @@ structure Ray (* : sig
 
     val eval : t * real -> Vec3.t
 
-  end *) = struct
+  end = struct
 
     type t = (Vec3.t * Vec3.t)
 
@@ -351,7 +351,7 @@ structure Ray (* : sig
  * All rights reserved.
  *)
 
-structure Material (* : sig
+structure Material : sig
 
     type t
 
@@ -367,7 +367,7 @@ structure Material (* : sig
     val metal : RGB.t * real -> t
     val diffuseLight : RGB.t -> t
 
-  end *) = struct
+  end = struct
 
     datatype hit = Hit of real * Vec3.t * Vec3.t * t
 
@@ -426,7 +426,7 @@ structure Material (* : sig
  * All rights reserved.
  *)
 
-structure Object (* : sig
+structure Object : sig
 
     datatype maybe_hit = Miss | Hit of Material.hit
 
@@ -449,7 +449,7 @@ structure Object (* : sig
     val rotateY : real * t -> t
     val rotateZ : real * t -> t
 
-  end *) = struct
+  end  = struct
 
     datatype maybe_hit = Miss | Hit of Material.hit
 
@@ -542,11 +542,11 @@ structure Object (* : sig
  * All rights reserved.
  *)
 
-structure Sphere (* : sig
+structure Sphere : sig
 
     val make : Vec3.t * real * Material.t -> Object.t
 
-  end *) = struct
+  end = struct
 
     fun make (center, radius, material) = let
           val rSq = radius * radius
@@ -589,14 +589,14 @@ structure Sphere (* : sig
  * All rights reserved.
  *)
 
-structure Image (* : sig
+structure Image  : sig
 
   (* Img(wid, ht, pixels) *)
     datatype t = Img of int * int * Color.t list
 
-    val writePPM : string * t -> unit
+    (* val writePPM : string * t -> unit *)
 
-  end *) = struct
+  end = struct
 
     datatype t = Img of int * int * Color.t list
 
@@ -627,7 +627,7 @@ structure Image (* : sig
  * All rights reserved.
  *)
 
-structure Camera (* : sig
+structure Camera : sig
 
     type t
 
@@ -649,7 +649,7 @@ structure Camera (* : sig
 
     val aaPixelToRGB : t * (Ray.t -> RGB.t) -> int * int -> RGB.t
 
-  end *) = struct
+  end = struct
 
     datatype t = Cam of (
         int *           (* width of image *)
@@ -752,7 +752,7 @@ structure Camera (* : sig
  * All rights reserved.
  *)
 
-structure Trace (* : sig
+structure Trace  : sig
 
   (* ray caster for testing purposes *)
     val castRay : Object.t -> Ray.t -> RGB.t
@@ -765,9 +765,9 @@ structure Trace (* : sig
 
     val rayTracer : Camera.t * Object.t -> Image.t
 
-    val timeIt : (unit -> 'a) -> 'a
+    (* val timeIt : (unit -> 'a) -> 'a *)
 
-  end *) = struct
+  end = struct
 
     fun castRay world ray = (
           case Object.hitTest (world, ray, (0.0, Real.posInf))
