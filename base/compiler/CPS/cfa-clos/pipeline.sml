@@ -507,7 +507,6 @@ end = struct
     in  D.T {repr=repr, allo=allo, heap=heap}
     end
 
-
   fun allocate'n'expand
     (syn: S.t, web: W.t, funtbl: CF.funtbl, looptbl: CF.looptbl)
     (D.T { repr, heap, allo })
@@ -675,7 +674,6 @@ end = struct
         fun isMLSlot (D.Var (_, ty)) = isMLTy ty
           | isMLSlot (D.Expand (_, _, ty)) = isMLTy ty
           | isMLSlot _ = true
-
 
         fun allocate (heap, f, e, nulls) : D.environment * D.heap =
           let val entry = LCPS.FunTbl.lookup funtbl f

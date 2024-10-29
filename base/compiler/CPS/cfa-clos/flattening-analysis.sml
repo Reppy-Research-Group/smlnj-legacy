@@ -48,7 +48,6 @@ end = struct
 
   fun inDataStructure syn uses = Vector.exists (inDataStructureOne syn) uses
 
-
   fun medium (D.T {repr, allo, heap}, web: W.t, syn: S.t) =
     let val census = webcensus (heap, web)
         fun isShared e =
