@@ -154,7 +154,9 @@ end = struct
                        end
                    | (callees, spilled) =>
                        let val env = EnvID.new ()
-                           val heap = EnvID.Map.insert (heap, env, D.Record spilled)
+                           val heap =
+                             EnvID.Map.insert (heap, env,
+                                                      D.Record (spilled, false))
                            val allo = Group.Map.insert (allo, group, envs@[env])
                            val cl = D.Closure
                              { code=D.Pointer name,
@@ -175,7 +177,8 @@ end = struct
                         of [] => (heap, allo, D.Flat [])
                          | _ =>
                              let val heap =
-                                  EnvID.Map.insert (heap, envID, D.Record slots)
+                                  EnvID.Map.insert (heap, envID,
+                                                        D.Record (slots, false))
                                  val allo =
                                   Group.Map.insert (allo, group, envs @ [envID])
                              in  (heap, allo, D.Boxed envID)
@@ -192,7 +195,7 @@ end = struct
                              let val sharedE = EnvID.new ()
                                  val sharedV = map embed fv
                                  val heap = EnvID.Map.insert
-                                   (heap, sharedE, D.Record sharedV)
+                                   (heap, sharedE, D.Record (sharedV, true))
                              in  ([sharedE], heap)
                              end)
                    (* TODO: Optimize for known functions *)
@@ -201,7 +204,8 @@ end = struct
                    val closures = Vector.map clos functions
                    val (heap, repr) =
                      Vector.foldl (fn ((f, e, s), (heap, repr)) =>
-                       let val heap = EnvID.Map.insert (heap, e, D.Record s)
+                       let val heap =
+                             EnvID.Map.insert (heap, e, D.Record (s, false))
                            val cl = D.Closure
                              { code=D.SelectFrom { env=0, selects=[0] },
                                env=D.Boxed e }

@@ -74,7 +74,7 @@ structure ClosureDecision = struct
                 | Code   of LCPS.function
                 | Null
 
-  datatype object = Record   of slot list
+  datatype object = Record   of slot list * bool (* shared *)
                   | RawBlock of LV.lvar list * CPS.record_kind
 
   datatype code = Direct of LCPS.function
@@ -170,10 +170,12 @@ structure ClosureDecision = struct
         app (fn s => printSlot (indent, s, printed)) slots
       and printObject (indent, obj, printed) =
         (case obj
-           of Record slots => printSlots ("  " ^ indent, slots, printed)
+           of Record (slots, shared) => 
+                (print (if shared then "<shared>\n" else "<private>\n");
+                 printSlots ("  " ^ indent, slots, printed))
             | RawBlock (vs, _) =>
-                (p [indent, "RawBlock:\n"];
-                 app (fn v => p ["  ", indent, LV.lvarName v, "\n"]) vs))
+                (p [indent, "RawBlock: "];
+                 app (fn v => p [LV.lvarName v, " "]) vs))
 
       fun kindToS CPS.CONT = "std_cont"
         | kindToS CPS.KNOWN = "known"
@@ -230,7 +232,9 @@ structure ClosureDecision = struct
         app (fn s => printSlot (indent, s, printed)) slots
       and printObject (indent, obj, printed) =
         (case obj
-           of Record slots => printSlots ("  " ^ indent, slots, printed)
+           of Record (slots, shared) => 
+                (print (if shared then "<shared>\n" else "<private>\n");
+                 printSlots ("  " ^ indent, slots, printed))
             | RawBlock (vs, _) =>
                 (p [indent, "RawBlock:\n"];
                  app (fn v => p ["  ", indent, LV.lvarName v, "\n"]) vs))

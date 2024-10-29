@@ -28,7 +28,7 @@ end = struct
                      let val envid = EnvID.wrap name
                          val heap  =
                            EnvID.Map.insert (heap, envid,
-                             D.Record (D.Code f :: slots))
+                             D.Record (D.Code f :: slots, false))
                          val repr  =
                            LCPS.FunMap.insert (repr, f, D.Closure {
                              code=D.SelectFrom { env=0, selects=[0] },
@@ -41,13 +41,13 @@ end = struct
                  | _ =>
                      let val shareEnv = EnvID.new ()
                          val heap =
-                           EnvID.Map.insert (heap, shareEnv, D.Record slots)
+                           EnvID.Map.insert (heap, shareEnv, D.Record (slots, true))
                          val (repr, heap, envs) =
                            Vector.foldl (fn (f as (_, name, _, _, _), (repr, heap, envs)) =>
                              let val env = EnvID.wrap name
                                  val heap =
                                    EnvID.Map.insert (heap, env,
-                                     D.Record [D.Code f, D.EnvID shareEnv])
+                                     D.Record ([D.Code f, D.EnvID shareEnv], false))
                                  val repr =
                                    LCPS.FunMap.insert (repr, f,
                                      D.Closure {
@@ -76,12 +76,12 @@ end = struct
   (* NOTE: it assumes all vars to replaced are in the same environment *)
   fun replaceVars (object, vars: LV.Set.set, packs: EnvID.t list): D.object =
     (case object
-       of D.Record slots =>
+       of D.Record (slots, shared) =>
             let fun keep (D.Var (v, _)) = LV.Set.member (vars, v)
                   | keep (D.Expand (v, _, _)) = LV.Set.member (vars, v)
                   | keep _ = true
                 val slots = List.filter keep slots @ map D.EnvID packs
-            in  D.Record slots
+            in  D.Record (slots, shared)
             end
         | D.RawBlock _ => raise Fail "No raw blocks at this stage")
 
@@ -136,7 +136,7 @@ end = struct
                       val slots = LV.Set.foldr (fn (v, slots) =>
                           D.Var (v, S.typeof syn v) :: slots
                         ) [] loose
-                  in  EnvID.Map.insert (heap, env, D.Record slots)
+                  in  EnvID.Map.insert (heap, env, D.Record (slots, true))
                   end
                 ) heap allocate
 
@@ -185,8 +185,8 @@ end = struct
          fun codePtr (D.SelectFrom { env=0, selects=[0] }, D.Boxed e, heap) =
                let val object = EnvID.Map.lookup (heap, e)
                in  case object
-                     of D.Record (D.Code f :: slots) =>
-                          (D.Pointer (#2 f), D.Record slots)
+                     of D.Record (D.Code f :: slots, shared) =>
+                          (D.Pointer (#2 f), D.Record (slots, shared))
                       | _ => raise Fail "impossible"
                end
            | codePtr (D.SelectFrom _, _, _) = raise Fail "impossible"
@@ -255,7 +255,7 @@ end = struct
                          end))
 
          val bogusTy = CPSUtil.BOGt
-         fun expandObject (D.Record slots) =
+         fun expandObject (D.Record (slots, shared)) =
                let fun go [] = []
                      | go ((x as D.Var (v, ty))::xs) =
                          (case needsFlatteningV (v, ty)
@@ -265,7 +265,7 @@ end = struct
                                  @ (if needCP then (x :: go xs) else go xs)
                              | NONE => x :: go xs)
                      | go (x :: xs) = x :: go xs
-               in  D.Record (go slots)
+               in  D.Record (go slots, shared)
                end
            | expandObject obj = obj
          val heap = EnvID.Map.map expandObject heap
@@ -313,7 +313,7 @@ end = struct
           let val object = EnvID.Map.lookup (heap, env)
           in  case object
                 of D.RawBlock _ => ([], heap)
-                 | D.Record slots =>
+                 | D.Record (slots, shared) =>
                      let val (slots, ints, flts) = partitionSlots slots
                          val (intEnv, heap) =
                            maybeAllocRaw (ints, heap, CPS.RK_RAWBLOCK)
@@ -322,7 +322,8 @@ end = struct
                          val envs =
                            List.mapPartial (Option.map D.EnvID) [intEnv, fltEnv]
                          val heap =
-                           EnvID.Map.insert (heap, env, D.Record (slots @ envs))
+                           EnvID.Map.insert (heap, env,
+                                             D.Record (slots @ envs, shared))
                      in  (concatPartial [intEnv, fltEnv], heap)
                      end
           end
@@ -383,7 +384,8 @@ end = struct
              of (D.SelectFrom {env=0, selects=[0]}, D.Boxed e) =>
                   let val object =
                         (case EnvID.Map.lookup (heap, e)
-                           of D.Record (D.Code _ :: slots) => D.Record slots
+                           of D.Record (D.Code _ :: slots, shared) =>
+                                D.Record (slots, shared)
                             | _ => raise Fail "impossible")
                       val closure = D.Closure {code=D.Direct f, env=D.Boxed e}
                       val heap = EnvID.Map.insert (heap, e, object)
@@ -416,7 +418,7 @@ end = struct
                     | SOME id => W.Set.member (arity0webs, id))
               fun isArity0S (D.EnvID e) =
                     (case EnvID.Map.lookup (heap, e)
-                       of D.Record slots => List.all isArity0S slots
+                       of D.Record (slots, _) => List.all isArity0S slots
                         | D.RawBlock ([_], _) => raise Fail "empty raw"
                         | D.RawBlock _ => false)
                 | isArity0S (D.Var (v, _)) = isArity0V v
@@ -465,15 +467,15 @@ end = struct
                               x :: purgeSlots (xs, heap))
                 | purgeSlots ((x as D.EnvID e) :: xs, heap) =
                     (case EnvID.Map.lookup (heap, e)
-                       of D.Record [] => purgeSlots (xs, heap)
+                       of D.Record ([], _) => purgeSlots (xs, heap)
                         | _ => x :: purgeSlots (xs, heap))
                 | purgeSlots (x :: xs, heap) = x :: purgeSlots (xs, heap)
               val environments = Group.Map.lookup (allo, grp)
               val heap = foldl (fn (e, heap) =>
                   (case EnvID.Map.lookup (heap, e)
-                     of D.Record slots =>
+                     of D.Record (slots, shr) =>
                           let val slots = purgeSlots (slots, heap)
-                          in  EnvID.Map.insert (heap, e, D.Record slots)
+                          in  EnvID.Map.insert (heap, e, D.Record (slots, shr))
                           end
                       | _ => heap)
                 ) heap environments
@@ -483,8 +485,8 @@ end = struct
                         (case env
                            of D.Boxed e =>
                                 (case EnvID.Map.lookup (heap, e)
-                                   of D.Record [] => D.Flat []
-                                    | D.Record [D.EnvID e'] => D.Boxed e'
+                                   of D.Record ([], _) => D.Flat []
+                                    | D.Record ([D.EnvID e'], _) => D.Boxed e'
                                     | _ => env)
                             | D.Flat slots =>
                                 D.Flat (purgeSlots (slots, heap)))
@@ -495,8 +497,8 @@ end = struct
               val environments =
                 List.filter (fn e =>
                   (case EnvID.Map.lookup (heap, e)
-                     of D.Record [] => false
-                      | D.Record [D.EnvID _] => false
+                     of D.Record ([], _) => false
+                      | D.Record ([D.EnvID _], _) => false
                       | _ => true)
                 ) environments
               val allo = Group.Map.insert (allo, grp, environments)
@@ -547,8 +549,8 @@ end = struct
                   | NONE => x :: trueFV (xs, repr, heap))
           | trueFV ((x as D.EnvID e) :: xs, repr, heap) =
               (case EnvID.Map.lookup (heap, e)
-                 of D.Record [] => trueFV (xs, repr, heap)
-                  | D.Record [y as D.EnvID _] => y :: trueFV (xs, repr, heap)
+                 of D.Record ([], _) => trueFV (xs, repr, heap)
+                  | D.Record ([y as D.EnvID _], _) => y :: trueFV (xs, repr, heap)
                   | _ => x :: trueFV (xs, repr, heap))
           | trueFV (x :: xs, repr, heap) = x :: trueFV (xs, repr, heap)
 
@@ -605,7 +607,7 @@ end = struct
           (case slot
              of D.EnvID e =>
                   (case EnvID.Map.lookup (heap, e)
-                     of D.Record slots =>
+                     of D.Record (slots, _) =>
                           foldl (fn (s, p) =>
                             mergePref (p, slotPref (s, heap, pref))
                           ) botPref slots
@@ -652,17 +654,22 @@ end = struct
           end
 
         fun isShared e =
-          let fun inObj (D.Record slots) =
+          let fun inObj (D.Record (slots, _)) =
                     List.exists (fn D.EnvID e' => EnvID.same (e, e')
                                   | _ => false) slots
                 | inObj _ = false
-          in  EnvID.Map.exists inObj heap
+          in  if EnvID.Map.exists inObj heap then
+                (case EnvID.Map.lookup (heap, e)
+                   of D.Record (_, false) => raise Fail "inconsistent"
+                    | _ => true)
+              else
+                false
           end
-        val sharedEnvs =
-          EnvID.Map.foldli (fn (env, _, envs) =>
-              if isShared env then EnvID.Set.add (envs, env) else envs
-            ) EnvID.Set.empty heap
-        fun isShared e = EnvID.Set.member (sharedEnvs, e)
+        (* val sharedEnvs = *)
+        (*   EnvID.Map.foldli (fn (env, _, envs) => *)
+        (*       if isShared env then EnvID.Set.add (envs, env) else envs *)
+        (*     ) EnvID.Set.empty heap *)
+        (* fun isShared e = EnvID.Set.member (sharedEnvs, e) *)
         fun isFirstOrder (f: LCPS.function) =
           let val name = #2 f
               fun isCall (LCPS.APP (_, CPS.VAR v, _)) = LV.same (v, name)
@@ -680,7 +687,7 @@ end = struct
                           handle e => raise e
               val pref = preference entry
               val slots = (case EnvID.Map.lookup (heap, e)
-                             of D.Record slots => slots
+                             of D.Record (slots, _) => slots
                               | D.RawBlock _ =>
                                   raise Fail "impossible")
               val avail = List.length nulls
@@ -696,7 +703,7 @@ end = struct
                 end
               fun update (heap, e, slots) =
                   EnvID.Map.insert
-                    (heap, e, D.Record slots)
+                    (heap, e, D.Record (slots, false))
               val (fst, heap) =
                 (case spilled
                    of [] => (D.Null, update (heap, e, []))
@@ -736,10 +743,10 @@ end = struct
               val environments = Group.Map.lookup (allo, group)
               val heap = foldl (fn (e, heap) =>
                   (case EnvID.Map.lookup (heap, e)
-                     of D.Record slots =>
+                     of D.Record (slots, shr) =>
                           let val slots = trueFV (slots, repr, heap)
                               val slots = removeDup slots
-                          in  EnvID.Map.insert (heap, e, D.Record slots)
+                          in  EnvID.Map.insert (heap, e, D.Record (slots, shr))
                           end
                       | _ => heap)
                 ) heap environments
@@ -752,7 +759,7 @@ end = struct
                            of D.Boxed e =>
                                 (* FIXME: this step should be pulled out *)
                                 (case EnvID.Map.lookup (heap, e)
-                                   of D.Record [] =>
+                                   of D.Record ([], _) =>
                                         (* raise Fail "check" *)
                                         (* If a function goes into a data
                                          * structure, but it doesn't need an
@@ -762,7 +769,7 @@ end = struct
                                         (*  EnvID.Map.insert (heap, e, *)
                                         (*                      D.Record [D.Null])) *)
                                         (D.Flat [], heap)
-                                    | D.Record [D.EnvID e'] =>
+                                    | D.Record ([D.EnvID e'], _) =>
                                         (D.Boxed e', heap)
                                     (* | D.Record [D.Code _] => *)
                                     (*     (env, heap) *)
@@ -775,9 +782,9 @@ end = struct
                                 (* FIXME: this step should be pulled out *)
                                 if isShared e then
                                   (case EnvID.Map.lookup (heap, e)
-                                     of D.Record [] =>
+                                     of D.Record ([], _) =>
                                           (D.Flat [], heap)
-                                      | D.Record [D.EnvID e'] =>
+                                      | D.Record ([D.EnvID e'], _) =>
                                           (D.Flat (D.EnvID e' :: nulls), heap)
                                       | _ =>
                                           (env, heap))
@@ -793,8 +800,8 @@ end = struct
               val environments =
                 List.filter (fn e =>
                   (case EnvID.Map.lookup (heap, e)
-                     of D.Record [] => false
-                      | D.Record [D.EnvID _] => false
+                     of D.Record ([], _) => false
+                      | D.Record ([D.EnvID _], _) => false
                       | _ => true)
                 ) environments
                 handle e => raise e

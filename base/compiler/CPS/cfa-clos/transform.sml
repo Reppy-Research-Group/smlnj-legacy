@@ -342,7 +342,7 @@ end = struct
         val insert = LV.Map.insertWith mergePath
         fun nexts (e, { base, selects }, todo) =
           (case EnvID.Map.find (heap, e)
-             of SOME (D.Record slots) =>
+             of SOME (D.Record (slots, _)) =>
                   List.foldli (fn (i, s, todo) =>
                     ((s, { base=base, selects=selects@[i] }) :: todo))
                     todo slots
@@ -390,9 +390,9 @@ end = struct
                            * we create one from the base. *)
                           let val sharedEnv =
                                 (case EnvID.Map.lookup (heap, e)
-                                   of D.Record [D.Code _, D.EnvID env] =>
+                                   of D.Record ([D.Code _, D.EnvID env], _) =>
                                         SOME env
-                                    | D.Record [D.Code _] => NONE
+                                    | D.Record ([D.Code _], _) => NONE
                                     | _ => raise Fail "unexpected repr")
                               (* REFACTOR: I don't really like the fact that we
                                * are getting the name of the shared env via its
@@ -481,7 +481,7 @@ end = struct
         (* FIXME: if there is mutbox to allocate, need to allocate here *)
         val (fields, recKind) =
           (case object
-             of D.Record slots => (map (slotToVal ctx) slots, CPS.RK_ESCAPE)
+             of D.Record (slots, _) => (map (slotToVal ctx) slots, CPS.RK_ESCAPE)
               | D.RawBlock (vs, rk) => (map CPS.VAR vs, rk))
         val (hdr, env as (ctx, dec, web, syn)) = fixaccess (env, fields)
         val name = varOfEnv e

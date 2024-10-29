@@ -30,7 +30,7 @@ end = struct
           | scan env (_, census) = census
         fun collect (env, object, census: EnvID.t list W.Map.map) =
           (case object
-             of D.Record slots => foldl (scan env) census slots
+             of D.Record (slots, _) => foldl (scan env) census slots
               | D.RawBlock _ => census)
     in  EnvID.Map.foldli collect W.Map.empty heap
     end
@@ -51,7 +51,7 @@ end = struct
   fun medium (D.T {repr, allo, heap}, web: W.t, syn: S.t) =
     let val census = webcensus (heap, web)
         fun isShared e =
-          let fun inObj (D.Record slots) =
+          let fun inObj (D.Record (slots, _)) =
                     List.exists (fn D.EnvID e' => EnvID.same (e, e')
                                   | _ => false) slots
                 | inObj _ = false
@@ -89,7 +89,7 @@ end = struct
                     1
                   else
                     (case EnvID.Map.lookup (heap, e)
-                       of D.Record slots => arityOfSlots (flatten, slots)
+                       of D.Record (slots, _) => arityOfSlots (flatten, slots)
                         | D.RawBlock _ => 1))
         (* val arityOf = fn (flatten, f) => *)
         (*   let val n = arityOf (flatten, f) *)
@@ -112,7 +112,7 @@ end = struct
               | _ => flatten)
         fun update flatten = W.fold collect flatten web
         fun fixpt (n, flatten) =
-          let 
+          let
               (* val () = print ("iter " ^ Int.toString n ^ "\n") *)
               val flatten' = update flatten
           in  if W.Map.collate Int.compare (flatten, flatten') = EQUAL then
@@ -137,7 +137,7 @@ end = struct
              of D.Closure {env=D.Flat slots, ...} => List.length slots
               | D.Closure {env=D.Boxed e, ...} =>
                   (case EnvID.Map.lookup (heap, e)
-                     of D.Record slots => List.length slots
+                     of D.Record (slots, _) => List.length slots
                       | D.RawBlock _ => 1))
         (* val census = webcensus (heap, web) *)
         (* fun usecnt id = *)
