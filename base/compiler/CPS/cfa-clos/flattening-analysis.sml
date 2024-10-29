@@ -59,21 +59,31 @@ end = struct
           (case W.Map.find (census, id)
              of NONE => 0
               | SOME envs => List.length envs)
+        fun defaultArity (v, ty) =
+          (case (S.knownFun syn v, ty)
+             of (SOME _, CPS.CNTt) => 3
+              | (NONE  , CPS.CNTt) => 4
+              | _ => 1)
         fun arityOfV (flatten, v, ty) =
           (case W.webOfVar (web, v)
-             of SOME id => Option.getOpt (W.Map.find (flatten, id), 1)
-              | NONE => (case ty of CPS.CNTt => 4 | _ => 1))
+             of SOME id => Option.getOpt (W.Map.find (flatten, id),
+                                          defaultArity (v, ty))
+              | NONE => defaultArity (v, ty))
         fun arityOfSlot (flatten, D.Var (v, ty)) = arityOfV (flatten, v, ty)
           | arityOfSlot (flatten, D.Expand _) = raise Fail "expand before flat"
           | arityOfSlot (flatten, _) = 1
         fun arityOfSlots (flatten, slots) =
           foldl (fn (s, acc) => acc + arityOfSlot (flatten, s)) 0 slots
+        fun mutrec f =
+          Vector.length (S.groupFun syn (S.groupOf syn f)) > 1
         fun arityOf (flatten, f) =
           (case LCPS.FunMap.lookup (repr, f)
              of D.Closure {env=D.Flat slots, ...} =>
                   arityOfSlots (flatten, slots)
               | D.Closure {env=D.Boxed e, ...} =>
                   if isShared e then
+                    1
+                  else if mutrec f then
                     1
                   else
                     (case EnvID.Map.lookup (heap, e)
@@ -91,8 +101,8 @@ end = struct
                     flatten
                   else if arityOf (flatten, f) = 0 then
                     W.Map.insert (flatten, id, 0)
-                  (* else if usecnt id < 1 then *)
-                  (*   W.Map.insert (flatten, id, arityOf (flatten, f)) *)
+                  else if usecnt id < 1 then
+                    W.Map.insert (flatten, id, arityOf (flatten, f))
                   else
                     flatten
               | { polluted=true, kind=W.User, ... } => flatten

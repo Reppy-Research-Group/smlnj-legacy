@@ -680,10 +680,10 @@ end = struct
          *)
         fun collect (group, (repr, heap: D.heap, allo)) =
           let
-              (* val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o *)
-              (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
-              (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
-              (* allo=allo}, syn, group) *)
+              val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o
+              #2) (Vector.toList (S.groupFun syn group)) ^ "\n")
+              val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap,
+              allo=allo}, syn, group)
 
               fun isFirstOrder (f: LCPS.function) =
                 let val name = #2 f
@@ -770,12 +770,16 @@ end = struct
                                               else
                                                 (D.Null, update (heap, e, []))
                                           | [D.EnvID e'] =>
-                                                (D.EnvID e', heap)
+                                              if isShared e then
+                                                (D.EnvID e, heap)
+                                              else
+                                                (D.EnvID e', update (heap, e,
+                                                 [D.EnvID e']))
                                           | [x] =>
                                               if isShared e then
                                                 (D.EnvID e, heap)
                                               else if isMLSlot x then
-                                                  (x, update (heap, e, []))
+                                                (x, update (heap, e, []))
                                               else
                                                 (D.EnvID e, update (heap, e, [x]))
                                           | _ =>
@@ -813,10 +817,10 @@ end = struct
                 handle e => raise e
               val allo = Group.Map.insert (allo, group, environments)
 
-              (* val () = print ("AFTER " ^ String.concatWithMap "," (LV.lvarName o *)
-              (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
-              (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
-              (* allo=allo}, syn, group) *)
+              val () = print ("AFTER " ^ String.concatWithMap "," (LV.lvarName o
+              #2) (Vector.toList (S.groupFun syn group)) ^ "\n")
+              val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap,
+              allo=allo}, syn, group)
           in  (repr, heap, allo)
           end
         val (repr, heap, allo) =
@@ -857,7 +861,7 @@ end = struct
 
         val decision = process (cps, syn)
         (* val () = print "FINAL\n" *)
-        (* val () = ClosureDecision.dump (decision, syn) *)
+        val () = ClosureDecision.dump (decision, syn)
     in  decision
     end
 end

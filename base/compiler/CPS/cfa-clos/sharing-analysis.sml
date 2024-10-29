@@ -314,7 +314,7 @@ end = struct
 
               val (packs, loose) =
                 let val loose = sortBy #2 loose
-                    val distCutoff = 3 and sizeCutoff = 4
+                    val distCutoff = 3 and sizeCutoff = 3
                     fun findCandidatePacks (vs, fstDepth, currPack, packs) =
                       (case vs
                          of [] => currPack :: packs
@@ -332,8 +332,9 @@ end = struct
                               findCandidatePacks (vs, d, [v], []))
                     fun packSize pack =
                       let fun sz (v, _) =
-                            (case S.typeof syn v
-                               of CPS.CNTt => 4
+                            (case (S.knownFun syn v, S.typeof syn v)
+                               of (SOME _, CPS.CNTt) => 3
+                                | (NONE, CPS.CNTt) => 4
                                 | _ => 1)
                       in  foldl (fn (v, sum) => sz v + sum) 0 pack
                       end
