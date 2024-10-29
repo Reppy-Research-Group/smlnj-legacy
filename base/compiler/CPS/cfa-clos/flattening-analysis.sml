@@ -1,4 +1,7 @@
 structure FlatteningAnalysis :> sig
+  (* datatype arity = Zero *)
+  (*                | Fixed of int *)
+  (*                | Any *)
   type decision = Web.id -> int option
 
   val simple : ClosureDecision.t * Web.t * SyntacticInfo.t -> decision

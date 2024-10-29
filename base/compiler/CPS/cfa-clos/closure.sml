@@ -82,7 +82,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
         timeit "transform" Transform.transform (lcps, decision', web, syntactic)
       val lcps' =
         timeit "avail exp" AvailableExpression.transform lcps'
-      val () = (print "RESULT >>>>>\n"; PPCps.printcps0 (LCPS.unlabelF lcps'); print "<<<<<\n")
+      (* val () = (print "RESULT >>>>>\n"; PPCps.printcps0 (LCPS.unlabelF lcps'); print "<<<<<\n") *)
 
       (* val decision = timeit "flat" FlatClosureDecision.produce (lcps, syntactic) *)
       (* handle e => (print "4\n"; raise e) *)

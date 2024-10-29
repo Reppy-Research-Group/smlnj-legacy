@@ -664,6 +664,56 @@ end = struct
               if isShared env then EnvID.Set.add (envs, env) else envs
             ) EnvID.Set.empty heap
         fun isShared e = EnvID.Set.member (sharedEnvs, e)
+        fun isFirstOrder (f: LCPS.function) =
+          let val name = #2 f
+              fun isCall (LCPS.APP (_, CPS.VAR v, _)) = LV.same (v, name)
+                | isCall _ = false
+              val uses = S.usePoints syn name
+          in  LCPS.Set.all isCall uses
+          end
+
+        fun isMLSlot (D.Var (_, ty)) = isMLTy ty
+          | isMLSlot (D.Expand (_, _, ty)) = isMLTy ty
+          | isMLSlot _ = true
+
+
+        fun allocate (heap, f, e, nulls) : D.environment * D.heap =
+          let val entry = LCPS.FunTbl.lookup funtbl f
+                          handle e => raise e
+              val pref = preference entry
+              val slots = (case EnvID.Map.lookup (heap, e)
+                             of D.Record slots => slots
+                              | D.RawBlock _ =>
+                                  raise Fail "impossible")
+              val avail = List.length nulls
+              val (taken, spilled) =
+                let val (slots, spilled) =
+                      if isFirstOrder f then
+                        (slots, [])
+                      else
+                        List.partition isMLSlot slots
+                    val (taken, spilled') =
+                      pick (pref, heap, slots, avail)
+                in  (taken, spilled @ spilled')
+                end
+              fun update (heap, e, slots) =
+                  EnvID.Map.insert
+                    (heap, e, D.Record slots)
+              val (fst, heap) =
+                (case spilled
+                   of [] => (D.Null, update (heap, e, []))
+                    | [D.EnvID e'] =>
+                        (D.EnvID e', update (heap, e, [D.EnvID e']))
+                    | [x] =>
+                        if isMLSlot x then
+                          (x, update (heap, e, []))
+                        else
+                          (D.EnvID e, update (heap, e, [x]))
+                    | _ =>
+                        (D.EnvID e, update (heap, e, spilled)))
+              val slots = taken @ [fst]
+          in  (D.Flat slots, heap)
+          end
         (* Environments now look like one of the following:
          * 1. Boxed e
          * 2. Flat [EnvID e, NULL, NULL]
@@ -680,22 +730,10 @@ end = struct
          *)
         fun collect (group, (repr, heap: D.heap, allo)) =
           let
-              val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o
-              #2) (Vector.toList (S.groupFun syn group)) ^ "\n")
-              val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap,
-              allo=allo}, syn, group)
-
-              fun isFirstOrder (f: LCPS.function) =
-                let val name = #2 f
-                    fun isCall (LCPS.APP (_, CPS.VAR v, _)) = LV.same (v, name)
-                      | isCall _ = false
-                    val uses = S.usePoints syn name
-                in  LCPS.Set.all isCall uses
-                end
-
-              fun isMLSlot (D.Var (_, ty)) = isMLTy ty
-                | isMLSlot (D.Expand (_, _, ty)) = isMLTy ty
-                | isMLSlot _ = true
+              (* val () = print ("BEFORE " ^ String.concatWithMap "," (LV.lvarName o *)
+              (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
+              (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
+              (* allo=allo}, syn, group) *)
 
               val environments = Group.Map.lookup (allo, group)
               val heap = foldl (fn (e, heap) =>
@@ -714,6 +752,7 @@ end = struct
                       val (env, heap) =
                         (case env
                            of D.Boxed e =>
+                                (* FIXME: this step should be pulled out *)
                                 (case EnvID.Map.lookup (heap, e)
                                    of D.Record [] =>
                                         (* raise Fail "check" *)
@@ -735,71 +774,17 @@ end = struct
                                 handle e => raise e)
                             | D.Flat [] => (D.Flat [], heap)
                             | D.Flat (D.EnvID e :: nulls) =>
-                                let val entry = LCPS.FunTbl.lookup funtbl f
-                                                handle e => raise e
-                                    val pref = preference entry
-                                    val slots =
-                                      (case EnvID.Map.lookup (heap, e)
-                                         of D.Record slots => slots
-                                          | D.RawBlock _ =>
-                                              raise Fail "impossible")
-                                      handle e => raise e
-                                    val avail = List.length nulls
-                                    val (taken, spilled) =
-                                      let val (slots, spilled) =
-                                            if isFirstOrder f then
-                                              (slots, [])
-                                            else
-                                              List.partition isMLSlot slots
-                                          (* val avail = *)
-                                          (*   Int.max (0, *)
-                                          (*           avail - List.length spilled) *)
-                                          val (taken, spilled') =
-                                            pick (pref, heap, slots, avail)
-                                      in  (taken, spilled @ spilled')
-                                      end
-                                    fun update (heap, e, slots) =
-                                        EnvID.Map.insert
-                                          (heap, e, D.Record slots)
-                                    (* FIXME: This is terrible *)
-                                    val (fst, heap) =
-                                      (case spilled
-                                         of [] =>
-                                              if isShared e then
-                                                (D.Null, heap)
-                                              else
-                                                (D.Null, update (heap, e, []))
-                                          | [D.EnvID e'] =>
-                                              if isShared e then
-                                                (D.EnvID e, heap)
-                                              else
-                                                (D.EnvID e', update (heap, e,
-                                                 [D.EnvID e']))
-                                          | [x] =>
-                                              if isShared e then
-                                                (D.EnvID e, heap)
-                                              else if isMLSlot x then
-                                                (x, update (heap, e, []))
-                                              else
-                                                (D.EnvID e, update (heap, e, [x]))
-                                          | _ =>
-                                              if isShared e then
-                                                (D.EnvID e, heap)
-                                              else
-                                                (D.EnvID e,
-                                                 update (heap, e, spilled)))
-                                    val slots = taken @ [fst]
-
-                                    val allnull =
-                                      List.all (fn D.Null => true | _ => false)
-                                    val slots =
-                                      if isFirstOrder f
-                                         andalso allnull slots then
-                                        []
-                                      else
-                                        slots
-                                in  (D.Flat slots, heap)
-                                end
+                                (* FIXME: this step should be pulled out *)
+                                if isShared e then
+                                  (case EnvID.Map.lookup (heap, e)
+                                     of D.Record [] =>
+                                          (D.Flat [], heap)
+                                      | D.Record [D.EnvID e'] =>
+                                          (D.Flat (D.EnvID e' :: nulls), heap)
+                                      | _ =>
+                                          (env, heap))
+                                else
+                                  allocate (heap, f, e, nulls)
                             | D.Flat _ => raise Fail "impossible")
                       val closure = D.Closure {code=code, env=env}
                       val repr = LCPS.FunMap.insert (repr, f, closure)
@@ -817,10 +802,10 @@ end = struct
                 handle e => raise e
               val allo = Group.Map.insert (allo, group, environments)
 
-              val () = print ("AFTER " ^ String.concatWithMap "," (LV.lvarName o
-              #2) (Vector.toList (S.groupFun syn group)) ^ "\n")
-              val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap,
-              allo=allo}, syn, group)
+              (* val () = print ("AFTER " ^ String.concatWithMap "," (LV.lvarName o *)
+              (* #2) (Vector.toList (S.groupFun syn group)) ^ "\n") *)
+              (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
+              (* allo=allo}, syn, group) *)
           in  (repr, heap, allo)
           end
         val (repr, heap, allo) =
@@ -861,7 +846,7 @@ end = struct
 
         val decision = process (cps, syn)
         (* val () = print "FINAL\n" *)
-        val () = ClosureDecision.dump (decision, syn)
+        (* val () = ClosureDecision.dump (decision, syn) *)
     in  decision
     end
 end
