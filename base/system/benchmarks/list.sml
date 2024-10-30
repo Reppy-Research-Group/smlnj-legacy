@@ -98,8 +98,8 @@ structure List =
 
     fun filter pred [] = []
       | filter pred (a::rest) = if pred a
-	  then a::(filter pred rest)
-	  else (filter pred rest)
+          then a::(filter pred rest)
+          else (filter pred rest)
 
     fun partition pred l = let
           fun loop ([],trueList,falseList) = (rev' trueList, rev' falseList)
@@ -107,8 +107,8 @@ structure List =
                 if pred h then loop(t, h::trueList, falseList)
                 else loop(t, trueList, h::falseList)
           in
-	    loop (l,[],[])
-	  end
+            loop (l,[],[])
+          end
 
     fun exists pred = let
           fun f [] = false
@@ -127,26 +127,26 @@ structure List =
             in loop 0 end
 
     fun collate compare = let
-	  fun loop ([], []) = EQUAL
-	    | loop ([], _) = LESS
-	    | loop (_, []) = GREATER
-	    | loop (x :: xs, y :: ys) = (case compare (x, y)
-		 of EQUAL => loop (xs, ys)
-		  | unequal => unequal)
-	  in
-	    loop
-	  end
+          fun loop ([], []) = EQUAL
+            | loop ([], _) = LESS
+            | loop (_, []) = GREATER
+            | loop (x :: xs, y :: ys) = (case compare (x, y)
+                 of EQUAL => loop (xs, ys)
+                  | unequal => unequal)
+          in
+            loop
+          end
 
   (* added for Basis Library proposal 2015-003 *)
 
     fun unfoldr getNext strm = let
-	  fun lp (strm, items) = (case getNext strm
-		 of NONE => items
-		  | SOME(x, rest) => lp(rest, x::items)
-		(* end case *))
-	  in
-	    lp (strm, [])
-	  end
+          fun lp (strm, items) = (case getNext strm
+                 of NONE => items
+                  | SOME(x, rest) => lp(rest, x::items)
+                (* end case *))
+          in
+            lp (strm, [])
+          end
 
     fun unfoldl getNext strm = rev'(unfoldr getNext strm)
 
@@ -154,18 +154,18 @@ structure List =
       | reduce f _ (x::xs) = foldl f x xs
 
     fun appi f l = let
-	  fun appf (_, []) = ()
-	    | appf (i, x::xs) = (f(i, x); appf(i ++ 1, xs))
-	  in
-	    appf (0, l)
-	  end
+          fun appf (_, []) = ()
+            | appf (i, x::xs) = (f(i, x); appf(i ++ 1, xs))
+          in
+            appf (0, l)
+          end
 
     fun mapi f l = let
-	  fun mapf (_, []) = []
-	    | mapf (i, x::xs) = (f(i, x) :: mapf(i ++ 1, xs))
-	  in
-	    mapf (0, l)
-	  end
+          fun mapf (_, []) = []
+            | mapf (i, x::xs) = (f(i, x) :: mapf(i ++ 1, xs))
+          in
+            mapf (0, l)
+          end
 
     fun mapPartiali pred l = let
           fun mapp (_, [], l) = rev' l
@@ -179,37 +179,37 @@ structure List =
 
     fun foldli f init l = let
           fun lp (_, [], acc) = acc
-	    | lp (i, x::xs, acc) = lp (i ++ 1, xs, f(i, x, acc))
-	  in
-	    lp (0, l, init)
-	  end
+            | lp (i, x::xs, acc) = lp (i ++ 1, xs, f(i, x, acc))
+          in
+            lp (0, l, init)
+          end
 
     fun foldri f init l = let
           fun lp (_, []) = init
-	    | lp (i, x::xs) = f (i, x, lp (i ++ 1, xs))
-	  in
-	    lp (0, l)
-	  end
+            | lp (i, x::xs) = f (i, x, lp (i ++ 1, xs))
+          in
+            lp (0, l)
+          end
 
     fun findi f l = let
-	  fun lp (_, []) = NONE
-	    | lp (i, x::xs) = if (f(i, x)) then SOME(i, x) else lp(i ++ 1, xs)
-	  in
-	    lp (0, l)
-	  end
+          fun lp (_, []) = NONE
+            | lp (i, x::xs) = if (f(i, x)) then SOME(i, x) else lp(i ++ 1, xs)
+          in
+            lp (0, l)
+          end
 
     fun revMap f l = let
-	  fun mapf (x::xs, ys) = mapf (xs, f x :: ys)
-	    | mapf ([], ys) = ys
-	  in
-	    mapf (l, [])
-	  end
+          fun mapf (x::xs, ys) = mapf (xs, f x :: ys)
+            | mapf ([], ys) = ys
+          in
+            mapf (l, [])
+          end
     fun revMapi f l = let
-	  fun mapf (i, x::xs, ys) = mapf (i ++ 1, xs, f(i, x) :: ys)
-	    | mapf (_, [], ys) = ys
-	  in
-	    mapf (0, l, [])
-	  end
+          fun mapf (i, x::xs, ys) = mapf (i ++ 1, xs, f(i, x) :: ys)
+            | mapf (_, [], ys) = ys
+          in
+            mapf (0, l, [])
+          end
 
     fun revMapPartial pred l = let
           fun mapp ([], l) = l
@@ -231,27 +231,27 @@ structure List =
           end
 
     fun concatMap f l = let
-	  fun mapf ([], l) = rev' l
-	    | mapf (x::r, l) = mapf (r, revAppend'(f x, l))
-	  in
-	    mapf (l, [])
-	  end
+          fun mapf ([], l) = rev' l
+            | mapf (x::r, l) = mapf (r, revAppend'(f x, l))
+          in
+            mapf (l, [])
+          end
     fun concatMapi f l = let
-	  fun mapf (_, [], l) = rev' l
-	    | mapf (i, x::r, l) = mapf (i ++ 1, r, revAppend'(f(i, x), l))
-	  in
-	    mapf (0, l, [])
-	  end
+          fun mapf (_, [], l) = rev' l
+            | mapf (i, x::r, l) = mapf (i ++ 1, r, revAppend'(f(i, x), l))
+          in
+            mapf (0, l, [])
+          end
 
     fun foldMapl reduceFn mapFn init l = let
-	  fun foldf ([], acc) = acc
-	    | foldf (x::xs, acc) = foldf (xs, reduceFn(mapFn x, acc))
-	  in
-	    foldf (l, init)
-	  end
+          fun foldf ([], acc) = acc
+            | foldf (x::xs, acc) = foldf (xs, reduceFn(mapFn x, acc))
+          in
+            foldf (l, init)
+          end
 
     fun foldMapr reduceFn mapFn init l =
-	  foldr (fn (x, acc) => reduceFn(mapFn x, acc)) init l
+          foldr (fn (x, acc) => reduceFn(mapFn x, acc)) init l
 
     fun splitAt (l, n) = let
           fun loop (0, xs, prefix) = (rev' prefix, xs)
@@ -262,12 +262,12 @@ structure List =
           end
 
     fun update (l, n, y) = let
-	  fun upd (0, x::xs, prefix) = revAppend'(prefix, y::xs)
-	    | upd (_, [], _) = raise Subscript
-	    | upd (i, x::xs, prefix) = upd (i -- 1, xs, x::prefix)
-	  in
-	    if (n < 0) then raise Subscript else upd(n, l, [])
-	  end
+          fun upd (0, x::xs, prefix) = revAppend'(prefix, y::xs)
+            | upd (_, [], _) = raise Subscript
+            | upd (i, x::xs, prefix) = upd (i -- 1, xs, x::prefix)
+          in
+            if (n < 0) then raise Subscript else upd(n, l, [])
+          end
 
     val sub = nth
 

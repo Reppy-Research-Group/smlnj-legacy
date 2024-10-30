@@ -22884,11 +22884,11 @@ structure Main :> sig val doit : unit -> unit end =
    struct
 
       fun doit () = let
-	    val _ = ins := TextIO.openIn "DATA/hamlet-input.sml"
-	    in
-	      Hamlet.main' ["-x"];
-	      TextIO.closeIn (!ins)
-	    end
+            val _ = ins := TextIO.openIn "DATA/hamlet-input.sml"
+            in
+              Hamlet.main' ["-x"];
+              TextIO.closeIn (!ins)
+            end
 
 (* FIXME *)
       fun testit _ = ()

@@ -3166,7 +3166,7 @@ fun anticodon_constraint (i,t,n) partial_inst
 (* Anticodon*)
 
     fun anticodon () =
-	  queue_to_list (search [] (anticodon_domains ()) anticodon_constraint)
+          queue_to_list (search [] (anticodon_domains ()) anticodon_constraint)
 
     fun anticodon_length () = length(anticodon())
 
