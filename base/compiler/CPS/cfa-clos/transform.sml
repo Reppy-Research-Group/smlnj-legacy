@@ -161,6 +161,7 @@ end = struct
     | slotToVal ctx (D.Code f) = CPS.LABEL (#2 f)
     | slotToVal ctx (D.Expand (v, i, ty)) =
         slotToVal ctx (C.expansionOf (ctx, v, i) handle e => raise e)
+    | slotToVal ctx (D.ExpandAny _) = raise Fail "unresolved any"
     | slotToVal ctx D.Null = tagInt 0
 
   (* envcp:
@@ -177,6 +178,7 @@ end = struct
     | slotToArg ctx (D.Expand (v, i, ty)) =
         slotToArg ctx (C.expansionOf (ctx, v, i) handle e => raise e)
     | slotToArg ctx (D.Code f) = (#2 f, funkindToTy (#1 f))
+    | slotToArg ctx (D.ExpandAny _) = raise Fail "unresolved any"
     | slotToArg ctx D.Null = (LV.mkLvar (), bogusTy)
 
   fun envargs (ctx: C.t, code: D.code, env: D.environment, kind)
@@ -198,6 +200,7 @@ end = struct
   fun slotToTy (D.EnvID _)  = CPS.PTRt CPS.VPT
     | slotToTy (D.Var   (v, ty)) = ty
     | slotToTy (D.Expand (v, i, ty)) = ty
+    | slotToTy (D.ExpandAny _) = raise Fail "unresolved any"
     | slotToTy (D.Code   f) =
         (case #1 f
            of (CPS.CONT | CPS.KNOWN_CONT) => CPS.CNTt
@@ -359,6 +362,7 @@ end = struct
                   | D.Expand (v, i, ty) =>
                       dfs ((C.expansionOf (ctx, v, i) handle e => raise e, path) :: todo,
                            access)
+                  | D.ExpandAny _ => raise Fail "unresolved any"
                   | D.EnvID e =>
                       dfs (nexts (e, path, todo),
                            insert (access, varOfEnv e, Path path))

@@ -423,6 +423,7 @@ end = struct
                         | D.RawBlock _ => false)
                 | isArity0S (D.Var (v, _)) = isArity0V v
                 | isArity0S (D.Expand (v, _, _)) = isArity0V v
+                | isArity0S (D.ExpandAny _) = raise Fail "unimp"
                 | isArity0S (D.Code _) = false
                 | isArity0S D.Null = raise Fail "unexpected null"
               fun isArity0F f =
@@ -552,7 +553,7 @@ end = struct
                              | D.Flat slots =>
                                  (case List.sub (slots, i)
                                     of (D.Null | D.Code _) => (xs, heap)
-                                     | x as D.EnvID e => 
+                                     | x as D.EnvID e =>
                                          (x :: xs, markShared (heap, e))
                                      | x => (x :: xs, heap))
                       end

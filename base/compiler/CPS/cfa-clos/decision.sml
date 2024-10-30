@@ -71,6 +71,7 @@ structure ClosureDecision = struct
   datatype slot = EnvID  of EnvID.t
                 | Var    of LV.lvar * CPS.cty
                 | Expand of LV.lvar * int * CPS.cty
+                | ExpandAny of LCPS.function
                 | Code   of LCPS.function
                 | Null
 
@@ -99,6 +100,8 @@ structure ClosureDecision = struct
     | slotToString (Expand (v, i, ty)) =
         concat ["[CS(", CPSUtil.ctyToString ty, ")]", LV.lvarName v,
                 "#", Int.toString i]
+    | slotToString (ExpandAny f) =
+        concat ["[CSANY]", LV.lvarName (#2 f)]
     | slotToString Null = "Null"
     | slotToString (EnvID e) = concat ["[E]", EnvID.toString e]
 
@@ -127,6 +130,9 @@ structure ClosureDecision = struct
             | order => order)
     | compareSlot (Expand _, _) = GREATER
     | compareSlot (_, Expand _) = LESS
+    | compareSlot (ExpandAny f1, ExpandAny f2) = LV.compare (#2 f1, #2 f2)
+    | compareSlot (ExpandAny _, _) = GREATER
+    | compareSlot (_, ExpandAny _) = LESS
     | compareSlot (Code (_, name1, _, _, _), Code (_, name2, _, _, _)) =
         LV.compare (name1, name2)
     | compareSlot (Code _, _) = GREATER
@@ -156,6 +162,8 @@ structure ClosureDecision = struct
             | Expand (v, i, ty) =>
                 p [indent, "Expand #", Int.toString i, " of ", LV.lvarName v,
                    "(", tyToS ty, ")\n"]
+            | ExpandAny f =>
+                p [indent, "ExpandAny of ", LV.lvarName (#2 f), "\n"]
             | Null   => p [indent, "Null\n"]
             | EnvID e =>
                 (p [indent, "Env ", EnvID.toString e, ":"];
@@ -220,6 +228,8 @@ structure ClosureDecision = struct
             | Expand (v, i, ty) =>
                 p [indent, "Expand #", Int.toString i, " of ", LV.lvarName v,
                    "(", tyToS ty, ")\n"]
+            | ExpandAny f =>
+                p [indent, "ExpandAny of ", LV.lvarName (#2 f), "\n"]
             | Null   => p [indent, "Null\n"]
             | EnvID e =>
                 (p [indent, "Env ", EnvID.toString e, ":"];
