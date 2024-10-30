@@ -929,7 +929,6 @@ end = struct
                 | _ => (* These are all constructors by which a function can end
                         * up in a data structure *)
                     ())
-
       fun dump n = (print ("\r" ^ Int.toString n))
       fun dump _ = ()
       fun loop n =

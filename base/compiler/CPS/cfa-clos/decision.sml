@@ -184,8 +184,8 @@ structure ClosureDecision = struct
                  printSlots ("  " ^ indent, slots, printed))
             | RawBlock (vs, _) =>
                 (p [indent, "RawBlock: "];
-                 app (fn v => p [LV.lvarName v, " "]) vs);
-                 p ["\n"])
+                 app (fn v => p [LV.lvarName v, " "]) vs;
+                 p ["\n"]))
 
       fun kindToS CPS.CONT = "std_cont"
         | kindToS CPS.KNOWN = "known"

@@ -466,6 +466,7 @@ end = struct
                               purgeSlots (xs, heap)
                             else
                               x :: purgeSlots (xs, heap))
+                | purgeSlots ((D.ExpandAny _) :: xs, _) = raise Fail "unimp"
                 | purgeSlots ((x as D.EnvID e) :: xs, heap) =
                     (case EnvID.Map.lookup (heap, e)
                        of D.Record ([], _) => purgeSlots (xs, heap)
@@ -508,6 +509,79 @@ end = struct
         val (repr, heap, allo) =
           Vector.foldl purge (repr, heap, allo) (S.groups syn)
     in  D.T {repr=repr, allo=allo, heap=heap}
+    end
+
+  fun removeSingletonEnv (D.T { repr, heap, allo }) : D.t =
+    (* 1. Figure out all singleton envs
+     * 2. Figure out all necessary single envs ( Boxed )
+     * 3. Remove from alloc and remove from each env *)
+    let type repl = D.slot EnvID.Map.map
+        fun collectSingleton (id, obj, singletons: repl) =
+          (case obj
+             of D.Record ([x], _) =>
+                  EnvID.Map.insert (singletons, id, x)
+              | _ => singletons)
+        val replacement =
+          EnvID.Map.foldli collectSingleton EnvID.Map.empty heap
+        (* fun compress (x as D.EnvID e) = *)
+        (*       (case EnvID.Map.find (replacement, e) *)
+        (*          of SOME slot => compress slot *)
+        (*           | NONE => x) *)
+        (*   | compress x = x *)
+        (* val replacement = EnvID.Map.map compress replacement *)
+        fun findChain (map: repl, e) =
+          (case EnvID.Map.find (map, e)
+             of SOME (D.EnvID e') => findChain (map, e')
+              | (NONE | SOME _) => e)
+        fun remove (map, e) =
+          (case EnvID.Map.findAndRemove (map, e)
+             of SOME (map', _) => map'
+              | NONE => map)
+        fun clearNecessary (_, D.Closure { env, code }, singletons: repl) =
+          (case env
+             of D.Boxed e =>
+                  let val e' = findChain (singletons, e)
+                  in  if EnvID.same (e, e') then
+                        remove (singletons, e)
+                      else
+                        EnvID.Map.insert (singletons, e, D.EnvID e')
+                  end
+              | _ => singletons)
+        val replacement = LCPS.FunMap.foldli clearNecessary replacement repr
+
+        (* val () = EnvID.Map.appi *)
+        (*   (fn (e, _) => print ("Removing: " ^ EnvID.toString e ^ "\n")) *)
+        (*   replacement *)
+
+        fun replace (x as D.EnvID e) =
+              (case EnvID.Map.find (replacement, e)
+                 of SOME slot => replace slot
+                  | NONE => x)
+          | replace x = x
+
+        fun removeAlloc allocs =
+          List.filter (fn e => not (EnvID.Map.inDomain (replacement, e))) allocs
+        fun replaceObj (e, obj) =
+          (case EnvID.Map.find (replacement, e)
+             of NONE =>
+                  (case obj
+                     of D.Record (slots, shared) =>
+                          SOME (D.Record (map replace slots, shared))
+                      | _ => SOME obj)
+              | SOME _ => NONE)
+        fun replaceRepr (clo as D.Closure { code, env }) =
+          (case env
+             of D.Boxed e =>
+                  (case replace (D.EnvID e)
+                     of (D.EnvID e') =>
+                          D.Closure { code=code, env=D.Boxed e' }
+                      | _ => raise Fail "boxed becomes unboxed")
+              | D.Flat slots =>
+                  D.Closure { code=code, env=D.Flat (map replace slots) })
+        val allo = Group.Map.map removeAlloc allo
+        val heap = EnvID.Map.mapPartiali replaceObj heap
+        val repr = LCPS.FunMap.map replaceRepr repr
+    in  D.T { allo=allo, heap=heap, repr=repr }
     end
 
   fun allocate'n'expand
@@ -569,8 +643,8 @@ end = struct
               let val (xs, heap) = trueFV (xs, repr, heap)
               in  case EnvID.Map.lookup (heap, e)
                     of D.Record ([], _) => (xs, heap)
-                     | D.Record ([y as D.EnvID e'], shared) =>
-                         (y :: xs, markEnv (heap, e', shared))
+                     (* | D.Record ([y as D.EnvID e'], shared) => *)
+                     (*     (y :: xs, markEnv (heap, e', shared)) *)
                      | _ => (x :: xs, heap)
               end
           | trueFV (x :: xs, repr, heap) =
@@ -721,8 +795,6 @@ end = struct
               val (fst, heap) =
                 (case spilled
                    of [] => (D.Null, update (heap, e, []))
-                    | [D.EnvID e'] =>
-                        (D.EnvID e', update (heap, e, [D.EnvID e']))
                     | [x] =>
                         if isMLSlot x then
                           (x, update (heap, e, []))
@@ -782,9 +854,10 @@ end = struct
                                         (* (D.Boxed e, *)
                                         (*  EnvID.Map.insert (heap, e, *)
                                         (*                      D.Record [D.Null])) *)
-                                        (D.Flat [], heap)
-                                    | D.Record ([D.EnvID e'], _) =>
-                                        (D.Boxed e', heap)
+                                        (* (D.Flat [], heap) *)
+                                        raise Fail "empty"
+                                    (* | D.Record ([D.EnvID e'], _) => *)
+                                    (*     (D.Boxed e', heap) *)
                                     (* | D.Record [D.Code _] => *)
                                     (*     (env, heap) *)
                                     (* | D.Record [s] => *)
@@ -793,14 +866,8 @@ end = struct
                                 handle e => raise e)
                             | D.Flat [] => (D.Flat [], heap)
                             | D.Flat (D.EnvID e :: nulls) =>
-                                (* FIXME: this step should be pulled out *)
                                 if isShared e then
-                                  (case EnvID.Map.lookup (heap, e)
-                                     of D.Record ([], _) =>
-                                          (D.Flat [], heap)
-                                      | D.Record ([D.EnvID e'], _) =>
-                                          (D.Flat (D.EnvID e' :: nulls), heap)
-                                      | _ => (env, heap))
+                                  (env, heap)
                                 else
                                   allocate (heap, f, e, nulls)
                             | D.Flat _ => raise Fail "impossible")
@@ -814,7 +881,7 @@ end = struct
                 List.filter (fn e =>
                   (case EnvID.Map.lookup (heap, e)
                      of D.Record ([], _) => false
-                      | D.Record ([D.EnvID _], _) => false
+                      (* | D.Record ([D.EnvID _], _) => false *)
                       | _ => true)
                 ) environments
                 handle e => raise e
@@ -842,6 +909,15 @@ end = struct
   val _ = allocate'n'expand  : S.t * W.t * CF.funtbl * CF.looptbl -> rewriting
 
   fun fake syn (f : rewriting) : rewriting = fn dec => (D.dump (f dec, syn); dec)
+  fun trace syn (f : rewriting) : rewriting = fn dec =>
+    let val () = print "BEFORE\n:"
+        val () = D.dump (dec, syn)
+        val dec = f dec
+        val () = print "AFTER\n:"
+        val () = D.dump (dec, syn)
+    in  dec
+    end
+
 
   infix 2 >>>
   fun f >>> g = fn x => g (f x)
@@ -862,6 +938,7 @@ end = struct
           >>> analyze'n'flatten (syn, web)
           >>> allocate'n'expand (syn, web, funtbl, looptbl)
           >>> segregateMLValues
+          >>> removeSingletonEnv
 
         val decision = process (cps, syn)
         (* val () = print "FINAL\n" *)

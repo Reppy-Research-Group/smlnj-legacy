@@ -355,6 +355,14 @@ end = struct
                       { base=base, selects=selects@[i] })::todo))
                     todo vars
               | NONE => raise Fail "nexts")
+        fun slotToKey (D.Var (v, _)) = v
+          | slotToKey (D.Expand (v, i, _)) =
+              slotToKey (C.expansionOf (ctx, v, i) handle e => raise e)
+          | slotToKey (D.ExpandAny _) = raise Fail "unresolved any"
+          | slotToKey (D.EnvID e) = varOfEnv e
+          | slotToKey D.Null = raise Fail "unexpected null"
+          | slotToKey (D.Code _) = raise Fail "unexpected code"
+
         fun dfs ([], access) = access
           | dfs ((s, path) :: todo, access) =
               (case s
@@ -394,8 +402,8 @@ end = struct
                            * we create one from the base. *)
                           let val sharedEnv =
                                 (case EnvID.Map.lookup (heap, e)
-                                   of D.Record ([D.Code _, D.EnvID env], _) =>
-                                        SOME env
+                                   of D.Record ([D.Code _, slot], _) =>
+                                        SOME slot
                                     | D.Record ([D.Code _], _) => NONE
                                     | _ => raise Fail "unexpected repr")
                               (* REFACTOR: I don't really like the fact that we
@@ -404,8 +412,8 @@ end = struct
                                * Group instead of functions, and a closure has a
                                * list of functions. *)
                               val path =
-                                Option.map (fn env =>
-                                  (case LV.Map.lookup (access, varOfEnv env)
+                                Option.map (fn slot =>
+                                  (case LV.Map.lookup (access, slotToKey slot)
                                      of Path path => path
                                       | Create _ => raise Fail "impossible")
                                 ) sharedEnv
