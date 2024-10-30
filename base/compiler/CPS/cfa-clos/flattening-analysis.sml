@@ -51,12 +51,9 @@ end = struct
   fun medium (D.T {repr, allo, heap}, web: W.t, syn: S.t) =
     let val census = webcensus (heap, web)
         fun isShared e =
-          let fun inObj (D.Record (slots, _)) =
-                    List.exists (fn D.EnvID e' => EnvID.same (e, e')
-                                  | _ => false) slots
-                | inObj _ = false
-          in  EnvID.Map.exists inObj heap
-          end
+          (case EnvID.Map.lookup (heap, e)
+             of D.Record (_, shared) => shared
+              | D.RawBlock _ => raise Fail "unexpected raw block")
         fun usecnt id =
           (case W.Map.find (census, id)
              of NONE => 0

@@ -170,12 +170,14 @@ structure ClosureDecision = struct
         app (fn s => printSlot (indent, s, printed)) slots
       and printObject (indent, obj, printed) =
         (case obj
-           of Record (slots, shared) => 
-                (print (if shared then "<shared>\n" else "<private>\n");
+           of Record (slots, shared) =>
+                (p ["  ", indent, if shared then "<shared>\n" else
+                   "<private>\n"];
                  printSlots ("  " ^ indent, slots, printed))
             | RawBlock (vs, _) =>
                 (p [indent, "RawBlock: "];
-                 app (fn v => p [LV.lvarName v, " "]) vs))
+                 app (fn v => p [LV.lvarName v, " "]) vs);
+                 p ["\n"])
 
       fun kindToS CPS.CONT = "std_cont"
         | kindToS CPS.KNOWN = "known"
@@ -232,8 +234,9 @@ structure ClosureDecision = struct
         app (fn s => printSlot (indent, s, printed)) slots
       and printObject (indent, obj, printed) =
         (case obj
-           of Record (slots, shared) => 
-                (print (if shared then "<shared>\n" else "<private>\n");
+           of Record (slots, shared) =>
+                (p ["  ", indent, if shared then "<shared>\n" else
+                   "<private>\n"];
                  printSlots ("  " ^ indent, slots, printed))
             | RawBlock (vs, _) =>
                 (p [indent, "RawBlock:\n"];
