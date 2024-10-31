@@ -180,6 +180,8 @@ end = struct
     (* Step 1: allocate a bunch of NIL for all escaping closures' reprs. *)
      let fun needsFlatteningF f =
            let val w = W.webOfFun (web, f)
+               (* val () = *)
+               (*   app print [LV.lvarName (#2 f), " ---> ", FA.toString (arity w), "\n"] *)
            in  arity w
            end
 

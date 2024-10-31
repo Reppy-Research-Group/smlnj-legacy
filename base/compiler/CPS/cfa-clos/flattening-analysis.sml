@@ -17,8 +17,6 @@ end = struct
   datatype arity = One | Fixed of int | Any of LCPS.function
   type decision = Web.id -> arity
 
-  val fixed = fn n => if n = 1 then raise Fail "0" else Fixed n
-
   fun webcensus (heap: D.heap, web: W.t) =
     let fun usedBy (census, w, env) =
           (case W.Map.find (census, w)
@@ -153,17 +151,17 @@ end = struct
               | SOME envs => List.length envs)
         fun arity id =
           (case Web.content (web, id)
-             of { kind=W.Cont, ... } => fixed 3
+             of { kind=W.Cont, ... } => Fixed 3
               | { polluted=true, kind=W.User, ... } => One
               | { polluted=false, defs=(#[f]), uses=(uses as #[_]), ... } =>
                   if inDataStructure syn uses then
                     One
                   else if arityOf f = 0 then
-                    fixed 0
+                    Fixed 0
                   else if usecnt id = 0 then
                     Any f
                   else
-                    One
+                    Fixed 1
               | _ => One)
     in  arity
     end
