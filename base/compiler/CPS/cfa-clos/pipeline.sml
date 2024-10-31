@@ -17,6 +17,7 @@ end = struct
   structure S = SyntacticInfo
   structure SA = SharingAnalysis
   structure W = Web
+  structure FA = FlatteningAnalysis
 
   fun initial (cps: LCPS.function, syn: S.t) =
     let fun collect syn (group, (repr, allo, heap)) =
@@ -172,14 +173,14 @@ end = struct
     end
 
   fun flatten (
-    arity: W.id -> int option,
+    arity: W.id -> FA.arity,
     syn: S.t,
     web: W.t
   ) (D.T {repr, allo, heap}) =
     (* Step 1: allocate a bunch of NIL for all escaping closures' reprs. *)
      let fun needsFlatteningF f =
            let val w = W.webOfFun (web, f)
-           in  arity w (* andalso W.polluted (web, w) = true *)
+           in  arity w
            end
 
          fun codePtr (D.SelectFrom { env=0, selects=[0] }, D.Boxed e, heap) =
@@ -204,27 +205,44 @@ end = struct
                              val heap = EnvID.Map.insert (heap, e, obj)
                          in  (codep, D.Flat (D.EnvID e :: nuls (n - 1)), heap)
                          end
-                     | D.FlatAny _ => raise Fail "unimp"
-                     | D.Flat slots =>
-                         let val length = List.length slots
-                             val diff   = n - length
-                         in  if diff < 0 then
-                               raise Fail "reducing flattening"
-                             else
-                               (code, D.Flat (slots @ nuls diff), heap)
-                         end)
+                     | D.Flat [] =>
+                         if n = 0 then
+                           (code, D.Flat [], heap)
+                         else
+                           raise Fail "inconsistent arity"
+                     | (D.Flat _ | D.FlatAny _) => raise Fail "impossible")
+                     (* | D.Flat slots => *)
+                     (*     let val length = List.length slots *)
+                     (*         val diff   = n - length *)
+                     (*     in  if diff < 0 then *)
+                     (*           raise Fail "reducing flattening" *)
+                     (*         else *)
+                     (*           (code, D.Flat (slots @ nuls diff), heap) *)
+                     (*     end) *)
                 val repr =
                   LCPS.FunMap.insert (repr, f, D.Closure { code=code, env=env })
             in  (repr, heap)
            end
 
+         fun flexibleRepr (f, repr) =
+           let val D.Closure { code, env } = LCPS.FunMap.lookup (repr, f)
+               val env =
+                 (case env
+                    of D.Boxed e => D.FlatAny e
+                     | D.Flat [] => D.Flat []
+                     | (D.Flat _ | D.FlatAny _) => raise Fail "impossible")
+               val repr =
+                 LCPS.FunMap.insert (repr, f, D.Closure { code=code, env=env })
+           in  repr
+           end
+
          val (repr, heap) = S.foldF syn (fn (f, (repr, heap)) =>
              (case needsFlatteningF f
-                of NONE => (repr, heap)
-                 | SOME arity =>
-
+                of FA.One => (repr, heap)
+                 | FA.Fixed arity =>
                      (* (app print [LV.lvarName (#2 f) , " ---> ", Int.toString arity, "\n"]; *)
-                     expandRepr (f, arity, repr, heap))
+                     expandRepr (f, arity, repr, heap)
+                 | FA.Any _ => (flexibleRepr (f, repr), heap))
            ) (repr, heap)
 
          (* Step 2: replace all variables in the heap with the expansions *)
@@ -233,38 +251,36 @@ end = struct
 
          (* fun isContVar (v, CPS.CNTt) = true *)
          (*   | isContVar _ = false *)
+         fun needCodePtr id =
+           let val { defs, polluted, ... } = Web.content (web, id)
+           in  if polluted then
+                 true
+               else
+                 let val f = Vector.sub (defs, 0)
+                     val D.Closure { code, ... } =
+                       LCPS.FunMap.lookup (repr, f)
+                 in  case code of D.Direct _ => false | _ => true
+                 end
+           end
+
          fun needsFlatteningV (v, ty) =
            (case (W.webOfVar (web, v), ty)
-              of (NONE, CPS.CNTt) => SOME (3, true)
-               | (NONE, _) => NONE
-               | (SOME id, _) =>
-                   (case arity id
-                      of NONE => NONE
-                       | SOME n =>
-                         let val { defs, polluted, ... } = Web.content (web, id)
-                         in  if polluted then
-                               SOME (n, true)
-                             else
-                               let val f = Vector.sub (defs, 0)
-                                   val D.Closure { code, ... } =
-                                     LCPS.FunMap.lookup (repr, f)
-                                   val needCodePtr =
-                                     (case code of D.Direct _ => false
-                                                 | _ => true)
-                               in  SOME (n, needCodePtr)
-                               end
-                         end))
+              of (NONE, CPS.CNTt) => (FA.Fixed 3, true)
+               | (NONE, _) => (FA.One, true)
+               | (SOME id, _) => (arity id, needCodePtr id))
 
          val bogusTy = CPSUtil.BOGt
          fun expandObject (D.Record (slots, shared)) =
                let fun go [] = []
                      | go ((x as D.Var (v, ty))::xs) =
                          (case needsFlatteningV (v, ty)
-                            of SOME (arity, needCP) =>
+                            of (FA.One, _) => x :: go xs
+                             | (FA.Fixed n, needCP) =>
                                  List.tabulate
-                                   (arity, fn i => D.Expand (v, i, bogusTy))
+                                   (n, fn i => D.Expand (v, i, bogusTy))
                                  @ (if needCP then (x :: go xs) else go xs)
-                             | NONE => x :: go xs)
+                             | (FA.Any f, _) =>
+                                 (D.ExpandAny f) :: go xs)
                      | go (x :: xs) = x :: go xs
                in  D.Record (go slots, shared)
                end
@@ -274,7 +290,7 @@ end = struct
      end
 
   fun analyze'n'flatten (syn, web) dec =
-    let val arity = FlatteningAnalysis.medium (dec, web, syn)
+    let val arity = FlatteningAnalysis.simple (dec, web, syn)
     in  flatten (arity, syn, web) dec
     end
 
@@ -424,7 +440,7 @@ end = struct
                         | D.RawBlock _ => false)
                 | isArity0S (D.Var (v, _)) = isArity0V v
                 | isArity0S (D.Expand (v, _, _)) = isArity0V v
-                | isArity0S (D.ExpandAny _) = raise Fail "unimp"
+                | isArity0S (D.ExpandAny _) = raise Fail "unexpected expand any"
                 | isArity0S (D.Code _) = false
                 | isArity0S D.Null = raise Fail "unexpected null"
               fun isArity0F f =
@@ -467,7 +483,8 @@ end = struct
                               purgeSlots (xs, heap)
                             else
                               x :: purgeSlots (xs, heap))
-                | purgeSlots ((D.ExpandAny _) :: xs, _) = raise Fail "unimp"
+                | purgeSlots ((D.ExpandAny _) :: xs, _) =
+                    raise Fail "impossible"
                 | purgeSlots ((x as D.EnvID e) :: xs, heap) =
                     (case EnvID.Map.lookup (heap, e)
                        of D.Record ([], _) => purgeSlots (xs, heap)
@@ -491,7 +508,7 @@ end = struct
                                    of D.Record ([], _) => D.Flat []
                                     | D.Record ([D.EnvID e'], _) => D.Boxed e'
                                     | _ => env)
-                            | D.FlatAny _ => raise Fail "unimp"
+                            | D.FlatAny _ => raise Fail "impossible"
                             | D.Flat slots =>
                                 D.Flat (purgeSlots (slots, heap)))
                       val closure =D.Closure { code=code, env=env }
@@ -578,7 +595,7 @@ end = struct
                      of (D.EnvID e') =>
                           D.Closure { code=code, env=D.Boxed e' }
                       | _ => raise Fail "boxed becomes unboxed")
-              | D.FlatAny slots => raise Fail "unimp"
+              | D.FlatAny slots => raise Fail "unresolved flat any"
               | D.Flat slots =>
                   D.Closure { code=code, env=D.Flat (map replace slots) })
         val allo = Group.Map.map removeAlloc allo
@@ -627,7 +644,8 @@ end = struct
                           val (xs, heap) = trueFV (xs, repr, heap)
                       in  case env
                             of D.Boxed _ => raise Fail "expanding box"
-                             | D.FlatAny _ => raise Fail "unimp"
+                             | D.FlatAny _ =>
+                                 raise Fail "Expand on flat any"
                              | D.Flat [] => (xs, heap)
                              | D.Flat slots =>
                                  (case List.sub (slots, i)
@@ -644,6 +662,19 @@ end = struct
                       let val (xs, heap) = trueFV (xs, repr, heap)
                       in  (x :: xs, heap)
                       end)
+          | trueFV ((x as D.ExpandAny f) :: xs, repr, heap) =
+              let val D.Closure { code, env } = LCPS.FunMap.lookup (repr, f)
+                  val (xs, heap) = trueFV (xs, repr, heap)
+              in  case env
+                    of D.FlatAny _ => raise Fail "unresolved flat any"
+                     | D.Boxed _ => raise Fail "expanding box"
+                     | D.Flat slots =>
+                         let fun notConst (D.Null | D.Code _) = false
+                               | notConst _ = true
+                             val slots = List.filter notConst slots
+                         in  (slots @ xs, heap)
+                         end
+              end
           | trueFV ((x as D.EnvID e) :: xs, repr, heap) =
               let val (xs, heap) = trueFV (xs, repr, heap)
               in  case EnvID.Map.lookup (heap, e)
@@ -810,6 +841,22 @@ end = struct
               val slots = taken @ [fst]
           in  (D.Flat slots, heap)
           end
+        fun unbox (heap, e) : D.environment * D.heap =
+          let val slots =
+                (case EnvID.Map.lookup (heap, e)
+                   of D.Record (slots, false) => slots
+                    | D.Record (slots, true) =>
+                        raise Fail "destroying shared envs"
+                    | D.RawBlock _ =>
+                        raise Fail "impossible")
+              val () =
+                if List.exists (fn (D.Code _) => true | _ => false) slots then
+                  raise Fail "unboxing non direct function"
+                else
+                  ()
+              val heap = EnvID.Map.insert (heap, e, D.Record ([], false))
+          in  (D.Flat slots, heap)
+          end
         (* Environments now look like one of the following:
          * 1. Boxed e
          * 2. Flat [EnvID e, NULL, NULL]
@@ -842,13 +889,11 @@ end = struct
                       | _ => heap)
                 ) heap environments
                 handle e => raise e
-              (* val returnC = S.returnCont syn (S.groupExp syn group) *)
               val (repr, heap) = Vector.foldl (fn (f, (repr, heap)) =>
                   let val D.Closure {code, env} = LCPS.FunMap.lookup (repr, f)
                       val (env, heap) =
                         (case env
                            of D.Boxed e =>
-                                (* FIXME: this step should be pulled out *)
                                 (case EnvID.Map.lookup (heap, e)
                                    of D.Record ([], _) =>
                                         (* raise Fail "check" *)
@@ -869,7 +914,11 @@ end = struct
                                     (*     (D.Flat [s], heap) *)
                                     | _ => (env, heap)
                                 handle e => raise e)
-                            | D.FlatAny _ => raise Fail "unimp"
+                            | D.FlatAny e =>
+                                if isShared e then
+                                  (D.Flat [D.EnvID e], heap)
+                                else
+                                  unbox (heap, e)
                             | D.Flat [] => (D.Flat [], heap)
                             | D.Flat (D.EnvID e :: nulls) =>
                                 if isShared e then
