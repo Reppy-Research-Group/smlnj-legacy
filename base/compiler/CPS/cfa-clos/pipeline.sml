@@ -806,7 +806,9 @@ end = struct
           | isMLSlot (D.Expand (_, _, ty)) = isMLTy ty
           | isMLSlot _ = true
 
-        fun allocate (heap, f, e, nulls) : D.environment * D.heap =
+        fun parentOf grp = S.enclosing syn (S.groupExp syn grp)
+
+        fun allocate (heap, f, e, nulls, availEnvs) : D.environment * D.heap =
           let val entry = LCPS.FunTbl.lookup funtbl f
                           handle e => raise e
               val pref = preference entry
@@ -827,19 +829,30 @@ end = struct
                       pick (pref, heap, slots, avail)
                 in  (taken, spilled @ spilled')
                 end
+              fun insert (heap, e, slots) =
+                EnvID.Map.insert (heap, e, D.Record (slots, false))
+              (* serendipitous sharing *)
               fun update (heap, e, slots) =
-                  EnvID.Map.insert
-                    (heap, e, D.Record (slots, false))
+                let val set = D.SlotSet.fromList slots
+                    fun search [] =
+                          (D.EnvID e, insert (heap, e, slots))
+                      | search ((e', slots') :: avails) =
+                          if D.SlotSet.equal (set, slots') then
+                            (D.EnvID e', markShared (insert (heap, e, []), e'))
+                          else
+                            search avails
+                in  search availEnvs
+                end
               val (fst, heap) =
                 (case spilled
-                   of [] => (D.Null, update (heap, e, []))
+                   of [] => (D.Null, insert (heap, e, []))
                     | [x] =>
                         if isMLSlot x then
-                          (x, update (heap, e, []))
+                          (x, insert (heap, e, []))
                         else
-                          (D.EnvID e, update (heap, e, [x]))
+                          update (heap, e, [x])
                     | _ =>
-                        (D.EnvID e, update (heap, e, spilled)))
+                        update (heap, e, spilled))
               val slots = taken @ [fst]
           in  (D.Flat slots, heap)
           end
@@ -880,6 +893,19 @@ end = struct
               (* val () = ClosureDecision.dumpOne (D.T {repr=repr, heap=heap, *)
               (* allo=allo}, syn, group) *)
 
+              val parentEnvs =
+                let val parent = parentOf group
+                    fun collectEnvs (D.EnvID e, lst) =
+                          (case EnvID.Map.lookup (heap, e)
+                             of D.Record (slots, _) =>
+                                  (e, D.SlotSet.fromList slots) :: lst
+                              | D.RawBlock _ => lst)
+                      | collectEnvs (_, lst) = lst
+                in  case LCPS.FunMap.find (repr, parent)
+                      of SOME (D.Closure { env=D.Flat slots, ... }) =>
+                           foldl collectEnvs [] slots
+                       | _ => []
+                end
               val environments = Group.Map.lookup (allo, group)
               val heap = foldl (fn (e, heap) =>
                   (case EnvID.Map.lookup (heap, e)
@@ -898,22 +924,7 @@ end = struct
                            of D.Boxed e =>
                                 (case EnvID.Map.lookup (heap, e)
                                    of D.Record ([], _) =>
-                                        (* raise Fail "check" *)
-                                        (* If a function goes into a data
-                                         * structure, but it doesn't need an
-                                         * environment or a code pointer, we
-                                         * supply a placeholder *)
-                                        (* (D.Boxed e, *)
-                                        (*  EnvID.Map.insert (heap, e, *)
-                                        (*                      D.Record [D.Null])) *)
-                                        (* (D.Flat [], heap) *)
                                         raise Fail "empty"
-                                    (* | D.Record ([D.EnvID e'], _) => *)
-                                    (*     (D.Boxed e', heap) *)
-                                    (* | D.Record [D.Code _] => *)
-                                    (*     (env, heap) *)
-                                    (* | D.Record [s] => *)
-                                    (*     (D.Flat [s], heap) *)
                                     | _ => (env, heap)
                                 handle e => raise e)
                             | D.FlatAny e =>
@@ -926,7 +937,7 @@ end = struct
                                 if isShared e then
                                   (env, heap)
                                 else
-                                  allocate (heap, f, e, nulls)
+                                  allocate (heap, f, e, nulls, parentEnvs)
                             | D.Flat _ => raise Fail "impossible")
                       val closure = D.Closure {code=code, env=env}
                       val repr = LCPS.FunMap.insert (repr, f, closure)
