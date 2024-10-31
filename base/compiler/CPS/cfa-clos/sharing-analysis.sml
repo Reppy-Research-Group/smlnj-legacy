@@ -381,6 +381,8 @@ end = struct
      * - Elide the pack that are the same.
      *)
 
+    (* NOTE: after thinning, some packs may drop below the size cut off *)
+
     fun thin (
       grpTbl : pack Group.Tbl.hash_table,
       packTbl : pack PackID.Tbl.hash_table,

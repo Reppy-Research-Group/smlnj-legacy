@@ -508,7 +508,7 @@ end = struct
                            of D.Boxed e =>
                                 (case EnvID.Map.lookup (heap, e)
                                    of D.Record ([], _) => D.Flat []
-                                    | D.Record ([D.EnvID e'], _) => D.Boxed e'
+                                    (* | D.Record ([D.EnvID e'], _) => D.Boxed e' *)
                                     | _ => env)
                             | D.FlatAny _ => raise Fail "impossible"
                             | D.Flat slots =>
@@ -521,7 +521,7 @@ end = struct
                 List.filter (fn e =>
                   (case EnvID.Map.lookup (heap, e)
                      of D.Record ([], _) => false
-                      | D.Record ([D.EnvID _], _) => false
+                      (* | D.Record ([D.EnvID _], _) => false *)
                       | _ => true)
                 ) environments
               val allo = Group.Map.insert (allo, grp, environments)
@@ -603,6 +603,102 @@ end = struct
         val allo = Group.Map.map removeAlloc allo
         val heap = EnvID.Map.mapPartiali replaceObj heap
         val repr = LCPS.FunMap.map replaceRepr repr
+    in  D.T { allo=allo, heap=heap, repr=repr }
+    end
+
+  fun unshare
+    (syn: S.t, funtbl: CF.funtbl, looptbl: CF.looptbl)
+    (D.T { allo, heap, repr })
+  : D.t =
+    let fun innerFs (CF.Block { term, fix, ... }) =
+          (case term
+             of CF.Branch (_, _, b1, b2, _) =>
+                  fix @ innerFs b1 @ innerFs b2
+              | CF.Switch blocks =>
+                  foldl (fn ((b, _), fix) => innerFs b @ fix) fix blocks
+              | _ => fix)
+        fun searchEnvs (heap, grp, fs, set: EnvID.Set.set) =
+          let fun searchSlots ([], set) = set
+                | searchSlots (D.EnvID e :: todo, set) =
+                    if EnvID.Set.member (set, e) then
+                      searchSlots (todo, set)
+                    else
+                      (case EnvID.Map.lookup (heap, e)
+                         of D.Record (slots, _) =>
+                              searchSlots (slots @ todo, EnvID.Set.add (set, e))
+                          | D.RawBlock _ => searchSlots (todo, set))
+                | searchSlots (_ :: todo, set) = searchSlots (todo, set)
+              val environments = Group.Map.lookup (allo, grp)
+              val set =
+                foldl (fn (e, set) => searchSlots ([D.EnvID e], set)) set
+                      environments
+              val set =
+                foldl (fn (f, set) =>
+                  let val D.Closure { env, ... } = LCPS.FunMap.lookup (repr, f)
+                  in  case env
+                        of D.Flat slots => searchSlots (slots, set)
+                         | D.FlatAny _ => raise Fail "unexpected flat any"
+                         | D.Boxed e => searchSlots ([D.EnvID e], set)
+                  end
+                ) set fs
+          in  set
+          end
+        fun freeInInners (f: LCPS.function, fixes: CF.fix list) =
+          let fun freeIn (grp, _) =
+                let val fv = S.groupFV syn grp
+                in  LV.Map.inDomain (fv, #2 f)
+                end
+          in  List.exists freeIn fixes
+          end
+        fun flattenUnneeded (heap, f, inners) =
+          let val dependents =
+                foldl (fn ((grp, fs), set) =>
+                  searchEnvs (heap, grp, fs, set)
+                ) EnvID.Set.empty inners
+              val (e, slots) =
+                (case LCPS.FunMap.lookup (repr, f)
+                   of D.Closure { env=D.Boxed e, ... } =>
+                        (case EnvID.Map.lookup (heap, e)
+                           of D.Record (slots, false) => (e, slots)
+                            | D.Record (_, true) =>
+                                raise Fail "impossible"
+                            | D.RawBlock _ =>
+                                raise Fail "impossible")
+                    | _ => raise Fail "impossible")
+              val slots =
+                foldr
+                  (fn (D.EnvID e', slots) =>
+                      if not (EnvID.Set.member (dependents, e')) then
+                        (* (print ("HIT: " ^ EnvID.toString e' ^ "\n"); *)
+                        (case EnvID.Map.lookup (heap, e')
+                           of D.Record (slots', false) =>
+                                raise Fail "nested unshared records"
+                            | D.Record (slots', true) =>
+                                slots' @ slots
+                            | D.RawBlock _ =>
+                                raise Fail "RawBlock")
+                        (* ) *)
+                      else
+                        (D.EnvID e' :: slots)
+                    | (x, slots) => x :: slots) [] slots
+              val heap =
+                EnvID.Map.insert (heap, e, D.Record (slots, false))
+          in  heap
+          end
+        (* FIXME: A function after the known_tail could capture and share the
+         * function. The dependents of a function is not limited to the inner
+         * lambdas. *)
+        fun processGrp (grp, heap) (* : D.heap * EnvID.Set.set *) =
+          (case S.groupFun syn grp
+             of #[f as (CPS.KNOWN_TAIL, name, _, _, _)] =>
+                  let val inners = innerFs (LCPS.FunTbl.lookup funtbl f)
+                  in  if freeInInners (f, inners) then
+                        heap
+                      else
+                        flattenUnneeded (heap, f, inners)
+                  end
+              | _ => heap)
+        val heap = Vector.foldl processGrp heap (S.groups syn)
     in  D.T { allo=allo, heap=heap, repr=repr }
     end
 
@@ -973,10 +1069,17 @@ end = struct
   val _ = segregateMLValues  : rewriting
   val _ = removeKnownCodePtr : W.t * S.t -> rewriting
   val _ = removeEmptyEnv : S.t * W.t -> rewriting
-  (* val _ = removeEnvEnv : rewriting *)
+  val _ = removeSingletonEnv : rewriting
   val _ = allocate'n'expand  : S.t * W.t * CF.funtbl * CF.looptbl -> rewriting
 
-  fun fake syn (f : rewriting) : rewriting = fn dec => (D.dump (f dec, syn); dec)
+  fun fake syn (f : rewriting) : rewriting = fn dec =>
+    let val () = print "BEFORE\n:"
+        val () = D.dump (dec, syn)
+        val dec' = f dec
+        val () = print "AFTER\n:"
+        val () = D.dump (dec', syn)
+    in  dec
+    end
   fun trace syn (f : rewriting) : rewriting = fn dec =>
     let val () = print "BEFORE\n:"
         val () = D.dump (dec, syn)
@@ -1003,6 +1106,7 @@ end = struct
           >>> share (syn, LCPS.FunTbl.lookup funtbl cps, funtbl, shr)
           >>> removeKnownCodePtr (web, syn)
           >>> removeEmptyEnv (syn, web)
+          >>> unshare (syn, funtbl, looptbl)
           >>> analyze'n'flatten (syn, web)
           >>> allocate'n'expand (syn, web, funtbl, looptbl)
           >>> segregateMLValues
