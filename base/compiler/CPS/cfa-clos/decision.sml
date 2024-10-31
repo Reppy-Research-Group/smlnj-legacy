@@ -83,8 +83,9 @@ structure ClosureDecision = struct
                 | SelectFrom of { env: int, selects: int list }
                 | Defun of LCPS.lvar * LCPS.function list
 
-  datatype environment = Boxed of EnvID.t (* FIXME: remove this *)
+  datatype environment = Boxed of EnvID.t
                        | Flat  of slot list
+                       | FlatAny of EnvID.t
 
   datatype closure = Closure of { code: code, env: environment }
 
@@ -114,9 +115,11 @@ structure ClosureDecision = struct
 
   fun envToS (Boxed e) = EnvID.toString e
     | envToS (Flat slots) = String.concatWithMap "," slotToString slots ^ ","
+    | envToS (FlatAny e) = "<any>" ^ EnvID.toString e
 
   fun envToSlots (Boxed e) = [EnvID e]
     | envToSlots (Flat slots) = slots
+    | envToSlots (FlatAny e) = [EnvID e]
 
   fun compareSlot (EnvID e1, EnvID e2) = EnvID.compare (e1, e2)
     | compareSlot (EnvID _, _) = GREATER

@@ -186,7 +186,8 @@ end = struct
     let val slots =
           (case env
              of D.Flat slots => map (slotToArg ctx) slots
-              | D.Boxed e => [(varOfEnv e, bogusTy)])
+              | D.Boxed e => [(varOfEnv e, bogusTy)]
+              | D.FlatAny _ => raise Fail "unresolved any")
         val funty = (case kind of Web.Cont => CPS.CNTt | Web.User => CPS.FUNt)
         val codep =
           (case code
@@ -223,7 +224,9 @@ end = struct
                                        | Web.User => CPS.FUNt)
                        val tys = (case env
                                     of D.Boxed _ => [bogusTy]
-                                     | D.Flat slots => map slotToTy slots)
+                                     | D.Flat slots => map slotToTy slots
+                                     | D.FlatAny _ => 
+                                         raise Fail "unresolved any")
                    in  SOME tys
                    end)
         | NONE =>
@@ -254,6 +257,11 @@ end = struct
                 ()
               else
                 raise Fail "arity"
+          | checkEnv (D.FlatAny e, D.FlatAny e2) =
+              if EnvID.same (e, e2) then
+                ()
+              else
+                raise Fail "FlatAny in a non-trivial web"
           | checkEnv _ = raise Fail "Flat Boxed"
         val (refcode, refenv) = getCodeEnv f
         val () =
@@ -302,7 +310,8 @@ end = struct
                              | D.Flat slots =>
                                  D.Flat
                                    (map (fn s => D.Var (freshLV v, slotToTy s))
-                                        slots))
+                                        slots)
+                            | D.FlatAny _ => raise Fail "unresolved any")
                        val () = checkWeb (repr, defs)
                    in  (kind, code, env, singlevec defs)
                    end)
@@ -381,7 +390,8 @@ end = struct
              of Function {code, env, pkg, knowncode} =>
                   (case env
                      of D.Boxed e => [D.EnvID e]
-                      | D.Flat slots => slots)
+                      | D.Flat slots => slots
+                      | D.FlatAny _ => raise Fail "unresolved any")
               | Value _ => raise Fail "impossible")
           handle e => raise e
         val names = #1 (ListPair.unzipMap (slotToArg ctx) slots)
@@ -544,7 +554,8 @@ end = struct
                   let val slots =
                         (case env
                            of D.Boxed e => [CPS.VAR (varOfEnv e)]
-                            | D.Flat slots => map (slotToVal ctx) slots)
+                            | D.Flat slots => map (slotToVal ctx) slots
+                            | D.FlatAny slots => raise Fail "unresolved any")
                       val cd =
                         (case (code, knowncode)
                            of (D.Pointer _, SOME f) => [CPS.LABEL (#2 f)]
@@ -613,17 +624,18 @@ end = struct
         val (envs, envtys) =
           (case env
              of D.Boxed e => ([varOfEnv e], [bogusTy])
-              | D.Flat slots => ListPair.unzipMap (slotToArg ctx) slots)
-        val insideenv =
-          (case env
-             of D.Boxed e => D.Boxed e
-              | D.Flat slots =>
-                  let
-                      (* val slots = *)
-                      (*   ListPair.mapEq (fn (D.Null, v) => D.Var (v, bogusTy) *)
-                      (*                    | (s, _) => s) (slots, envs) *)
-                  in  D.Flat slots
-                  end)
+              | D.Flat slots => ListPair.unzipMap (slotToArg ctx) slots
+              | D.FlatAny e => raise Fail "unresolved any")
+        val insideenv = env
+          (* (case env *)
+          (*    of D.Boxed e => D.Boxed e *)
+          (*     | D.Flat slots => *)
+          (*         let *)
+          (*             (1* val slots = *1) *)
+          (*             (1*   ListPair.mapEq (fn (D.Null, v) => D.Var (v, bogusTy) *1) *)
+          (*             (1*                    | (s, _) => s) (slots, envs) *1) *)
+          (*         in  D.Flat slots *)
+          (*         end) *)
         val env =
           let val ctx =  C.addfun (ctx, #2 f, code, insideenv, SOME f)
               val accessMap = buildAccessMap ((ctx, dec, web, syn), f, functions)
@@ -678,7 +690,8 @@ end = struct
             val envargs =
               (case environ
                  of D.Boxed e => [var (varOfEnv e)]
-                  | D.Flat slots => map (slotToVal ctx) slots)
+                  | D.Flat slots => map (slotToVal ctx) slots
+                  | D.FlatAny _ => raise Fail "unresolved any")
             val (hdr', env) = fixaccess (env, envargs)
             val args = envargs @ args
             val hdr = hdr o hdr'

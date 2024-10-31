@@ -79,7 +79,7 @@ end = struct
           (case LCPS.FunMap.lookup (repr, f)
              of D.Closure {env=D.Flat slots, ...} =>
                   arityOfSlots (flatten, slots)
-              | D.Closure {env=D.Boxed e, ...} =>
+              | D.Closure {env=(D.FlatAny e | D.Boxed e), ...} =>
                   if isShared e then
                     1
                   else if mutrec f then
@@ -132,6 +132,10 @@ end = struct
     let fun arityOf f =
           (case LCPS.FunMap.lookup (repr, f)
              of D.Closure {env=D.Flat slots, ...} => List.length slots
+              | D.Closure {env=D.FlatAny e, ...} =>
+                  (case EnvID.Map.lookup (heap, e)
+                     of D.Record (slots, _) => List.length slots
+                      | D.RawBlock _ => 1)
               | D.Closure {env=D.Boxed e, ...} =>
                   (case EnvID.Map.lookup (heap, e)
                      of D.Record (slots, _) => List.length slots

@@ -204,6 +204,7 @@ end = struct
                              val heap = EnvID.Map.insert (heap, e, obj)
                          in  (codep, D.Flat (D.EnvID e :: nuls (n - 1)), heap)
                          end
+                     | D.FlatAny _ => raise Fail "unimp"
                      | D.Flat slots =>
                          let val length = List.length slots
                              val diff   = n - length
@@ -490,6 +491,7 @@ end = struct
                                    of D.Record ([], _) => D.Flat []
                                     | D.Record ([D.EnvID e'], _) => D.Boxed e'
                                     | _ => env)
+                            | D.FlatAny _ => raise Fail "unimp"
                             | D.Flat slots =>
                                 D.Flat (purgeSlots (slots, heap)))
                       val closure =D.Closure { code=code, env=env }
@@ -576,6 +578,7 @@ end = struct
                      of (D.EnvID e') =>
                           D.Closure { code=code, env=D.Boxed e' }
                       | _ => raise Fail "boxed becomes unboxed")
+              | D.FlatAny slots => raise Fail "unimp"
               | D.Flat slots =>
                   D.Closure { code=code, env=D.Flat (map replace slots) })
         val allo = Group.Map.map removeAlloc allo
@@ -609,6 +612,7 @@ end = struct
                       in  case env
                             of D.Boxed e =>
                                  (D.EnvID e :: xs, markShared (heap, e))
+                             | D.FlatAny _ => raise Fail "unimp"
                              | D.Flat _ => (xs, heap)
                       end
                   | NONE =>
@@ -623,6 +627,7 @@ end = struct
                           val (xs, heap) = trueFV (xs, repr, heap)
                       in  case env
                             of D.Boxed _ => raise Fail "expanding box"
+                             | D.FlatAny _ => raise Fail "unimp"
                              | D.Flat [] => (xs, heap)
                              | D.Flat slots =>
                                  (case List.sub (slots, i)
@@ -864,6 +869,7 @@ end = struct
                                     (*     (D.Flat [s], heap) *)
                                     | _ => (env, heap)
                                 handle e => raise e)
+                            | D.FlatAny _ => raise Fail "unimp"
                             | D.Flat [] => (D.Flat [], heap)
                             | D.Flat (D.EnvID e :: nulls) =>
                                 if isShared e then
