@@ -698,7 +698,7 @@ end = struct
                         flattenUnneeded (heap, f, inners)
                   end
               | _ => heap)
-        val heap = Vector.foldl processGrp heap (S.groups syn)
+        val heap = Vector.foldr processGrp heap (S.groups syn)
     in  D.T { allo=allo, heap=heap, repr=repr }
     end
 
