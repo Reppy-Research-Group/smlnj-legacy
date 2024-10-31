@@ -35,6 +35,47 @@ end = struct
     in  EnvID.Map.foldli collect W.Map.empty heap
     end
 
+  fun envusage (repr: D.repr, web: W.t) =
+    let fun collect (f, D.Closure { code, env }, usage) =
+          (case env
+             of D.Flat [] => usage
+              | (D.Flat _ | D.FlatAny _) => raise Fail "wrong stage"
+              | D.Boxed e => EnvID.Map.insert (usage, e, f))
+    in  LCPS.FunMap.foldli collect EnvID.Map.empty repr
+    end
+
+  fun flattenableWeb (census, usage, web) =
+    let fun flattenableEnv flattenable env =
+          (case EnvID.Map.find (usage, env)
+             of NONE => (* shared env *) false
+              | SOME f =>
+                  let val w = W.webOfFun (web, f)
+                  in  W.Set.member (flattenable, w)
+                  end)
+        fun process (w, _, flattenable: W.Set.set) =
+          (case W.Map.find (census, w)
+             of NONE => W.Set.add (flattenable, w)
+              | SOME envs =>
+                  if List.all (flattenableEnv flattenable) envs then
+                    W.Set.add (flattenable, w)
+                  else
+                    flattenable)
+        fun fixpt (n, flattenable) =
+          let 
+              (* val () = app print [ *)
+              (*   "iter ", Int.toString n, " flattenable: [", *)
+              (*   String.concatWithMap " " W.idToString (W.Set.listItems *)
+              (*   flattenable), "]\n" *)
+              (* ] *)
+              val flattenable' = W.fold process flattenable web
+          in  if W.Set.equal (flattenable, flattenable') then
+                flattenable
+              else
+                fixpt (n + 1, flattenable')
+          end
+    in  fixpt (0, W.Set.empty)
+    end
+
   fun inDataStructureOne syn name =
     let fun construct (LCPS.RECORD _) = true
           | construct (LCPS.PURE _) = true
@@ -145,23 +186,25 @@ end = struct
                      of D.Record (slots, _) => List.length slots
                       | D.RawBlock _ => 1))
         val census = webcensus (heap, web)
-        fun usecnt id =
-          (case W.Map.find (census, id)
-             of NONE => 0
-              | SOME envs => List.length envs)
+        val usage = envusage (repr, web)
+        val flattenable = flattenableWeb (census, usage, web)
+        (* fun usecnt id = *)
+        (*   (case W.Map.find (census, id) *)
+        (*      of NONE => 0 *)
+        (*       | SOME envs => List.length envs) *)
         fun arity id =
           (case Web.content (web, id)
-             of { kind=W.Cont, ... } => Fixed 3
-              | { polluted=true, kind=W.User, ... } => One
-              | { polluted=false, defs=(#[f]), uses=(uses as #[_]), ... } =>
+             of { polluted=false, defs=(#[f]), uses=(uses as #[_]), ... } =>
                   if inDataStructure syn uses then
                     One
                   else if arityOf f = 0 then
                     Fixed 0
-                  else if usecnt id = 0 then
+                  else if W.Set.member (flattenable, id) then
                     Any f
                   else
                     Fixed 1
+              | { kind=W.Cont, ... } => Fixed 3
+              | { polluted=true, kind=W.User, ... } => One
               | _ => One)
     in  arity
     end
