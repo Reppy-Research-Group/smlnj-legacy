@@ -1,4 +1,4 @@
-#!/bin/ksh
+#!/bin/bash
 #
 # usage:
 #	run.sh [ --llvm ] prog
@@ -10,12 +10,12 @@ NCOMPS=1
 NRUNS=1
 
 if [ x"$1" = "x--new" ] ; then
-  LLVM=yes
+  CC=yes
   SML="../testml"
   OUT_SUFFIX="-new"
   shift
 else
-  LLVM=no
+  CC=no
   SML="../testml -Ccg.new-closure-converter=false"
   OUT_SUFFIX="-old"
 fi
@@ -31,7 +31,7 @@ OUT_FILE="$prog$OUT_SUFFIX"
 
 echo "results in $OUT_FILE: "
 
-echo "{bmark=\"$prog\", new=\"$LLVM\", " > $OUT_FILE
+echo "{bmark=\"$prog\", new=\"$CC\", " > $OUT_FILE
 
 # first we time the compile time
 #
