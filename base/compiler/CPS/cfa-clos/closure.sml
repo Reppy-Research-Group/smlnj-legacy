@@ -16,7 +16,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
   structure LV   = LambdaVar
   (* structure RefClosure = RefClosureFn(MachSpec) *)
   structure Cheat = Closure(MachSpec)
-  structure Pipeline = ClosureDecisionPipeline
+  structure Pipeline = ClosureDecisionPipeline(MachSpec)
 
   (* fun dumpSCC components = *)
   (*   let *)

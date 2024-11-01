@@ -1,4 +1,4 @@
-structure ClosureDecisionPipeline :> sig
+functor ClosureDecisionPipeline(MachSpec : MACH_SPEC) :> sig
   val pipeline : LabelledCPS.function
                * SyntacticInfo.t
                * Web.t
@@ -18,6 +18,22 @@ end = struct
   structure SA = SharingAnalysis
   structure W = Web
   structure FA = FlatteningAnalysis
+
+  val maxgpregs = MachSpec.numRegs
+  val maxfpregs = MachSpec.numFloatRegs - 2  (* need 1 or 2 temps *)
+  val numCSgpregs = MachSpec.numCalleeSaves
+  val numCSfpregs = MachSpec.numFloatCalleeSaves
+  val unboxedfloat = MachSpec.unboxedFloats
+  fun isFltCty (CPS.FLTt _) = unboxedfloat
+    | isFltCty _ = false
+  
+  fun numgp (m,CPS.CNTt::z) = numgp(m-numCSgpregs-1,z)
+    | numgp (m,x::z) = if isFltCty(x) then numgp(m,z) else numgp(m-1,z)
+    | numgp (m,[]) = m
+  
+  fun numfp (m,CPS.CNTt::z) = numfp(m-numCSfpregs,z)
+    | numfp (m,x::z) = if isFltCty(x) then numfp(m-1,z) else numfp(m,z)
+    | numfp (m,[]) = m
 
   fun initial (cps: LCPS.function, syn: S.t) =
     let fun collect syn (group, (repr, allo, heap)) =
@@ -904,7 +920,7 @@ end = struct
 
         fun parentOf grp = S.enclosing syn (S.groupExp syn grp)
 
-        fun allocate (heap, f, e, nulls, availEnvs) : D.environment * D.heap =
+        fun allocate (heap, f, e, avail, availEnvs) : D.environment * D.heap =
           let val entry = LCPS.FunTbl.lookup funtbl f
                           handle e => raise e
               val pref = preference entry
@@ -914,7 +930,6 @@ end = struct
                                   raise Fail "destroying shared envs"
                               | D.RawBlock _ =>
                                   raise Fail "impossible")
-              val avail = List.length nulls
               val (taken, spilled) =
                 let val (slots, spilled) =
                       if isFirstOrder f then
@@ -952,7 +967,7 @@ end = struct
               val slots = taken @ [fst]
           in  (D.Flat slots, heap)
           end
-        fun unbox (heap, e) : D.environment * D.heap =
+        fun unbox (heap, f, e, availEnvs) : D.environment * D.heap =
           let val slots =
                 (case EnvID.Map.lookup (heap, e)
                    of D.Record (slots, false) => slots
@@ -965,8 +980,11 @@ end = struct
                   raise Fail "unboxing non direct function"
                 else
                   ()
+              val avail = numgp(maxgpregs, #4 f)
+              val e1 = allocate (heap, f, e, avail, availEnvs)
               val heap = EnvID.Map.insert (heap, e, D.Record ([], false))
-          in  (D.Flat slots, heap)
+              val e2 = (D.Flat slots, heap)
+          in  e2
           end
         (* Environments now look like one of the following:
          * 1. Boxed e
@@ -1027,13 +1045,14 @@ end = struct
                                 if isShared e then
                                   (D.Flat [D.EnvID e], heap)
                                 else
-                                  unbox (heap, e)
+                                  unbox (heap, f, e, parentEnvs)
                             | D.Flat [] => (D.Flat [], heap)
                             | D.Flat (D.EnvID e :: nulls) =>
                                 if isShared e then
                                   (env, heap)
                                 else
-                                  allocate (heap, f, e, nulls, parentEnvs)
+                                  allocate 
+                                     (heap, f, e, List.length nulls, parentEnvs)
                             | D.Flat _ => raise Fail "impossible")
                       val closure = D.Closure {code=code, env=env}
                       val repr = LCPS.FunMap.insert (repr, f, closure)
