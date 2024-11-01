@@ -314,7 +314,7 @@ end = struct
 
               val (packs, loose) =
                 let val loose = sortBy #2 loose
-                    val distCutoff = 2 and sizeCutoff = 4
+                    val distCutoff = 2 and sizeCutoff = 5
                     fun findCandidatePacks (vs, fstDepth, currPack, packs) =
                       (case vs
                          of [] => currPack :: packs
@@ -449,7 +449,7 @@ end = struct
         val () = Group.Tbl.modify replacePack grpTbl
 
         (* Step 2: Clean up unused or unshared packs *)
-        val useCountCutoff = 3
+        val useCountCutoff = 1
         datatype usage = Unused
                        | UsedOnlyBy of Group.t list
                        (* Items used more than once are cleared out of the
@@ -504,16 +504,16 @@ end = struct
         val () = prune (grpTbl, packTbl, replaceTbl)
         val () = thin (grpTbl, packTbl, syn)
 
-        (* val () = Group.Tbl.appi (fn (g, pack) => *)
-        (*   let val fs = S.groupFun syn g *)
-        (*       val name = String.concatWithMap "," (LV.lvarName o #2) *)
-        (*                                           (Vector.toList fs) *)
-        (*   in  app print [name, " --> ", packToString pack, "\n"] *)
-        (*   end) grpTbl *)
-        (* val () = print "==============\n" *)
-        (* val () = PackID.Tbl.appi (fn (p, pack) => *)
-        (*   app print [PackID.toString p, " --> ", packToString pack, "\n"] *)
-        (* ) packTbl *)
+        val () = Group.Tbl.appi (fn (g, pack) =>
+          let val fs = S.groupFun syn g
+              val name = String.concatWithMap "," (LV.lvarName o #2)
+                                                  (Vector.toList fs)
+          in  app print [name, " --> ", packToString pack, "\n"]
+          end) grpTbl
+        val () = print "==============\n"
+        val () = PackID.Tbl.appi (fn (p, pack) =>
+          app print [PackID.toString p, " --> ", packToString pack, "\n"]
+        ) packTbl
     in  (grpTbl, packTbl)
     end
 
