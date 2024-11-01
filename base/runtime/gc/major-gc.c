@@ -170,16 +170,19 @@ void MajorGC (ml_state_t *msp, ml_val_t **roots, int level)
     bibop_t	bibop = BIBOP;
     int		i, j;
     int		maxCollectedGen;	/* the oldest generation being collected */
-    int		maxSweptGen;
+    int		maxSweptGen;            /* the oldest generation being scanned. */
 #ifdef GC_STATS
-    ml_val_t	*tospTop[NUM_ARENAS]; /* for counting # of bytes forwarded */
+    /* An array remember the top address for each arena in the maxSwept generation.
+     * We use this to count how many bytes have been forwarded into that generation.
+     */
+    ml_val_t	*maxSweptTop[NUM_ARENAS];
 #endif
 
 #ifndef PAUSE_STATS	/* don't do timing when collecting pause data */
     StartGCTimer(msp->ml_vproc);
 #endif
 #ifdef BO_REF_STATS
-numBO1 = numBO2 = numBO3 = 0;
+    numBO1 = numBO2 = numBO3 = 0;
 #endif
 
   /* Flip to-space and from-space */
@@ -188,8 +191,9 @@ numBO1 = numBO2 = numBO3 = 0;
 	maxSweptGen = maxCollectedGen+1;
 #ifdef GC_STATS
       /* Remember the top of to-space for maxSweptGen */
-	for (i = 0;  i < NUM_ARENAS;  i++)
-	    tospTop[i] = heap->gen[maxSweptGen-1]->arena[i]->nextw;
+	for (i = 0;  i < NUM_ARENAS;  i++) {
+	    maxSweptTop[i] = heap->gen[maxSweptGen-1]->arena[i]->nextw;
+        }
 #endif /* GC_STATS */
     }
     else {
@@ -294,15 +298,16 @@ numBO1 = numBO2 = numBO3 = 0;
 	    gen->bigObjs[j] = forward;
 	}
     }
+
 #ifdef BO_DEBUG
-/** DEBUG **/
-for (i = 0;  i < heap->numGens;  i++) {
-gen_t	*gen = heap->gen[i];
-ScanMem((Word_t *)(gen->arena[RECORD_INDX]->tospBase), (Word_t *)(gen->arena[RECORD_INDX]->nextw), i+1, RECORD_INDX);
-ScanMem((Word_t *)(gen->arena[PAIR_INDX]->tospBase), (Word_t *)(gen->arena[PAIR_INDX]->nextw), i+1, PAIR_INDX);
-ScanMem((Word_t *)(gen->arena[ARRAY_INDX]->tospBase), (Word_t *)(gen->arena[ARRAY_INDX]->nextw), i+1, ARRAY_INDX);
-}
-/** DEBUG **/
+    /** DEBUG **/
+    for (i = 0;  i < heap->numGens;  i++) {
+        gen_t	*gen = heap->gen[i];
+        ScanMem((Word_t *)(gen->arena[RECORD_INDX]->tospBase), (Word_t *)(gen->arena[RECORD_INDX]->nextw), i+1, RECORD_INDX);
+        ScanMem((Word_t *)(gen->arena[PAIR_INDX]->tospBase), (Word_t *)(gen->arena[PAIR_INDX]->nextw), i+1, PAIR_INDX);
+        ScanMem((Word_t *)(gen->arena[ARRAY_INDX]->tospBase), (Word_t *)(gen->arena[ARRAY_INDX]->nextw), i+1, ARRAY_INDX);
+    }
+    /** DEBUG **/
 #endif
 
   /* relabel BIBOP entries for big-object regions to reflect promotions */
@@ -359,20 +364,22 @@ ScanMem((Word_t *)(gen->arena[ARRAY_INDX]->tospBase), (Word_t *)(gen->arena[ARRA
     HeapMon_UpdateHeap (heap, maxSweptGen);
 
 #ifdef GC_STATS
-  /* Count the number of forwarded bytes */
+    /* Count the number of forwarded bytes */
+    for (i = 0;  i < maxCollectedGen;  i++) {
+	for (j = 0;  j < NUM_ARENAS;  j++) {
+	    arena_t *ap = heap->gen[i]->arena[j];
+	    if (isACTIVE(ap)) {
+		CNTR_INCR(&(heap->numCopied[i][j]),
+                    (Addr_t)ap->nextw - (Addr_t)ap->tospBase);
+	    }
+	}
+    }
     if (maxSweptGen != maxCollectedGen) {
+        /* we also count the bytes copied into maxSweptGen */
 	gen_t	*gen = heap->gen[maxSweptGen-1];
 	for (j = 0;  j < NUM_ARENAS;  j++) {
 	    CNTR_INCR(&(heap->numCopied[maxSweptGen-1][j]),
-		gen->arena[j]->nextw - tospTop[j]);
-	}
-    }
-    for (i = 0;  i < maxCollectedGen;  i++) {
-	for (j = 0;  j < NUM_ARENAS;  j++) {
-	    arena_t	*ap = heap->gen[i]->arena[j];
-	    if (isACTIVE(ap)) {
-		CNTR_INCR(&(heap->numCopied[i][j]), ap->nextw - tospTop[j]);
-	    }
+		(Addr_t)gen->arena[j]->nextw - (Addr_t)maxSweptTop[j]);
 	}
     }
 #endif
