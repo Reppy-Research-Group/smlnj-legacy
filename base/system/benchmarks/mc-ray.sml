@@ -880,9 +880,9 @@ structure TestRandomScene =
             Trace.rayTracer scene
           end
 
-  end;
+  end
 
-structure Main (* : BMARK *) =
+structure Main : sig val doit : unit -> unit end =
   struct
 
     fun doit () = ignore (TestRandomScene.test (150, 100, 50))

@@ -1302,7 +1302,7 @@ fun lexGen(infile) =
     end
 end
 
-structure Main =
+structure Main :> sig val doit : unit -> unit end =
   struct
     fun testFile () = OS.FileSys.getDir() ^ "/DATA/ml.lex"
 

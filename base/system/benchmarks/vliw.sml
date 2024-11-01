@@ -3679,6 +3679,6 @@ end
 end (* toplevel local *)
 
 in
-structure Main (* :> sig val doit : unit -> unit end *)  = Main
+structure Main :> sig val doit : unit -> unit end  = Main
 end
 

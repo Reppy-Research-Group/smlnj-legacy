@@ -1,6 +1,6 @@
 (* mandelbrot.sml *)
 
-structure Main =
+structure Main :> BMARK =
   struct
     val x_base = ~2.0
     val y_base = 1.25
