@@ -1,4 +1,4 @@
-structure FlatteningAnalysis :> sig
+functor FlatteningAnalysis(MachSpec : MACH_SPEC) :> sig
   datatype arity = One | Fixed of int | Any of LabelledCPS.function
   type decision = Web.id -> arity
   val toString : arity -> string
@@ -13,6 +13,21 @@ end = struct
   structure LV = LambdaVar
   structure S = SyntacticInfo
   structure W = Web
+
+  val maxgpregs = MachSpec.numRegs
+  val maxfpregs = MachSpec.numFloatRegs - 2  (* need 1 or 2 temps *)
+  val numCSgpregs = MachSpec.numCalleeSaves
+  val numCSfpregs = MachSpec.numFloatCalleeSaves
+  val unboxedfloat = MachSpec.unboxedFloats
+  fun isFltCty (CPS.FLTt _) = unboxedfloat
+    | isFltCty _ = false
+  fun numgp (m,CPS.CNTt::z) = numgp(m-numCSgpregs-1,z)
+    | numgp (m,x::z) = if isFltCty(x) then numgp(m,z) else numgp(m-1,z)
+    | numgp (m,[]) = m
+
+  fun numfp (m,CPS.CNTt::z) = numfp(m-numCSfpregs,z)
+    | numfp (m,x::z) = if isFltCty(x) then numfp(m-1,z) else numfp(m,z)
+    | numfp (m,[]) = m
 
   datatype arity = One | Fixed of int | Any of LCPS.function
   type decision = Web.id -> arity
@@ -60,14 +75,12 @@ end = struct
                     W.Set.add (flattenable, w)
                   else
                     flattenable)
+        (* It is important that this calculates the _least_ fixed point because
+         * we don't want a self-referential web --- a web function captures a
+         * variable of the same web, as is common in non-tail recursive
+         * functions --- to be marked as flattenable. *)
         fun fixpt (n, flattenable) =
-          let 
-              (* val () = app print [ *)
-              (*   "iter ", Int.toString n, " flattenable: [", *)
-              (*   String.concatWithMap " " W.idToString (W.Set.listItems *)
-              (*   flattenable), "]\n" *)
-              (* ] *)
-              val flattenable' = W.fold process flattenable web
+          let val flattenable' = W.fold process flattenable web
           in  if W.Set.equal (flattenable, flattenable') then
                 flattenable
               else
@@ -89,85 +102,333 @@ end = struct
 
   fun inDataStructure syn uses = Vector.exists (inDataStructureOne syn) uses
 
-  fun medium (D.T {repr, allo, heap}, web: W.t, syn: S.t) = raise Fail "unimp"
-    (* let val census = webcensus (heap, web) *)
-    (*     fun isShared e = *)
-    (*       (case EnvID.Map.lookup (heap, e) *)
-    (*          of D.Record (_, shared) => shared *)
-    (*           | D.RawBlock _ => raise Fail "unexpected raw block") *)
-    (*     fun usecnt id = *)
-    (*       (case W.Map.find (census, id) *)
-    (*          of NONE => 0 *)
-    (*           | SOME envs => List.length envs) *)
-    (*     fun defaultArity (v, ty) = *)
-    (*       (case (S.knownFun syn v, ty) *)
-    (*          of (SOME _, CPS.CNTt) => 3 *)
-    (*           | (NONE  , CPS.CNTt) => 4 *)
-    (*           | _ => 1) *)
-    (*     fun arityOfV (flatten, v, ty) = *)
-    (*       (case W.webOfVar (web, v) *)
-    (*          of SOME id => Option.getOpt (W.Map.find (flatten, id), *)
-    (*                                       defaultArity (v, ty)) *)
-    (*           | NONE => defaultArity (v, ty)) *)
-    (*     fun arityOfSlot (flatten, D.Var (v, ty)) = arityOfV (flatten, v, ty) *)
-    (*       | arityOfSlot (flatten, D.Expand _) = raise Fail "expand before flat" *)
-    (*       | arityOfSlot (flatten, _) = 1 *)
-    (*     fun arityOfSlots (flatten, slots) = *)
-    (*       foldl (fn (s, acc) => acc + arityOfSlot (flatten, s)) 0 slots *)
-    (*     fun mutrec f = *)
-    (*       Vector.length (S.groupFun syn (S.groupOf syn f)) > 1 *)
-    (*     fun arityOf (flatten, f) = *)
-    (*       (case LCPS.FunMap.lookup (repr, f) *)
-    (*          of D.Closure {env=D.Flat slots, ...} => *)
-    (*               arityOfSlots (flatten, slots) *)
-    (*           | D.Closure {env=(D.FlatAny e | D.Boxed e), ...} => *)
-    (*               if isShared e then *)
-    (*                 1 *)
-    (*               else if mutrec f then *)
-    (*                 1 *)
-    (*               else *)
-    (*                 (case EnvID.Map.lookup (heap, e) *)
-    (*                    of D.Record (slots, _) => arityOfSlots (flatten, slots) *)
-    (*                     | D.RawBlock _ => 1)) *)
-    (*     (1* val arityOf = fn (flatten, f) => *1) *)
-    (*     (1*   let val n = arityOf (flatten, f) *1) *)
-    (*     (1*   in  print (LV.lvarName (#2 f) ^ " ---> " ^ Int.toString n ^ "\n"); *1) *)
-    (*     (1*       n *1) *)
-    (*     (1*   end *1) *)
-    (*     fun collect (id, info: W.info, flatten: int W.Map.map) = *)
-    (*       (case info *)
-    (*          of { polluted=false, defs=(#[f]), uses=(uses as #[_]), ... } => *)
-    (*               if inDataStructure syn uses then *)
-    (*                 flatten *)
-    (*               else if arityOf (flatten, f) = 0 then *)
-    (*                 W.Map.insert (flatten, id, 0) *)
-    (*               else if usecnt id < 1 then *)
-    (*                 W.Map.insert (flatten, id, arityOf (flatten, f)) *)
-    (*               else *)
-    (*                 flatten *)
-    (*           | { polluted=true, kind=W.User, ... } => flatten *)
-    (*           | { polluted=true, kind=W.Cont, ... } => W.Map.insert (flatten, id, 3) *)
-    (*           | _ => flatten) *)
-    (*     fun update flatten = W.fold collect flatten web *)
-    (*     fun fixpt (n, flatten) = *)
-    (*       let *)
-    (*           (1* val () = print ("iter " ^ Int.toString n ^ "\n") *1) *)
-    (*           val flatten' = update flatten *)
-    (*       in  if W.Map.collate Int.compare (flatten, flatten') = EQUAL then *)
-    (*             flatten' *)
-    (*           else *)
-    (*             fixpt (n + 1, flatten') *)
-    (*       end *)
-    (*     (1* val () = print "Flatten:\n" *1) *)
-    (*     (1* val () = D.dump (D.T {repr=repr, allo=allo, heap=heap}, syn) *1) *)
-    (*     val flatten = fixpt (0, W.Map.empty) *)
-    (*     fun arity id = *)
-    (*       (case Web.content (web, id) *)
-    (*          of { kind=W.Cont, uses=(#[_]), ... } => W.Map.find (flatten, id) *)
-    (*           | { kind=W.Cont, ... } => SOME 3 *)
-    (*           | _ => W.Map.find (flatten, id)) *)
-    (* in  arity *)
-    (* end *)
+  (* fun mutrec f = Vector.length (S.groupFun syn (S.groupOf syn f)) > 1 *)
+  (* Analyze bandwidth *)
+
+  datatype bandwidth = Escape | MaxOf of int | Unlimited
+  fun mergeBW (Escape, _) = Escape
+    | mergeBW (_, Escape) = Escape
+    | mergeBW (bw, Unlimited) = bw
+    | mergeBW (Unlimited, bw) = bw
+    | mergeBW (MaxOf i, MaxOf i') = MaxOf (Int.min (i, i'))
+  fun bandwidthToString Escape = "Escape"
+    | bandwidthToString (MaxOf i) = "Max=" ^ Int.toString i
+    | bandwidthToString Unlimited = "Unlim"
+
+  fun webBandwidth (syn, repr, web) =
+    let (* Step 1: figure out the user web that each continuation web is passed
+         * to. *)
+        datatype cont_data = KnownContOf of W.id
+                           | EscapingCont
+        fun contVarOf ((_, _, args, tys, _): LCPS.function) =
+          (case (args, tys)
+             of (c :: args, CPS.CNTt :: tys) => SOME c
+              | _ => NONE)
+        fun mapPartialV f vector =
+          Vector.foldr (fn (x, lst) =>
+            (case f x of NONE => lst | SOME y => y :: lst)
+          ) [] vector
+        fun checkSameWeb (c, acc) =
+          let val w =
+                (case W.webOfVar (web, c)
+                   of NONE => raise Fail "Unassigned web for fun arg"
+                    | SOME w => w)
+          in  case acc
+                of NONE => SOME w
+                 | SOME w' =>
+                     if W.same (w, w') then SOME w else raise Fail "??????"
+          end
+        fun checkedInsert (cont, w, data) =
+          (case W.Map.find (cont, w)
+             of NONE => W.Map.insert (cont, w, data)
+              | SOME _ => raise Fail "double insert")
+        fun collect (id, { defs, uses, polluted=true, kind=W.Cont }, cont) =
+              W.Map.insert (cont, id, EscapingCont)
+          | collect (id, { defs, uses, polluted=true, kind=W.User }, cont) =
+              cont
+          | collect (id, { defs, uses, polluted=false, kind=W.Cont }, cont) =
+              cont
+          | collect (id, { defs, uses, polluted=false, kind=W.User }, cont) =
+              let val contVars = mapPartialV contVarOf defs
+              in  case foldl checkSameWeb NONE contVars
+                    of NONE => cont
+                     | SOME w =>
+                         if W.polluted (web, w) then
+                           cont
+                         else
+                           W.Map.insert (cont, w, KnownContOf id)
+              end
+        val cont = W.fold collect W.Map.empty web
+        val () = W.Map.appi (fn (cid, use) =>
+          app print [W.idToString cid, " used by ",
+                     (case use of EscapingCont => "escape"
+                                | KnownContOf uid => W.idToString uid),
+                     "\n"]
+        ) cont
+        (* Step 2: When a continuation passes through a function, if the
+         * function is singly known, then the bandwidth is unlimited, but if the
+         * function is not a direct call, the bandwidth is the remaining
+         * available registers *)
+        fun numgp (m, CPS.CNTt :: z) = numgp (m - 1, z)
+          | numgp (m, x :: z) =
+             if isFltCty x then numgp (m, z) else numgp (m - 1, z)
+          | numgp (m, []) = m
+        fun directCall defs =
+          if Vector.length defs > 1 then
+            false
+          else
+            let val f = Vector.sub (defs, 0)
+                val D.Closure { code, ... } = LCPS.FunMap.lookup (repr, f)
+            in  case code
+                  of D.Direct _ => true
+                   | _ => false
+            end
+        fun getWebBandwidth w =
+          let val { defs, ... } = W.content (web, w)
+          in  if directCall defs then
+                Unlimited
+              else
+                let fun bw (_, _, _, tys, _) = numgp (maxgpregs - 3, tys)
+                    val minBW = Vector.foldl (fn (f, bw') =>
+                      Int.min (bw f, bw')
+                    ) maxgpregs defs
+                in  MaxOf minBW
+                end
+          end
+        fun getBandwidth (contw, EscapingCont) = Escape
+          | getBandwidth (contw, KnownContOf w) =
+              let val callsiteBW = getWebBandwidth contw
+                  val passingBW  = getWebBandwidth w
+              in  mergeBW (callsiteBW, passingBW)
+              end
+    in  W.Map.mapi getBandwidth cont
+    end
+
+  fun selfRefFlattenableWeb (census, usage, web) =
+    let fun usedBy id selfref env =
+          (case EnvID.Map.find (usage, env)
+             of NONE => false
+              | SOME f =>
+                  let val w = W.webOfFun (web, f)
+                  in  W.same (w, id) orelse W.Set.member (selfref, w)
+                  end)
+        val usedBy = fn id => fn selfref => fn env =>
+          let val () = print ("selfref? " ^ EnvID.toString env)
+              val result = usedBy id selfref env
+              val () = print (if result then " true\n" else " false\n")
+          in  result
+          end
+        fun process (w, _, selfref : W.Set.set) =
+          (case W.Map.find (census, w)
+             of NONE =>
+                  (print ("web " ^ W.idToString w ^ " is free in nothing\n");
+                    W.Set.add (selfref, w))
+              | SOME [_] =>
+                  (print ("web " ^ W.idToString w ^ " is free in singleton\n");
+                    W.Set.add (selfref, w))
+              | SOME envs =>
+                  (print ("web " ^ W.idToString w ^ " is free in " ^
+                  String.concatWithMap " " EnvID.toString envs ^ "\n");
+                  if List.all (usedBy w selfref) envs then
+                    W.Set.add (selfref, w)
+                  else
+                    selfref))
+        fun fixpt (n, selfref) =
+          let val selfref' = W.fold process selfref web
+          in  if W.Set.equal (selfref, selfref') then
+                selfref
+              else
+                fixpt (n + 1, selfref')
+          end
+    in  fixpt (0, W.Set.empty)
+    end
+
+  fun analyzeArity
+    (policy : int * int -> int)
+    (flattenable : W.id -> bool)
+    (repr, heap, web) =
+    let val arityTbl = W.Tbl.mkTable (64, Fail "arity table")
+        val insert = W.Tbl.insert arityTbl
+        val lookup = W.Tbl.lookup arityTbl
+        val find = W.Tbl.find arityTbl
+        fun defaultArity W.Cont = SOME (numCSgpregs + 1)
+          | defaultArity W.User = SOME 1
+        fun arityOfS (suspended, slot) =
+          (case slot
+             of D.EnvID e => SOME 1
+              | D.Var (v, ty) =>
+                  (case W.webOfVar (web, v)
+                     of SOME w => arityOfW (suspended, w)
+                      | NONE =>
+                          (case ty of CPS.CNTt => defaultArity W.Cont
+                                    | _ => defaultArity W.User))
+              | D.Code _ => SOME 1
+              | (D.Expand _ | D.ExpandAny _ | D.Null) =>
+                  raise Fail "wrong stage")
+        and arityOfE (suspended, e) =
+          (case EnvID.Map.lookup (heap, e)
+             of D.RawBlock _ => SOME 1
+              | D.Record (_, true) => SOME 1
+              | D.Record (slots, false) =>
+                  let fun collect (s, NONE) = NONE
+                        | collect (s, SOME ar) =
+                            (case arityOfS (suspended, s)
+                               of NONE => NONE
+                                | SOME ar' => SOME (ar + ar'))
+                  in  foldl collect (SOME 0) slots
+                  end)
+        and arityOfF' (suspended, f) =
+          (case LCPS.FunMap.lookup (repr, f)
+             of D.Closure {env=(D.Flat []), ... } => SOME 0
+              | D.Closure {env=(D.Flat _ | D.FlatAny _), ...} =>
+                  raise Fail "wrong stage"
+              | D.Closure {env=D.Boxed e, ...} => arityOfE (suspended, e))
+        and arityOfF (suspended, f) =
+          let val result = arityOfF' (suspended, f)
+              val () =
+                (case result
+                   of SOME i => app print [LV.lvarName (#2 f), " arity: ",
+                                Int.toString i, "\n"]
+                    | NONE => app print [LV.lvarName (#2 f), " arity: NONE\n"])
+          in  result
+          end
+        and resolveArity (suspended, defs) =
+          let fun collect (f, NONE) = arityOfF (suspended, f)
+                | collect (f, SOME ar) =
+                    (case arityOfF (suspended, f)
+                       of NONE => SOME ar
+                        | SOME ar' => SOME (policy (ar, ar')))
+          in  Vector.foldl collect NONE defs
+          end
+        and arityOfW' (suspended, w) =
+          (case W.content (web, w)
+             of { polluted=true, kind, ... } => defaultArity kind
+              | { defs, kind, ... } =>
+                  if flattenable w then
+                    resolveArity (suspended, defs)
+                  else
+                    defaultArity kind)
+        and arityOfW (suspended, w) : int option =
+          if W.Set.member (suspended, w) then
+            NONE
+          else
+            (case find w
+               of SOME ar => ar
+                | NONE   =>
+                    let val () = print ("calculating arity for " ^ W.idToString
+                    w ^ "\n")
+                        val result =
+                          (case arityOfW' (W.Set.add (suspended, w), w)
+                             of SOME arity => SOME arity
+                              | NONE => NONE)
+                        val () = print ("result=" ^ (case result of SOME i =>
+                        Int.toString i | NONE => "NONE") ^ "\n")
+                    in  insert (w, result); result
+                    end)
+        val () =
+          W.fold (fn (id, _, ()) => ignore (arityOfW (W.Set.empty, id))) () web
+        val () = app print ["ArityTbl:\n"]
+        val () = W.Tbl.appi
+          (fn (i, SOME ar) =>
+             print (W.idToString i ^ " => " ^ Int.toString ar ^ "\n")
+            | (i, NONE) =>
+             print (W.idToString i ^ " => NONE\n")
+          ) arityTbl
+    in  lookup
+    end
+
+
+  fun arityOf (repr, heap, f) =
+    (case LCPS.FunMap.lookup (repr, f)
+       of D.Closure {env=D.Flat slots, ...} => List.length slots
+        | D.Closure {env=D.FlatAny e, ...} =>
+            (case EnvID.Map.lookup (heap, e)
+               of D.Record (slots, _) => List.length slots
+                | D.RawBlock _ => 1)
+        | D.Closure {env=D.Boxed e, ...} =>
+            (case EnvID.Map.lookup (heap, e)
+               of D.Record (slots, _) => List.length slots
+                | D.RawBlock _ => 1))
+
+  fun resolveArity
+    (policy: int * int -> int)
+    (D.T {repr, allo, heap})
+    (defs : LCPS.function vector) =
+    let fun collect (f, NONE) = SOME (arityOf (repr, heap, f))
+          | collect (f, SOME a) = SOME (policy (arityOf (repr, heap, f), a))
+    in  case Vector.foldl collect NONE defs
+          of NONE => raise Fail "0-size web"
+           | SOME ar => ar
+    end
+
+  val liberally = Int.max
+  val conservatively = Int.min
+
+  fun medium (dec as D.T {repr, allo, heap}, web: W.t, syn: S.t) =
+    (* Flatten return continuation to known functions *)
+    let val census = webcensus (heap, web)
+        val usage = envusage (repr, web)
+        val flattenable = flattenableWeb (census, usage, web)
+        val bandwidth = webBandwidth (syn, repr, web)
+        val selfRef   = selfRefFlattenableWeb (census, usage, web)
+        val () = app print [
+          "Flattenable: [", String.concatWithMap "," W.idToString
+          (W.Set.listItems flattenable), "]\n"]
+        val () = app print [
+          "SelfRef: [", String.concatWithMap "," W.idToString
+          (W.Set.listItems selfRef), "]\n"]
+        val () = app print [ "Bandwidth:\n" ]
+        val () = W.Map.appi (fn (id, bw) => app print [
+          W.idToString id, " : ", bandwidthToString bw, "\n" ]
+        ) bandwidth
+
+        val webArity = analyzeArity liberally (fn w => W.Set.member (flattenable, w)) (repr, heap, web)
+
+        val resolve = resolveArity liberally dec
+
+        fun defaultArity (id, info: W.info) =
+          (case info
+             of { kind=W.Cont, ... } => Fixed 3
+              | { polluted=true, kind=W.User, ... } => One
+              | _ => One)
+
+        fun contWebArity (id, info: W.info) =
+          (case info
+             of { polluted=false, kind=W.Cont, defs, uses } =>
+                  (* if not (W.Set.member (flattenable, id)) then *)
+                  (*   defaultArity (id, info) *)
+                  (* else *)
+                    (case W.Map.find (bandwidth, id)
+                       of (NONE | SOME Escape) => defaultArity (id, info)
+                        | SOME Unlimited =>
+                            (case webArity id
+                               of SOME ar => Fixed ar
+                                | NONE => defaultArity (id, info))
+                            (* Fixed (resolve defs) *)
+                        | SOME (MaxOf i) =>
+                            (case webArity id
+                               of SOME ar => Fixed (Int.min (i, ar))
+                                | NONE => defaultArity (id, info)))
+                            (* Fixed (Int.max (resolve defs, i))) *)
+              | _ => defaultArity (id, info))
+
+        fun knownArity (id, info: W.info) =
+          (case info
+             of { polluted=false, defs=(#[f]), uses=(#[v]), ... } =>
+                  if inDataStructureOne syn v then
+                    One
+                  else if arityOf (repr, heap, f) = 0 then
+                    Fixed 0
+                  else if W.Set.member (flattenable, id) then
+                    Any f
+                  else
+                    Fixed 1
+              | _ => contWebArity (id, info))
+
+        fun arity id = knownArity (id, W.content (web, id))
+
+    in  arity
+    end
 
   fun toString One = "One"
     | toString (Fixed n) = Int.toString n
@@ -188,10 +449,6 @@ end = struct
         val census = webcensus (heap, web)
         val usage = envusage (repr, web)
         val flattenable = flattenableWeb (census, usage, web)
-        (* fun usecnt id = *)
-        (*   (case W.Map.find (census, id) *)
-        (*      of NONE => 0 *)
-        (*       | SOME envs => List.length envs) *)
         fun arity id =
           (case Web.content (web, id)
              of { polluted=false, defs=(#[f]), uses=(uses as #[_]), ... } =>

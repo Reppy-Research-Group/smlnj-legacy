@@ -55,7 +55,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
 
   fun test cps =
     let
-      (* val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n") *)
+      val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n")
       val lcps = timeit "label" LabelledCPS.labelF cps
       handle e => (print "1\n"; raise e)
       val syntactic = timeit "syntactic" SyntacticInfo.calculate lcps
@@ -68,7 +68,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       (* val () = ClosureDecision.dump (decision, syntactic) *)
       val web = timeit "web" Web.calculate (result, syntactic)
       handle e => (print "5\n"; raise e)
-      (* val () = Web.dump web *)
+      val () = Web.dump web
 
       (* val () = Lifetime.analyze (lcps, syntactic) *)
       val (funtbl, looptbl) =
@@ -82,7 +82,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
         timeit "transform" Transform.transform (lcps, decision', web, syntactic)
       val lcps' =
         timeit "avail exp" AvailableExpression.transform lcps'
-      (* val () = (print "RESULT >>>>>\n"; PPCps.printcps0 (LCPS.unlabelF lcps'); print "<<<<<\n") *)
+      val () = (print "RESULT >>>>>\n"; PPCps.printcps0 (LCPS.unlabelF lcps'); print "<<<<<\n")
 
       (* val decision = timeit "flat" FlatClosureDecision.produce (lcps, syntactic) *)
       (* handle e => (print "4\n"; raise e) *)

@@ -37,6 +37,9 @@ end = struct
     | mergePath (Create _, Create _) =
         raise Fail "There can't be two ways to get to a mut rec func"
 
+  fun pathLength (Create _) = 0
+    | pathLength (Path {base, selects}) = List.length selects
+
   datatype value = Function of {
                      code: D.code,
                      env: D.environment,
@@ -446,7 +449,6 @@ end = struct
   type header = LCPS.cexp -> LCPS.cexp
 
   (* TODO: generate correct type for intermediate record selection *)
-  (* TODO: CSE *)
   fun pathToHdr (SOME (Path { base, selects }), name, cty) : header =
         let fun select [] v =
                   if LV.same (base, name) then
@@ -478,6 +480,15 @@ end = struct
               LCPS.RECORD (LCPS.mkLabel (), CPS.RK_ESCAPE, fields, name, cexp)
         end
     | pathToHdr (NONE, name, cty) : header = fn x => x
+
+  val pathToHdr =
+    fn (SOME path, name, cty) =>
+      (if pathLength path > 3 then
+        print ("Warning: long path " ^ LV.lvarName name ^ " : " ^ pathToS path ^ "\n")
+       else
+         ();
+       pathToHdr (SOME path, name, cty))
+      | (opt, name, cty) => pathToHdr (opt, name, cty)
 
   fun fixaccess1 (env: env, CPS.VAR v) : header * env =
         let val (ctx, dec, web, syn) = env

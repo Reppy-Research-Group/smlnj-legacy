@@ -17,7 +17,7 @@ end = struct
   structure S = SyntacticInfo
   structure SA = SharingAnalysis
   structure W = Web
-  structure FA = FlatteningAnalysis
+  structure FA = FlatteningAnalysis(MachSpec)
 
   val maxgpregs = MachSpec.numRegs
   val maxfpregs = MachSpec.numFloatRegs - 2  (* need 1 or 2 temps *)
@@ -308,7 +308,7 @@ end = struct
      end
 
   fun analyze'n'flatten (syn, web) dec =
-    let val arity = FlatteningAnalysis.simple (dec, web, syn)
+    let val arity = FA.medium (dec, web, syn)
     in  flatten (arity, syn, web) dec
     end
 
@@ -1108,7 +1108,6 @@ end = struct
     in  dec
     end
 
-
   infix 2 >>>
   fun f >>> g = fn x => g (f x)
 
@@ -1126,14 +1125,14 @@ end = struct
           >>> removeKnownCodePtr (web, syn)
           >>> removeEmptyEnv (syn, web)
           >>> unshare (syn, funtbl, looptbl)
-          >>> analyze'n'flatten (syn, web)
+          >>> trace syn (analyze'n'flatten (syn, web))
           >>> allocate'n'expand (syn, web, funtbl, looptbl)
           >>> segregateMLValues
           >>> removeSingletonEnv
 
         val decision = process (cps, syn)
         (* val () = print "FINAL\n" *)
-        (* val () = ClosureDecision.dump (decision, syn) *)
+        val () = ClosureDecision.dump (decision, syn)
     in  decision
     end
 end

@@ -23,6 +23,7 @@ structure Web :> sig
   val kindOfCty : CPS.cty -> kind
 
   val fold : (id * info * 'a -> 'a) -> 'a -> t -> 'a
+  val same : id * id -> bool
 
   val idToString : id -> string
   val toString : info -> string
@@ -343,6 +344,8 @@ end = struct
   val kind = #kind o content
 
   fun fold f zero (T { webs, funMap, varMap }) = Vector.foldli f zero webs
+
+  val same = (op= : int * int -> bool)
 
   fun kindOfCty CPS.CNTt = Cont
     | kindOfCty _ = User
