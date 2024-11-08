@@ -158,7 +158,6 @@ void MinorGC (ml_state_t *msp, ml_val_t **roots)
 }
 #endif
 
-    /* update allocation and GC counters */
     {
 	int i;
         Addr_t nbytes;

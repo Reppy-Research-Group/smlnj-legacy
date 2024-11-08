@@ -329,11 +329,10 @@ void ResetGCStats (heap_t *heap)
 {
     int		i, j;
 
-    heap->numGCsAtReset[0] = heap->numMinorGCs;
+    heap->numMinorGCs = 0;
     CNTR_ZERO(&(heap->numAlloc));
-    CNTR_ZERO(&(heap->numAlloc1));
     for (i = 0;  i < heap->numGens;  i++) {
-        heap->numGCsAtReset[i+1] = heap->gen[i]->numGCs;
+        heap->gen[i]->numGCs = 0;
 	for (j = 0;  j < NUM_ARENAS;  j++) {
 	    CNTR_ZERO(&(heap->numCopied[i][j]));
 	}
@@ -347,7 +346,7 @@ void ResetGCStats (heap_t *heap)
 #define COUNT_SHIFT 3
 #endif
 #define BYTES_PER_COUNT (1 << COUNT_SHIFT)
-#define ROUND_COUNT(c) (Word_t)(((c)->cnt + ((1 << COUNT_SHIFT)-1)) >> COUNT_SHIFT)
+#define ROUND_COUNT(c) (Word_t)(((c)->cnt + (1 << (COUNT_SHIFT-1))) >> COUNT_SHIFT)
 
 /* GetGCStats:
  *
@@ -365,9 +364,9 @@ void GetGCStats (ml_state_t *msp, gc_stats_t *statsOut)
     CNTR_INCR(&(heap->numAlloc), nbytesAlloc);
     statsOut->allocCnt = ROUND_COUNT(&heap->numAlloc);
 
-    statsOut->allocFirstCnt = ROUND_COUNT(&heap->numAlloc1);
+    statsOut->allocFirstCnt = 0;  /* FIXME */
 
-    statsOut->numGCs[0] = heap->numMinorGCs - heap->numGCsAtReset[0];
+    statsOut->numGCs[0] = heap->numMinorGCs;
     for (i = 0;  i < heap->numGens;  ++i) {
         cntr_t nP;
         CNTR_ZERO(&nP);
@@ -375,7 +374,7 @@ void GetGCStats (ml_state_t *msp, gc_stats_t *statsOut)
             CNTR_ADD(&nP, &(heap->numCopied[i][j]));
         }
         statsOut->promoteCnt[i] = ROUND_COUNT(&nP);
-        statsOut->numGCs[i+1] = heap->gen[i]->numGCs - heap->numGCsAtReset[i+1];
+        statsOut->numGCs[i+1] = heap->gen[i]->numGCs;
     }
 
     /* clear the rest of the entries */

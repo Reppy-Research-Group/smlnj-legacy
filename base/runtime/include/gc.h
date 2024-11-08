@@ -47,7 +47,7 @@ typedef struct {
                                  */
     Word_t promoteCnt[MAX_NGENS];
                                 /* count of data copied into the generations from
-                                 * the previous generation.
+                                 * the same of previous generation.
                                  */
     Unsigned32_t numGCs[MAX_NGENS+1];
                                 /* count of collections */
