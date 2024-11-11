@@ -70,14 +70,6 @@ struct heap {
                                          */
     cntr_t	    numCopied[MAX_NUM_GENS][NUM_ARENAS];
                                         /* number of bytes copied into each arena */
-    int             numGCsAtReset[MAX_NUM_GENS+1];
-                                        /* the remembered number of GCs by generation
-                                         * at the last call to `ResetGCStats`.
-                                         */
-    cntr_t	    numAlloc;		/* Keep track of the number of bytes */
-					/* allocated and the number copied into */
-    cntr_t	    numCopied		/* each arena. */
-			[MAX_NUM_GENS][NUM_ARENAS];
     int		    numMinorGCs;	/* The number of times the allocation space */
 					/* has been collected. */
 #ifdef HEAP_MONITOR
