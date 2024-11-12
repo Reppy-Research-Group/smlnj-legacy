@@ -197,7 +197,7 @@ end = struct
      let fun needsFlatteningF f =
            let val w = W.webOfFun (web, f)
                (* val () = *)
-               (*   app print [LV.lvarName (#2 f), " ---> ", FA.toString (arity w), "\n"] *)
+               (*   app print [W.idToString w, " ---> ", FA.toString (arity w), "\n"] *)
            in  arity w
            end
 

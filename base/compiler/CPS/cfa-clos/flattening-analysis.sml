@@ -118,8 +118,12 @@ end = struct
   fun webBandwidth (syn, repr, web) =
     let (* Step 1: figure out the user web that each continuation web is passed
          * to. *)
-        datatype cont_data = KnownContOf of W.id
+        datatype cont_data = KnownContOf of W.id list
                            | EscapingCont
+        fun mergeContData (EscapingCont, _) = EscapingCont
+          | mergeContData (_, EscapingCont) = EscapingCont
+          | mergeContData (KnownContOf id1, KnownContOf id2) =
+              KnownContOf (id1 @ id2)
         fun contVarOf ((_, _, args, tys, _): LCPS.function) =
           (case (args, tys)
              of (c :: args, CPS.CNTt :: tys) => SOME c
@@ -142,6 +146,7 @@ end = struct
           (case W.Map.find (cont, w)
              of NONE => W.Map.insert (cont, w, data)
               | SOME _ => raise Fail "double insert")
+        val insert = W.Map.insertWith mergeContData
         fun collect (id, { defs, uses, polluted=true, kind=W.Cont }, cont) =
               W.Map.insert (cont, id, EscapingCont)
           | collect (id, { defs, uses, polluted=true, kind=W.User }, cont) =
@@ -156,13 +161,14 @@ end = struct
                          if W.polluted (web, w) then
                            cont
                          else
-                           W.Map.insert (cont, w, KnownContOf id)
+                           insert (cont, w, KnownContOf [id])
               end
         val cont = W.fold collect W.Map.empty web
         (* val () = W.Map.appi (fn (cid, use) => *)
         (*   app print [W.idToString cid, " used by ", *)
         (*              (case use of EscapingCont => "escape" *)
-        (*                         | KnownContOf uid => W.idToString uid), *)
+        (*                         | KnownContOf uids => *)
+        (*                             String.concatWithMap "," W.idToString uids), *)
         (*              "\n"] *)
         (* ) cont *)
         (* Step 2: When a continuation passes through a function, if the
@@ -188,7 +194,7 @@ end = struct
           in  if directCall defs then
                 Unlimited
               else
-                let fun bw (_, _, _, tys, _) = numgp (maxgpregs - 4, tys)
+                let fun bw (_, _, _, tys, _) = numgp (maxgpregs - 2, tys)
                     val minBW = Vector.foldl (fn (f, bw') =>
                       Int.min (bw f, bw')
                     ) maxgpregs defs
@@ -196,9 +202,11 @@ end = struct
                 end
           end
         fun getBandwidth (contw, EscapingCont) = Escape
-          | getBandwidth (contw, KnownContOf w) =
+          | getBandwidth (contw, KnownContOf ws) =
               let val callsiteBW = getWebBandwidth contw
-                  val passingBW  = getWebBandwidth w
+                  val passingBW  = foldl (fn (w, bw) =>
+                    mergeBW (bw, getWebBandwidth w)
+                  ) Unlimited ws
               in  mergeBW (callsiteBW, passingBW)
               end
     in  W.Map.mapi getBandwidth cont
