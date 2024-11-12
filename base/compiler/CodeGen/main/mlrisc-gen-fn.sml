@@ -1900,8 +1900,8 @@ raise Fail "unexpected constant branch"
 			  Frag.STANDARD{func as ref(SOME (zz as (k,f,vl,tl,e))),
 			...})) = let
 		          val formals = ArgP.standard{fnTy=typmap f, argTys=tl, vfp=vfp}
-                    handle Subscript => (print "fragComp\n"; print
-                    (LambdaVar.lvarName f ^ "??\n"); raise Subscript)
+                    handle e => (print "fragComp\n"; print
+                    (LambdaVar.lvarName f ^ "??\n"); raise e)
 			  in
 			    func := NONE;
 			    pseudoOp(PB.ALIGN_SZ 2);

@@ -14,6 +14,7 @@ functor ArgPassing (
     structure T : MLTREE = C.T
 
     fun error msg = ErrorMsg.impossible ("ArgPassing." ^ msg)
+    fun error msg = raise Fail ("ArgPassing." ^ msg)
 
     val k = MS.numCalleeSaves
     val kf = MS.numFloatCalleeSaves
@@ -50,40 +51,46 @@ functor ArgPassing (
 	  then (case fp
 	     of f::fr => f :: scan(z, gp, fr)
 	      | [] => error "scan: out of floating-point registers"
+                       handle e => raise e
 	    (* end case *))
 	  else (case gp
 	     of g::gr => g :: scan(z, gr, fp)
-	      | [] => error "scan: out of registers"
+	      | [] => error ("scan: out of registers" ^ "; stopped at " ^
+              String.concatWithMap "," CPSUtil.ctyToString (t :: z))
+                       handle e => raise e
 	    (* end case *))
       | scan ([], _, _) = []
 
     fun standardEscape (vfp, args) = let
 	  val rest = List.drop(args, k+kf+3)
-          handle Subscript => (print "here: "; print ("has " ^ Int.toString
-          (List.length args) ^ " wants " ^ Int.toString (k + kf + 3));
-          raise Subscript)
 	  val len = length args
 	  val gpr = stdarg vfp :: gprfromto(k+4, len, vfp)
 	  val fpr = fprfromto(kf, len, vfp)
 	  in
 	    stdlink vfp :: stdclos vfp :: stdcont vfp :: calleesaveregs vfp
 	      @ scan(rest, gpr, fpr)
+          handle e => (print (concat ["rest=[", String.concatWithMap ", "
+          CPSUtil.ctyToString rest, "] gpr=", Int.toString (List.length gpr), "\n"]); raise e)
 	  end
+          handle e => (print (concat ["args=[", String.concatWithMap ", "
+          CPSUtil.ctyToString args, "]\n"]); raise e)
 
     fun standardCont (vfp, args) = let
 	  val rest = (if k > 0 then List.drop(args, k+kf+1) else List.drop(args,
    2))
-          (* DEBUG *)
-          handle Subscript => (print (concat ["args=[", String.concatWithMap ", "
-          CPSUtil.ctyToString args, "]\n"]); raise Subscript)
 	  val len = length args
 	  val gpr = stdarg vfp :: gprfromto(k+4, 1+len, vfp)
 	  val fpr = fprfromto(kf, len, vfp)
 	  in
 	    if k > 0
 	      then stdcont vfp :: calleesaveregs vfp @ scan(rest, gpr, fpr)
+              handle e => raise e
 	      else stdlink vfp :: stdcont vfp :: scan(rest, gpr, fpr)
+              handle e => raise e
 	  end
+          (* DEBUG *)
+          handle e => (print (concat ["args=[", String.concatWithMap ", "
+          CPSUtil.ctyToString args, "]\n"]); raise e)
 
     fun standard {fnTy=CPS.CNTt, vfp, argTys} = standardCont(vfp, argTys)
       | standard {vfp, argTys, ...} = standardEscape(vfp, argTys)
@@ -94,6 +101,7 @@ functor ArgPassing (
 	    | iter (_::rest, r::regs, fregs) = r::iter(rest, regs, fregs)
 	    | iter ([], _, _) = []
 	    | iter _ = error "fixed: out of registers"
+                       handle e => raise e
           in
 	    iter(argTys, gpregs vfp, fpregs)
           end
