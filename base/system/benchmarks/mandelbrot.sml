@@ -1,12 +1,12 @@
 (* mandelbrot.sml *)
 
-structure Main :> BMARK =
+structure Main :> sig val doit : unit -> unit val testit : unit -> unit end =
   struct
     val x_base = ~2.0
     val y_base = 1.25
     val side = 2.5
 
-    val sz = 2048
+    val sz = 256
     val maxCount = 1024
 
     val delta = side / (real sz)
@@ -53,10 +53,10 @@ structure Main :> BMARK =
 
     fun doit () = (sum_iterations := 0; loop1 0)
 
-    fun testit outstrm = (
+    fun testit () = (
           sum_iterations := 0;
           loop1 0;
-          TextIO.output (outstrm, Int.toString(!sum_iterations) ^ " iterations\n"))
+          print (Int.toString(!sum_iterations) ^ " iterations\n"))
 
   end (* Mandelbrot *)
 

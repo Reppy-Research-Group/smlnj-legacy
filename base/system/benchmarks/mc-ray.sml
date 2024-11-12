@@ -7,6 +7,8 @@
  * code is an SML port of UChicago CMCS15100 course project (Winter 2019).
  *)
 
+local
+
 (*********************)
 
 (* rand-64.sml
@@ -594,13 +596,12 @@ structure Image  : sig
   (* Img(wid, ht, pixels) *)
     datatype t = Img of int * int * Color.t list
 
-    (* val writePPM : string * t -> unit *)
+    val writePPM : string * t -> unit
 
   end = struct
 
     datatype t = Img of int * int * Color.t list
 
-(* no I/O
     fun writePPM (file, Img(wid, ht, pixels)) = let
       val outS = TextIO.openOut file
       fun pr s = TextIO.output(outS, s)
@@ -615,7 +616,6 @@ structure Image  : sig
       (* close file *)
         TextIO.closeOut outS
       end
-*)
 
   end
 
@@ -882,12 +882,17 @@ structure TestRandomScene =
 
   end
 
-structure Main : sig val doit : unit -> unit end =
+in
+
+structure Main : sig val doit : unit -> unit val testit : unit -> unit end =
   struct
 
     fun doit () = ignore (TestRandomScene.test (150, 100, 50))
 
-    fun testit _ = ()
+    fun testit _ =
+      let val img = TestRandomScene.test (150, 100, 50)
+      in  Image.writePPM ("mc-ray-test-scene.ppm", img)
+      end
 
   end
-
+end
