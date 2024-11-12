@@ -159,12 +159,12 @@ end = struct
                            W.Map.insert (cont, w, KnownContOf id)
               end
         val cont = W.fold collect W.Map.empty web
-        val () = W.Map.appi (fn (cid, use) =>
-          app print [W.idToString cid, " used by ",
-                     (case use of EscapingCont => "escape"
-                                | KnownContOf uid => W.idToString uid),
-                     "\n"]
-        ) cont
+        (* val () = W.Map.appi (fn (cid, use) => *)
+        (*   app print [W.idToString cid, " used by ", *)
+        (*              (case use of EscapingCont => "escape" *)
+        (*                         | KnownContOf uid => W.idToString uid), *)
+        (*              "\n"] *)
+        (* ) cont *)
         (* Step 2: When a continuation passes through a function, if the
          * function is singly known, then the bandwidth is unlimited, but if the
          * function is not a direct call, the bandwidth is the remaining
@@ -188,7 +188,7 @@ end = struct
           in  if directCall defs then
                 Unlimited
               else
-                let fun bw (_, _, _, tys, _) = numgp (maxgpregs - 3, tys)
+                let fun bw (_, _, _, tys, _) = numgp (maxgpregs - 4, tys)
                     val minBW = Vector.foldl (fn (f, bw') =>
                       Int.min (bw f, bw')
                     ) maxgpregs defs
@@ -213,26 +213,21 @@ end = struct
                   in  W.same (w, id) orelse W.Set.member (selfref, w)
                   end)
         val usedBy = fn id => fn selfref => fn env =>
-          let val () = print ("selfref? " ^ EnvID.toString env)
+          let 
+              (* val () = print ("selfref? " ^ EnvID.toString env) *)
               val result = usedBy id selfref env
-              val () = print (if result then " true\n" else " false\n")
+              (* val () = print (if result then " true\n" else " false\n") *)
           in  result
           end
         fun process (w, _, selfref : W.Set.set) =
           (case W.Map.find (census, w)
-             of NONE =>
-                  (print ("web " ^ W.idToString w ^ " is free in nothing\n");
-                    W.Set.add (selfref, w))
-              | SOME [_] =>
-                  (print ("web " ^ W.idToString w ^ " is free in singleton\n");
-                    W.Set.add (selfref, w))
+             of NONE => W.Set.add (selfref, w)
+              | SOME [_] => W.Set.add (selfref, w)
               | SOME envs =>
-                  (print ("web " ^ W.idToString w ^ " is free in " ^
-                  String.concatWithMap " " EnvID.toString envs ^ "\n");
                   if List.all (usedBy w selfref) envs then
                     W.Set.add (selfref, w)
                   else
-                    selfref))
+                    selfref)
         fun fixpt (n, selfref) =
           let val selfref' = W.fold process selfref web
           in  if W.Set.equal (selfref, selfref') then
@@ -285,11 +280,11 @@ end = struct
               | D.Closure {env=D.Boxed e, ...} => arityOfE (suspended, e))
         and arityOfF (suspended, f) =
           let val result = arityOfF' (suspended, f)
-              val () =
-                (case result
-                   of SOME i => app print [LV.lvarName (#2 f), " arity: ",
-                                Int.toString i, "\n"]
-                    | NONE => app print [LV.lvarName (#2 f), " arity: NONE\n"])
+              (* val () = *)
+              (*   (case result *)
+              (*      of SOME i => app print [LV.lvarName (#2 f), " arity: ", *)
+              (*                   Int.toString i, "\n"] *)
+              (*       | NONE => app print [LV.lvarName (#2 f), " arity: NONE\n"]) *)
           in  result
           end
         and resolveArity (suspended, defs) =
@@ -315,25 +310,26 @@ end = struct
             (case find w
                of SOME ar => ar
                 | NONE   =>
-                    let val () = print ("calculating arity for " ^ W.idToString
-                    w ^ "\n")
+                    let 
+                        (* val () = print ("calculating arity for " ^ W.idToString *)
+                    (* w ^ "\n") *)
                         val result =
                           (case arityOfW' (W.Set.add (suspended, w), w)
                              of SOME arity => SOME arity
                               | NONE => NONE)
-                        val () = print ("result=" ^ (case result of SOME i =>
-                        Int.toString i | NONE => "NONE") ^ "\n")
+                        (* val () = print ("result=" ^ (case result of SOME i => *)
+                        (* Int.toString i | NONE => "NONE") ^ "\n") *)
                     in  insert (w, result); result
                     end)
         val () =
           W.fold (fn (id, _, ()) => ignore (arityOfW (W.Set.empty, id))) () web
-        val () = app print ["ArityTbl:\n"]
-        val () = W.Tbl.appi
-          (fn (i, SOME ar) =>
-             print (W.idToString i ^ " => " ^ Int.toString ar ^ "\n")
-            | (i, NONE) =>
-             print (W.idToString i ^ " => NONE\n")
-          ) arityTbl
+        (* val () = app print ["ArityTbl:\n"] *)
+        (* val () = W.Tbl.appi *)
+        (*   (fn (i, SOME ar) => *)
+        (*      print (W.idToString i ^ " => " ^ Int.toString ar ^ "\n") *)
+        (*     | (i, NONE) => *)
+        (*      print (W.idToString i ^ " => NONE\n") *)
+        (*   ) arityTbl *)
     in  lookup
     end
 
@@ -371,18 +367,20 @@ end = struct
         val flattenable = flattenableWeb (census, usage, web)
         val bandwidth = webBandwidth (syn, repr, web)
         val selfRef   = selfRefFlattenableWeb (census, usage, web)
-        val () = app print [
-          "Flattenable: [", String.concatWithMap "," W.idToString
-          (W.Set.listItems flattenable), "]\n"]
-        val () = app print [
-          "SelfRef: [", String.concatWithMap "," W.idToString
-          (W.Set.listItems selfRef), "]\n"]
-        val () = app print [ "Bandwidth:\n" ]
-        val () = W.Map.appi (fn (id, bw) => app print [
-          W.idToString id, " : ", bandwidthToString bw, "\n" ]
-        ) bandwidth
+        (* val () = app print [ *)
+        (*   "Flattenable: [", String.concatWithMap "," W.idToString *)
+        (*   (W.Set.listItems flattenable), "]\n"] *)
+        (* val () = app print [ *)
+        (*   "SelfRef: [", String.concatWithMap "," W.idToString *)
+        (*   (W.Set.listItems selfRef), "]\n"] *)
+        (* val () = app print [ "Bandwidth:\n" ] *)
+        (* val () = W.Map.appi (fn (id, bw) => app print [ *)
+        (*   W.idToString id, " : ", bandwidthToString bw, "\n" ] *)
+        (* ) bandwidth *)
+        (* val () = app print [ "Reminder: maxgpregs=", Int.toString maxgpregs, *)
+        (* "\n"] *)
 
-        val webArity = analyzeArity liberally (fn w => W.Set.member (flattenable, w)) (repr, heap, web)
+        val webArity = analyzeArity liberally (fn w => W.Set.member (selfRef, w)) (repr, heap, web)
 
         val resolve = resolveArity liberally dec
 
@@ -407,7 +405,8 @@ end = struct
                             (* Fixed (resolve defs) *)
                         | SOME (MaxOf i) =>
                             (case webArity id
-                               of SOME ar => Fixed (Int.min (i, ar))
+                               of SOME ar =>
+                                    Fixed (Int.max (numCSgpregs, Int.min (i, ar)))
                                 | NONE => defaultArity (id, info)))
                             (* Fixed (Int.max (resolve defs, i))) *)
               | _ => defaultArity (id, info))
