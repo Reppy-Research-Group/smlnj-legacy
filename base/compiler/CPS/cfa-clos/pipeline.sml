@@ -884,16 +884,16 @@ end = struct
         fun pick (pref, heap, slots, n) : D.slot list * D.slot list =
           let val slotsWithPref =
                 map (fn s => (s, slotPref (s, heap, pref))) slots
-              fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) =
-                if sameProb (prob1, prob2) then
-                  lvl1 < lvl2
-                else
-                  prob1 < prob2
               (* fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) = *)
-              (*   if lvl1 = lvl2 then *)
-              (*     prob1 < prob2 *)
-              (*   else *)
+              (*   if sameProb (prob1, prob2) then *)
               (*     lvl1 < lvl2 *)
+              (*   else *)
+              (*     prob1 < prob2 *)
+              fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) =
+                if lvl1 = lvl2 then
+                  prob1 < prob2
+                else
+                  lvl1 < lvl2
               (* TODO: Measure use counts *)
               val slots = ListMergeSort.sort gt slotsWithPref
               (* val () = ( *)

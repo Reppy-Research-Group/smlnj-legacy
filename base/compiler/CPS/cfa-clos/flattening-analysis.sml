@@ -388,7 +388,7 @@ end = struct
         (* val () = app print [ "Reminder: maxgpregs=", Int.toString maxgpregs, *)
         (* "\n"] *)
 
-        val webArity = analyzeArity liberally (fn w => W.Set.member (selfRef, w)) (repr, heap, web)
+        val webArity = analyzeArity liberally (fn w => W.Set.member (flattenable, w)) (repr, heap, web)
 
         val resolve = resolveArity liberally dec
 
