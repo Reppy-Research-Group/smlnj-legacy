@@ -207,7 +207,15 @@ functor AMD64Gen (
 		else mark' (I.COPY {k=CB.GP, sz=ty, src=[s], dst=[d], tmp=NONE}, an)
 	  | move' (ty, I.Immed 0, dst as I.Direct _, an) =
 	      mark' (I.binary {binOp=O.xorOp ty, src=dst, dst=dst}, an)
-	  | move' (ty, src as I.Immed64 n, dst, an) = move64' (src, dst, an)
+	  | move' (ty, src as I.Immed64 n, dst, an) = let
+              (* MOVABSQ cannot take an indirect memory access dst. The
+               * immediate value is moved to a tmp in case dst is spilled. *)
+              val tmp = newReg ()
+              val tmpR = I.Direct (64, tmp)
+              in
+                move64' (src, tmpR, an);
+                emitInstr (I.move {mvOp=I.MOVQ, src=tmpR, dst=dst})
+              end
 	  | move' (ty, src as I.ImmedLabel _ , dst as I.Direct _, an) = move64' (src, dst, an)
 	  | move' (ty, src as I.ImmedLabel _ , dst, an) = let
 	      val tmp = newReg ()
