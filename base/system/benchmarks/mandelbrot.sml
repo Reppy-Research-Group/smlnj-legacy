@@ -6,7 +6,7 @@ structure Main :> sig val doit : unit -> unit val testit : unit -> unit end =
     val y_base = 1.25
     val side = 2.5
 
-    val sz = 256
+    val sz = 2048
     val maxCount = 1024
 
     val delta = side / (real sz)
