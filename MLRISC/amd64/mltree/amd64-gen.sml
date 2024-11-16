@@ -199,7 +199,16 @@ functor AMD64Gen (
 	(* annotate an expression and emit it *)
 	fun mark (i, an) = mark' (I.INSTR i, an)
 	(* annotated 64-bit move *)
-	fun move64' (src, dst, an) = mark' (move64(src, dst), an)
+	fun move64' (src, dst as I.Direct _, an) = mark' (move64(src, dst), an)
+          | move64' (src, dst, an) = let
+              (* the `MOVABSQ` instruction can only move values into registers, so
+               * we need to use a temporary register here.
+               *)
+              val tmpR = I.Direct (64, newReg ())
+              in
+                move64' (src, tmpR, an);
+                emitInstr (I.move {mvOp=I.MOVQ, src=tmpR, dst=dst})
+              end
 	(* move with annotation *)
 	fun move' (ty, dst as I.Direct (_, s), src as I.Direct (_, d), an) =
 	      if CB.sameColor (s, d)
@@ -207,23 +216,8 @@ functor AMD64Gen (
 		else mark' (I.COPY {k=CB.GP, sz=ty, src=[s], dst=[d], tmp=NONE}, an)
 	  | move' (ty, I.Immed 0, dst as I.Direct _, an) =
 	      mark' (I.binary {binOp=O.xorOp ty, src=dst, dst=dst}, an)
-	  | move' (ty, src as I.Immed64 n, dst, an) = let
-              (* MOVABSQ cannot take an indirect memory access dst. The
-               * immediate value is moved to a tmp in case dst is spilled. *)
-              val tmp = newReg ()
-              val tmpR = I.Direct (64, tmp)
-              in
-                move64' (src, tmpR, an);
-                emitInstr (I.move {mvOp=I.MOVQ, src=tmpR, dst=dst})
-              end
-	  | move' (ty, src as I.ImmedLabel _ , dst as I.Direct _, an) = move64' (src, dst, an)
-	  | move' (ty, src as I.ImmedLabel _ , dst, an) = let
-	      val tmp = newReg ()
-	      val tmpR = I.Direct (64, tmp)
-	      in
-		move64' (src, tmpR, an);
-		emitInstr (I.move {mvOp=I.MOVQ, src=tmpR, dst=dst})
-	      end
+	  | move' (ty, src as I.Immed64 n, dst, an) = move64' (src, dst, an)
+	  | move' (ty, src as I.ImmedLabel _ , dst, an) = move64' (src, dst, an)
 	  | move' (ty, src, dst, an) =
 	      mark' (I.move {mvOp=O.movOp ty, src=src, dst=dst}, an)
 	(* move without annotation *)
