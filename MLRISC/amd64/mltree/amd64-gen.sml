@@ -199,16 +199,18 @@ functor AMD64Gen (
 	(* annotate an expression and emit it *)
 	fun mark (i, an) = mark' (I.INSTR i, an)
 	(* annotated 64-bit move *)
-	fun move64' (src, dst as I.Direct _, an) = mark' (move64(src, dst), an)
-          | move64' (src, dst, an) = let
+	fun move64' (src as (I.Immed64 _ | I.ImmedLabel _), dst, an) = let
               (* the `MOVABSQ` instruction can only move values into registers, so
                * we need to use a temporary register here.
                *)
               val tmpR = I.Direct (64, newReg ())
               in
-                move64' (src, tmpR, an);
+                mark' (move64 (src, tmpR), an);
                 emitInstr (I.move {mvOp=I.MOVQ, src=tmpR, dst=dst})
               end
+          | move64' _ =
+              error "move64' works on immediate src. For other moves, use \
+                    \`move' instead"
 	(* move with annotation *)
 	fun move' (ty, dst as I.Direct (_, s), src as I.Direct (_, d), an) =
 	      if CB.sameColor (s, d)
