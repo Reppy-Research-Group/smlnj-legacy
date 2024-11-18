@@ -483,7 +483,7 @@ end = struct
 
   val pathToHdr =
     fn (SOME path, name, cty) =>
-      (if pathLength path > 3 then
+      (if pathLength path > 5 then
         print ("Warning: long path " ^ LV.lvarName name ^ " : " ^ pathToS path ^ "\n")
        else
          ();
