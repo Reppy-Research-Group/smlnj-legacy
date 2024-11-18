@@ -374,7 +374,7 @@ end = struct
         val usage = envusage (repr, web)
         val flattenable = flattenableWeb (census, usage, web)
         val bandwidth = webBandwidth (syn, repr, web)
-        val selfRef   = selfRefFlattenableWeb (census, usage, web)
+        (* val selfRef   = selfRefFlattenableWeb (census, usage, web) *)
         (* val () = app print [ *)
         (*   "Flattenable: [", String.concatWithMap "," W.idToString *)
         (*   (W.Set.listItems flattenable), "]\n"] *)

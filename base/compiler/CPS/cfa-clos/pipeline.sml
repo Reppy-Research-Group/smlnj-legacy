@@ -24,6 +24,8 @@ end = struct
   val numCSgpregs = MachSpec.numCalleeSaves
   val numCSfpregs = MachSpec.numFloatCalleeSaves
   val unboxedfloat = MachSpec.unboxedFloats
+  val spillAreaSz = MachSpec.spillAreaSz
+
   fun isFltCty (CPS.FLTt _) = unboxedfloat
     | isFltCty _ = false
 
@@ -626,6 +628,7 @@ end = struct
     (syn: S.t, funtbl: CF.funtbl, looptbl: CF.looptbl)
     (D.T { allo, heap, repr })
   : D.t =
+    (* FIXME: If the function is free in a later function, do not unshare *)
     let fun innerFs (CF.Block { term, fix, ... }) =
           (case term
              of CF.Branch (_, _, b1, b2, _) =>
@@ -666,6 +669,29 @@ end = struct
                 end
           in  List.exists freeIn fixes
           end
+        fun getUsage (heap: D.heap) =
+          let fun usedBy (census, f, env) =
+                (case LCPS.FunMap.find (census, f)
+                   of NONE => LCPS.FunMap.insert (census, f, [env])
+                    | SOME envs => LCPS.FunMap.insert (census, f, env :: envs))
+              fun scan env (D.Var (v, _), census) =
+                    (case S.knownFun syn v
+                       of NONE => census
+                        | SOME f => usedBy (census, f, env))
+                | scan env (D.Expand _, census) =
+                    raise Fail "expand before flatten"
+                | scan env (_, census) = census
+              fun collect (env, object, census: EnvID.t list LCPS.FunMap.map) =
+                (case object
+                   of D.Record (slots, _) => foldl (scan env) census slots
+                    | D.RawBlock _ => census)
+          in  EnvID.Map.foldli collect LCPS.FunMap.empty heap
+          end
+        val usage = getUsage heap
+        fun numUsage f =
+          (case LCPS.FunMap.find (usage, f)
+             of NONE => 0
+              | SOME envs => List.length envs)
         fun flattenUnneeded (heap, f, inners) =
           let val dependents =
                 foldl (fn ((grp, fs), set) =>
@@ -705,7 +731,7 @@ end = struct
           (case S.groupFun syn grp
              of #[f as (CPS.KNOWN_TAIL, name, _, _, _)] =>
                   let val inners = innerFs (LCPS.FunTbl.lookup funtbl f)
-                  in  if freeInInners (f, inners) then
+                  in  if freeInInners (f, inners) orelse numUsage f >= 1 then
                         heap
                       else
                         flattenUnneeded (heap, f, inners)
@@ -936,7 +962,7 @@ end = struct
                            EnvID.Set.union (envs,
                              EnvID.Set.union (envsInScope b1, envsInScope b2))
                        | CF.Switch blocks =>
-                           List.foldl (fn ((b, _), envs) => 
+                           List.foldl (fn ((b, _), envs) =>
                              EnvID.Set.union (envs, envsInScope b)
                            ) envs blocks
                        | _ => envs
