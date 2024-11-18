@@ -731,7 +731,7 @@ end = struct
           (case S.groupFun syn grp
              of #[f as (CPS.KNOWN_TAIL, name, _, _, _)] =>
                   let val inners = innerFs (LCPS.FunTbl.lookup funtbl f)
-                  in  if freeInInners (f, inners) orelse numUsage f >= 1 then
+                  in  if freeInInners (f, inners) orelse numUsage f >= 2 then
                         heap
                       else
                         flattenUnneeded (heap, f, inners)
@@ -1028,7 +1028,7 @@ end = struct
                      end
           end
 
-        fun allocate (heap, repr, allo, f, e, avail, availEnvs) : D.environment * D.heap =
+        fun allocate (heap, f, e, avail, availEnvs) : D.environment * D.heap =
           let val entry = LCPS.FunTbl.lookup funtbl f
                           handle e => raise e
               val pref = preference entry
@@ -1091,9 +1091,16 @@ end = struct
                   ()
               (* val avail = numgp(maxgpregs, #4 f) *)
               (* val e1 = allocate (heap, f, e, avail, availEnvs) *)
-              val heap = EnvID.Map.insert (heap, e, D.Record ([], false))
-              val e2 = (D.Flat slots, heap)
-          in  e2
+              (* val heap = EnvID.Map.insert (heap, e, D.Record ([], false)) *)
+              (* val e2 = (D.Flat slots, heap) *)
+              val numArgCutOff = maxgpregs + maxfpregs
+              val nargs = List.length (#3 f)
+          in  if List.length slots + nargs <= numArgCutOff then
+                let val heap = EnvID.Map.insert (heap, e, D.Record ([], false))
+                in  (D.Flat slots, heap)
+                end
+              else
+                allocate (heap, f, e, numArgCutOff - nargs, availEnvs)
           end
         (* Environments now look like one of the following:
          * 1. Boxed e
@@ -1160,7 +1167,7 @@ end = struct
                                 if isShared e then
                                   (env, heap)
                                 else
-                                  allocate (heap, repr, allo, f, e, List.length nulls, parentEnvs)
+                                  allocate (heap, f, e, List.length nulls, parentEnvs)
                             | D.Flat _ => raise Fail "impossible")
                       val closure = D.Closure {code=code, env=env}
                       val repr = LCPS.FunMap.insert (repr, f, closure)
