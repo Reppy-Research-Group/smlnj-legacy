@@ -22,7 +22,6 @@ signature MCCONTROL =
 (* general code-generation controls *)
 signature CGCONTROL =
   sig
-    val newClosureConverter : bool ref
     val closureStrategy : int ref
     val cpsopt : string list ref		(* list of cpsopt phases *)
     val rounds : int ref
@@ -67,6 +66,26 @@ signature CGCONTROL =
     val printClusters : bool ref
   end (* signature CGCONTROL *)
 
+signature NEW_CLOSURE_CONTROL =
+  sig
+    val enable : bool ref
+
+    val flatClosure : bool ref
+
+    val flattenPolicy    : int ref
+    val flattenLiberally : bool ref
+    val flattenSelfRef   : bool ref
+    val flattenRegLimit  : bool ref
+
+    val sharingDistCutOff : int ref
+    val sharingSizeCutOff : int ref
+    val sharingUseCutOff  : int ref
+
+    val dumpWeb      : bool ref
+    val dumpDecision : bool ref
+    val warnPath     : bool ref
+  end (* signature NEWCLOSURE *)
+
 (* main Control structure *)
 signature CONTROL =
   sig
@@ -76,6 +95,7 @@ signature CONTROL =
     structure MC : MCCONTROL
     structure FLINT : FLINTCONTROL
     structure CG : CGCONTROL
+    structure NC : NEW_CLOSURE_CONTROL
     structure MLRISC : MLRISC_CONTROL
     val debugging : bool ref
     val printAst : bool ref

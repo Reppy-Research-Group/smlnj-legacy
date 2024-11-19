@@ -17,6 +17,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
   (* structure RefClosure = RefClosureFn(MachSpec) *)
   structure Cheat = Closure(MachSpec)
   structure Pipeline = ClosureDecisionPipeline(MachSpec)
+  structure Config = Control.NC
 
   (* fun dumpSCC components = *)
   (*   let *)
@@ -68,7 +69,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       (* val () = ClosureDecision.dump (decision, syntactic) *)
       val web = timeit "web" Web.calculate (result, syntactic)
       handle e => (print "5\n"; raise e)
-      (* val () = Web.dump web *)
+      val () = if !Config.dumpWeb then Web.dump web else ()
 
       (* val () = Lifetime.analyze (lcps, syntactic) *)
       val (funtbl, looptbl) =
@@ -76,12 +77,17 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       val shr =
         timeit "sharing" SharingAnalysis.analyze (lcps, syntactic, funtbl, looptbl)
 
-      val decision' =
-        timeit "pipe" Pipeline.pipeline (lcps, syntactic, web, shr, funtbl, looptbl)
-      val lcps' =
-        timeit "transform" Transform.transform (lcps, decision', web, syntactic)
-      val lcps' =
-        timeit "avail exp" AvailableExpression.transform lcps'
+      val decision =
+        if !Config.flatClosure then
+          timeit "flat-closure" FlatClosureDecision.produce (lcps, syntactic)
+        else
+          timeit "pipe" Pipeline.pipeline (lcps, syntactic, web, shr, funtbl, looptbl)
+      val () =
+        if !Config.dumpDecision then ClosureDecision.dump (decision, syntactic) else ()
+      val lcps =
+        timeit "transform" Transform.transform (lcps, decision, web, syntactic)
+      val lcps =
+        timeit "avail exp" AvailableExpression.transform lcps
       (* val () = (print "RESULT >>>>>\n"; PPCps.printcps0 (LCPS.unlabelF lcps'); print "<<<<<\n") *)
 
       (* val decision = timeit "flat" FlatClosureDecision.produce (lcps, syntactic) *)
@@ -90,7 +96,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       (* handle e => (print "6\n"; raise e) *)
       (* val () = InvariantChecker.check (decision', syntactic) *)
     in
-      UnRebind.unrebind (LCPS.unlabelF lcps')
+      UnRebind.unrebind (LCPS.unlabelF lcps)
       (* Cheat.closeCPS cps *)
     end
     handle e =>

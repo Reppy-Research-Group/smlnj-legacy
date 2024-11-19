@@ -22,6 +22,7 @@ end = struct
   structure S = SyntacticInfo
   structure W = Web
   structure Prob = Probability
+  structure Config = Control.NC
 
   open ControlFlow
 
@@ -138,7 +139,9 @@ end = struct
     funtbl: funtbl,
     loopTbl: looptbl
   ) =
-    let val lookupBlock = LCPS.FunTbl.lookup funtbl
+    let val sizeCutoff = !Config.sharingSizeCutOff
+        val distCutoff = !Config.sharingDistCutOff
+        val lookupBlock = LCPS.FunTbl.lookup funtbl
         fun lookupLoopInfo block =
           Graph.NodeTbl.lookup loopTbl (Graph.Node block)
         fun isUsed fs v =
@@ -314,7 +317,6 @@ end = struct
 
               val (packs, loose) =
                 let val loose = sortBy #2 loose
-                    val distCutoff = 2 and sizeCutoff = 4
                     fun findCandidatePacks (vs, fstDepth, currPack, packs) =
                       (case vs
                          of [] => currPack :: packs
@@ -449,7 +451,7 @@ end = struct
         val () = Group.Tbl.modify replacePack grpTbl
 
         (* Step 2: Clean up unused or unshared packs *)
-        val useCountCutoff = 2
+        val useCountCutoff = !Config.sharingUseCutOff
         datatype usage = Unused
                        | UsedOnlyBy of Group.t list
                        (* Items used more than once are cleared out of the

@@ -32,7 +32,7 @@ functor CPSCompFn (
     fun phase x = Stats.doPhase (Stats.makePhase x)
 
     fun closeCPS cps =
-      if !Control.CG.newClosureConverter then
+      if !Control.NC.enable then
         CFAClosure.closeCPS cps
       else
         Closure.closeCPS cps

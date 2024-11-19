@@ -69,7 +69,7 @@ structure Control_MC : MCCONTROL =
 (* Code generation controls (including some used in FLINT?) *)
 structure Control_CG : CGCONTROL =
   struct
-    val priority = [10, 11, 2]
+    val priority = [10, 12, 3]
     val obscurity = 6
     val prefix = "cg"
 
@@ -103,7 +103,6 @@ structure Control_CG : CGCONTROL =
 	  end
 
     val closureStrategy = new (i, "closure-strategy", "?", 0)	(* see CPS/clos/closure.sml *)
-    val newClosureConverter = new (b, "new-closure-converter", "?", true)
     val cpsopt = new (sl, "cpsopt", "cps optimizer phases", [
 	    "first_contract", "eta", "zeroexpand", "last_contract"
 	  ])
@@ -153,6 +152,78 @@ structure Control_CG : CGCONTROL =
     val printit = new (b, "printit", "whether to show CPS", false)
     val printClusters = new (b, "print-clusters", "whether to print clusters prior to codegen", false)
   end (* structure Control_CG *)
+
+structure Control_NC : NEW_CLOSURE_CONTROL =
+  struct
+    val priority = [10, 11, 2]
+    val obscurity = 6
+    val prefix = "nc"
+
+    val registry =
+      ControlRegistry.new { help = "new closure converter settings" }
+
+    val _ = BasicControl.nest (prefix, registry, priority)
+
+    val b = ControlUtil.Cvt.bool
+    val i = ControlUtil.Cvt.int
+    val r = ControlUtil.Cvt.real
+    val sl = ControlUtil.Cvt.stringList
+
+    val nextpri = ref 0
+    fun new (c, n, h, d) = let
+	  val r = ref d
+	  val p = !nextpri
+	  val ctl = Controls.control {
+		  name = n,
+		  pri = [p],
+		  obscurity = obscurity,
+		  help = h,
+		  ctl = r }
+	  in
+	    nextpri := p + 1;
+	    ControlRegistry.register
+		registry
+		{ ctl = Controls.stringControl c ctl,
+		  envName = SOME (ControlUtil.EnvName.toUpper "CG_" n) };
+	    r
+	  end
+
+    val enable = new (b, "enable", "enable new closure converter", true)
+
+    val flatClosure = new (b, "flat-closure", "use flat closure policy", false)
+
+    val flattenPolicy =
+      new (i, "flatten-policy", "select policy for closure flattening", 1)
+    val flattenLiberally =
+      new (b, "flatten-liberally",
+              "use max to resolve arity among functions in the same web", true)
+    val flattenSelfRef =
+      new (b, "flatten-selfref",
+              "whether to flatten self-referential environments", false)
+    val flattenRegLimit =
+      new (b, "flatten-reg-limit",
+              "whether to impose register limit for known function environment \
+              \passing", true)
+
+    val sharingDistCutOff =
+      new (i, "sharing-dist-cutoff",
+              "maximum difference of binding time among variables in a shared \
+              \closure", 2)
+
+    val sharingSizeCutOff =
+      new (i, "sharing-size-cutoff",
+              "minimum size of a shared closure", 4)
+
+    val sharingUseCutOff =
+      new (i, "sharing-use-cutoff",
+              "minimum number of times by which a shared closure has to be \
+              \shared", 2)
+
+    val dumpWeb = new (b, "dump-web", "dump call web", false)
+    val dumpDecision = new (b, "dump-decision", "dump decision", false)
+    val warnPath = 
+      new (b, "warn-path", "emit warning for long access paths", false)
+  end (* structure NewClosureControl *)
 
 
 structure Control : CONTROL =
@@ -208,6 +279,8 @@ structure Control : CONTROL =
     structure Elab : ELAB_CONTROL = ElabControl
 
     structure MC : MCCONTROL = Control_MC
+
+    structure NC : NEW_CLOSURE_CONTROL = Control_NC
 
     structure FLINT = FLINT_Control
 

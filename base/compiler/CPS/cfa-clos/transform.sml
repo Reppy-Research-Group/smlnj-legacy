@@ -10,6 +10,7 @@ end = struct
   structure S = SyntacticInfo
   structure W = Web
   structure G = Group
+  structure Config = Control.NC
 
   val bogusTy = CPS.PTRt CPS.VPT
   val defunTy = CPS.NUMt { sz=Target.defaultIntSz, tag=true }
@@ -228,7 +229,7 @@ end = struct
                        val tys = (case env
                                     of D.Boxed _ => [bogusTy]
                                      | D.Flat slots => map slotToTy slots
-                                     | D.FlatAny _ => 
+                                     | D.FlatAny _ =>
                                          raise Fail "unresolved any")
                    in  SOME tys
                    end)
@@ -482,13 +483,16 @@ end = struct
     | pathToHdr (NONE, name, cty) : header = fn x => x
 
   val pathToHdr =
-    fn (SOME path, name, cty) =>
-      (if pathLength path > 5 then
-        print ("Warning: long path " ^ LV.lvarName name ^ " : " ^ pathToS path ^ "\n")
-       else
-         ();
-       pathToHdr (SOME path, name, cty))
-      | (opt, name, cty) => pathToHdr (opt, name, cty)
+    if !Config.warnPath then
+      fn (SOME path, name, cty) =>
+        (if pathLength path > 5 then
+          print ("Warning: long path " ^ LV.lvarName name ^ " : " ^ pathToS path ^ "\n")
+         else
+           ();
+         pathToHdr (SOME path, name, cty))
+        | (opt, name, cty) => pathToHdr (opt, name, cty)
+    else
+      pathToHdr
 
   fun fixaccess1 (env: env, CPS.VAR v) : header * env =
         let val (ctx, dec, web, syn) = env

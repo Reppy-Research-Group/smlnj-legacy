@@ -3,8 +3,9 @@ functor FlatteningAnalysis(MachSpec : MACH_SPEC) :> sig
   type decision = Web.id -> arity
   val toString : arity -> string
 
-  val simple : ClosureDecision.t * Web.t * SyntacticInfo.t -> decision
-  val medium : ClosureDecision.t * Web.t * SyntacticInfo.t -> decision
+  (* val simple : ClosureDecision.t * Web.t * SyntacticInfo.t -> decision *)
+  (* val medium : ClosureDecision.t * Web.t * SyntacticInfo.t -> decision *)
+  val decide : ClosureDecision.t * Web.t * SyntacticInfo.t -> decision
 end = struct
   structure CF = ControlFlow
   structure D = ClosureDecision
@@ -13,6 +14,7 @@ end = struct
   structure LV = LambdaVar
   structure S = SyntacticInfo
   structure W = Web
+  structure Config = Control.NC
 
   val maxgpregs = MachSpec.numRegs
   val maxfpregs = MachSpec.numFloatRegs - 2  (* need 1 or 2 temps *)
@@ -221,7 +223,7 @@ end = struct
                   in  W.same (w, id) orelse W.Set.member (selfref, w)
                   end)
         val usedBy = fn id => fn selfref => fn env =>
-          let 
+          let
               (* val () = print ("selfref? " ^ EnvID.toString env) *)
               val result = usedBy id selfref env
               (* val () = print (if result then " true\n" else " false\n") *)
@@ -318,7 +320,7 @@ end = struct
             (case find w
                of SOME ar => ar
                 | NONE   =>
-                    let 
+                    let
                         (* val () = print ("calculating arity for " ^ W.idToString *)
                     (* w ^ "\n") *)
                         val result =
@@ -375,6 +377,16 @@ end = struct
         val flattenable = flattenableWeb (census, usage, web)
         val bandwidth = webBandwidth (syn, repr, web)
         (* val selfRef   = selfRefFlattenableWeb (census, usage, web) *)
+        val isFlattenable =
+          if !Config.flattenSelfRef then
+            let val selfref = selfRefFlattenableWeb (census, usage, web)
+            in  fn w => W.Set.member (selfref, w)
+            end
+          else
+            (fn w => W.Set.member (flattenable, w))
+
+        val policy =
+          if !Config.flattenLiberally then liberally else conservatively
         (* val () = app print [ *)
         (*   "Flattenable: [", String.concatWithMap "," W.idToString *)
         (*   (W.Set.listItems flattenable), "]\n"] *)
@@ -388,9 +400,8 @@ end = struct
         (* val () = app print [ "Reminder: maxgpregs=", Int.toString maxgpregs, *)
         (* "\n"] *)
 
-        val webArity = analyzeArity liberally (fn w => W.Set.member (flattenable, w)) (repr, heap, web)
-
-        val resolve = resolveArity liberally dec
+        val webArity = analyzeArity policy isFlattenable (repr, heap, web)
+        val resolve = resolveArity policy dec
 
         fun defaultArity (id, info: W.info) =
           (case info
@@ -472,4 +483,13 @@ end = struct
               | _ => One)
     in  arity
     end
+
+  fun decide arg =
+    (case !Config.flattenPolicy
+       of 0 => simple arg
+        | 1 => medium arg
+        | _ =>
+            raise
+              Fail "invalid flatten policy (choose 0 (simple) or 1 (medium)")
+
 end

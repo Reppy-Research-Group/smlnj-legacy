@@ -310,7 +310,7 @@ end = struct
      end
 
   fun analyze'n'flatten (syn, web) dec =
-    let val arity = FA.medium (dec, web, syn)
+    let val arity = FA.decide (dec, web, syn)
     in  flatten (arity, syn, web) dec
     end
 

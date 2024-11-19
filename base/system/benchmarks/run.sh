@@ -11,12 +11,12 @@ NRUNS=1
 
 if [ x"$1" = "x--new" ] ; then
   CC=yes
-  SML="../testml"
+  SML="../testml -Cnc.enable=true"
   OUT_SUFFIX="-new"
   shift
 else
   CC=no
-  SML="../testml -Ccg.new-closure-converter=false"
+  SML="../testml -Cnc.enable=false"
   OUT_SUFFIX="-old"
 fi
 
