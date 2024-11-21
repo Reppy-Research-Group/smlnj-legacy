@@ -58,17 +58,16 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
     let
       (* val () = (print ">>>>>\n"; PPCps.printcps0 cps; print "<<<<<\n") *)
       val lcps = timeit "label" LabelledCPS.labelF cps
-      handle e => (print "1\n"; raise e)
+        handle e => (print "1\n"; raise e)
       val syntactic = timeit "syntactic" SyntacticInfo.calculate lcps
-      handle e => (print "2\n"; raise e)
+        handle e => (print "2\n"; raise e)
       (* val () = SyntacticInfo.dump syntactic *)
       (* val callgraph = ZeroCFA.analyze (syntactic, lcps) *)
       val result = timeit "flow-cfa" FlowCFA.analyze (syntactic, lcps)
-      (* val result = phase "CPS 081 cfa" FlowCFA.analyze (syntactic, lcps) *)
-      handle e => (print "3\n"; raise e)
+        handle e => (print "3\n"; raise e)
       (* val () = ClosureDecision.dump (decision, syntactic) *)
       val web = timeit "web" Web.calculate (result, syntactic)
-      handle e => (print "5\n"; raise e)
+        handle e => (print "5\n"; raise e)
       val () = if !Config.dumpWeb then Web.dump web else ()
 
       (* val () = Lifetime.analyze (lcps, syntactic) *)
@@ -82,12 +81,15 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
           timeit "flat-closure" FlatClosureDecision.produce (lcps, syntactic)
         else
           timeit "pipe" Pipeline.pipeline (lcps, syntactic, web, shr, funtbl, looptbl)
+        handle e => (print "6\n"; raise e)
       val () =
         if !Config.dumpDecision then ClosureDecision.dump (decision, syntactic) else ()
       val lcps =
         timeit "transform" Transform.transform (lcps, decision, web, syntactic)
+        handle e => (print "7\n"; raise e)
       val lcps =
         timeit "avail exp" AvailableExpression.transform lcps
+        handle e => (print "8\n"; raise e)
       (* val () = (print "RESULT >>>>>\n"; PPCps.printcps0 (LCPS.unlabelF lcps'); print "<<<<<\n") *)
 
       (* val decision = timeit "flat" FlatClosureDecision.produce (lcps, syntactic) *)

@@ -37,6 +37,43 @@ end = struct
     | numfp (m,x::z) = if isFltCty(x) then numfp(m-1,z) else numfp(m,z)
     | numfp (m,[]) = m
 
+  fun argmin f [] = raise Empty
+    | argmin f (x :: xs) =
+        let fun go ([], arg, min) = arg
+              | go (x :: xs, arg, min) =
+                  let val y = f x
+                  in  if y < min then go (xs, x, y) else go (xs, arg, min)
+                  end
+        in  go (xs, x, f x)
+        end
+
+  fun splitMin (f : 'a -> int) (xs : 'a list) : 'a * 'a list =
+    let fun go (pre, _, minEl, []) = (minEl, pre)
+          | go (pre, minN, minEl, x :: xs) =
+             let val currN = f x
+             in  if currN < minN then
+                   let val (m, post) = go ([], currN, x, xs)
+                   in  (m, minEl :: pre @ post)
+                   end
+                 else
+                   go (x :: pre, minN, minEl, xs)
+             end
+    in  case xs
+          of [] => raise Empty
+           | [x] => (x, [])
+           | x :: xs => go ([], f x, x, xs)
+    end
+
+  fun countif f xs =
+    let fun go ([], cnt) = cnt
+          | go (x :: xs, cnt) =
+              if f x then go (xs, cnt + 1) else go (xs, cnt)
+    in  go (xs, 0)
+    end
+
+  val _ = argmin  : ('a -> int)  -> 'a list -> 'a
+  val _ = countif : ('a -> bool) -> 'a list -> int
+
   fun initial (cps: LCPS.function, syn: S.t) =
     let fun collect syn (group, (repr, allo, heap)) =
           let val functions = S.groupFun syn group
@@ -322,6 +359,10 @@ end = struct
 
   fun isMLTy ty = not (isFloatTy ty) andalso not (isUntaggedIntTy ty)
 
+  fun isMLSlot (D.Var (_, ty)) = isMLTy ty
+    | isMLSlot (D.Expand (_, _, ty)) = isMLTy ty
+    | isMLSlot _ = true
+
   fun segregateMLValues (D.T { repr, allo, heap }): D.t =
     let fun partitionSlots slots =
           let fun go ([], slots, ints, flts) =
@@ -385,6 +426,7 @@ end = struct
           ) (allo, heap) allo
     in  D.T { repr=repr, allo=allo, heap=heap }
     end
+    handle e => raise e
 
   fun removeKnownCodePtr (web: W.t, syn: S.t) (D.T {repr, allo, heap}): D.t =
     let
@@ -623,6 +665,7 @@ end = struct
         val repr = LCPS.FunMap.map replaceRepr repr
     in  D.T { allo=allo, heap=heap, repr=repr }
     end
+    handle e => raise e
 
   fun unshare
     (syn: S.t, funtbl: CF.funtbl, looptbl: CF.looptbl)
@@ -741,6 +784,118 @@ end = struct
     in  D.T { allo=allo, heap=heap, repr=repr }
     end
 
+  fun mergePref ((lvl1, prob1: real), (lvl2, prob2: real)) =
+    let val lvl = Int.max (lvl1, lvl2)
+        val prob = prob1 + prob2
+    in  (lvl, prob)
+    end
+
+  fun getPreference (
+    looptbl: CF.looptbl,
+    funtbl: CF.funtbl,
+    syn: S.t,
+    f: LCPS.function
+  ) : (int * real) LV.Map.map =
+    let fun lookupBlock b = CF.Graph.NodeTbl.lookup looptbl (CF.Graph.Node b)
+        fun preference entry : (int * real) LV.Map.map =
+          let fun getProb (NONE, n) = 1.0 / Real.fromInt n
+                | getProb (SOME p, _) = Prob.toReal p
+              val insert = LV.Map.insertWith mergePref
+              val union = LV.Map.unionWith mergePref
+              fun build (b as CF.Block { term, uses, fix, ... }, prob) =
+                let val { nestingDepth, ... } = lookupBlock b
+                    val augUses = foldl (fn ((grp, _), uses) =>
+                        LV.Set.addList (uses,
+                                        LV.Map.listKeys (S.groupFV syn grp))
+                      ) uses fix
+                    val pref = LV.Set.foldl (fn (v, pref) =>
+                        insert (pref, v, (nestingDepth, prob))
+                      ) LV.Map.empty augUses
+                in  case term
+                      of CF.Branch (_, _, b1, b2, p) =>
+                           let val prob' = getProb (p, 2)
+                               val p1 = build (b1, prob' * prob)
+                               val p2 = build (b2, (1.0 - prob') * prob)
+                           in  union (pref, union (p1, p2))
+                           end
+                       | CF.Switch blocks =>
+                           let val n = List.length blocks
+                           in  foldl (fn ((b, prob), pref) =>
+                                 let val p = build (b, getProb (prob, n))
+                                 in  union (pref, p)
+                                 end
+                               ) pref blocks
+                           end
+                       | _ => pref
+                end
+          in  build (entry, 1.0)
+          end
+    in  preference (LCPS.FunTbl.lookup funtbl f)
+    end
+
+  fun pickNSlots (pref, heap, slots, n) : D.slot list * D.slot list =
+    let val botPref = (~1, ~1.0)
+        fun slotPref (slot, heap, pref) =
+          (case slot
+             of D.EnvID e =>
+                  (case EnvID.Map.lookup (heap, e)
+                     of D.Record (slots, _) =>
+                          foldl (fn (s, p) =>
+                            mergePref (p, slotPref (s, heap, pref))
+                          ) botPref slots
+                      | D.RawBlock (vs, _) =>
+                          foldl (fn (v, p) =>
+                            (case LV.Map.find (pref, v)
+                               of SOME p' => mergePref (p, p')
+                                | NONE => p)
+                          ) botPref vs)
+              | (D.Var (v, _) | D.Expand (v, _, _)) =>
+                  (* This is possible because a closure may close over a known
+                   * function, and it is save to share everything in that
+                   * function's closure even though some variables may not be
+                   * used directly *)
+                  (case LV.Map.find (pref, v)
+                     of NONE => botPref
+                      | SOME p => p)
+              | _ => botPref)
+
+        fun sameProb (r1, r2) = Real.abs (r1 - r2) < 0.01
+
+        fun take ([], n) = (List.tabulate (n, fn _ => D.Null), [])
+          | take (xs, 0) = ([], xs)
+          | take (x :: xs, n) =
+              let val (taken, dropped) = take (xs, n - 1)
+              in  (x :: taken, dropped)
+              end
+
+        fun pick (pref, heap, slots, n) : D.slot list * D.slot list =
+          let val slotsWithPref =
+                map (fn s => (s, slotPref (s, heap, pref))) slots
+              (* fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) = *)
+              (*   if sameProb (prob1, prob2) then *)
+              (*     lvl1 < lvl2 *)
+              (*   else *)
+              (*     prob1 < prob2 *)
+              fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) =
+                if lvl1 = lvl2 then
+                  prob1 < prob2
+                else
+                  lvl1 < lvl2
+              (* TODO: Measure use counts *)
+              val slots = ListMergeSort.sort gt slotsWithPref
+              (* val () = ( *)
+              (*   print "PRIORITY: "; *)
+              (*   print (String.concatWithMap "," (fn (s, (lvl, prob)) => *)
+              (*     concat ["(", D.slotToString s, ",", Int.toString lvl, ",", *)
+              (*             Real.toString prob, ")"]) slots); *)
+              (*   print "\n" *)
+              (* ) *)
+              val slots = map #1 slots
+          in  take (slots, n)
+          end
+    in  pick (pref, heap, slots, n)
+    end
+
   fun allocate'n'expand
     (syn: S.t, web: W.t, funtbl: CF.funtbl, looptbl: CF.looptbl)
     (D.T { repr, heap, allo })
@@ -830,109 +985,6 @@ end = struct
         (* fun removeConstants [] = [] *)
         (*   | removeConstants (D.Null :: xs) = removeConstants xs *)
         (*   | removeConstants (x :: xs) = x :: removeConstants xs *)
-
-        fun lookupBlock b = CF.Graph.NodeTbl.lookup looptbl (CF.Graph.Node b)
-        fun mergePref ((lvl1, prob1), (lvl2, prob2)) =
-          let val lvl = Int.max (lvl1, lvl2)
-              val prob = prob1 + prob2
-          in  (lvl, prob)
-          end
-
-        fun preference entry : (int * real) LV.Map.map =
-          let fun getProb (NONE, n) = 1.0 / Real.fromInt n
-                | getProb (SOME p, _) = Prob.toReal p
-              val insert = LV.Map.insertWith mergePref
-              val union = LV.Map.unionWith mergePref
-              fun build (b as CF.Block { term, uses, fix, ... }, prob) =
-                let val { nestingDepth, ... } = lookupBlock b
-                    val augUses = foldl (fn ((grp, _), uses) =>
-                        LV.Set.addList (uses,
-                                        LV.Map.listKeys (S.groupFV syn grp))
-                      ) uses fix
-                    val pref = LV.Set.foldl (fn (v, pref) =>
-                        insert (pref, v, (nestingDepth, prob))
-                      ) LV.Map.empty augUses
-                in  case term
-                      of CF.Branch (_, _, b1, b2, p) =>
-                           let val prob' = getProb (p, 2)
-                               val p1 = build (b1, prob' * prob)
-                               val p2 = build (b2, (1.0 - prob') * prob)
-                           in  union (pref, union (p1, p2))
-                           end
-                       | CF.Switch blocks =>
-                           let val n = List.length blocks
-                           in  foldl (fn ((b, prob), pref) =>
-                                 let val p = build (b, getProb (prob, n))
-                                 in  union (pref, p)
-                                 end
-                               ) pref blocks
-                           end
-                       | _ => pref
-                end
-          in  build (entry, 1.0)
-          end
-
-        val botPref = (~1, ~1.0)
-
-        fun slotPref (slot, heap, pref) =
-          (case slot
-             of D.EnvID e =>
-                  (case EnvID.Map.lookup (heap, e)
-                     of D.Record (slots, _) =>
-                          foldl (fn (s, p) =>
-                            mergePref (p, slotPref (s, heap, pref))
-                          ) botPref slots
-                      | D.RawBlock (vs, _) =>
-                          foldl (fn (v, p) =>
-                            (case LV.Map.find (pref, v)
-                               of SOME p' => mergePref (p, p')
-                                | NONE => p)
-                          ) botPref vs)
-              | (D.Var (v, _) | D.Expand (v, _, _)) =>
-                  (* This is possible because a closure may close over a known
-                   * function, and it is save to share everything in that
-                   * function's closure even though some variables may not be
-                   * used directly *)
-                  (case LV.Map.find (pref, v)
-                     of NONE => botPref
-                      | SOME p => p)
-              | _ => botPref)
-
-        fun sameProb (r1, r2) = Real.abs (r1 - r2) < 0.01
-
-        fun take ([], n) = (List.tabulate (n, fn _ => D.Null), [])
-          | take (xs, 0) = ([], xs)
-          | take (x :: xs, n) =
-              let val (taken, dropped) = take (xs, n - 1)
-              in  (x :: taken, dropped)
-              end
-
-        fun pick (pref, heap, slots, n) : D.slot list * D.slot list =
-          let val slotsWithPref =
-                map (fn s => (s, slotPref (s, heap, pref))) slots
-              (* fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) = *)
-              (*   if sameProb (prob1, prob2) then *)
-              (*     lvl1 < lvl2 *)
-              (*   else *)
-              (*     prob1 < prob2 *)
-              fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) =
-                if lvl1 = lvl2 then
-                  prob1 < prob2
-                else
-                  lvl1 < lvl2
-              (* TODO: Measure use counts *)
-              val slots = ListMergeSort.sort gt slotsWithPref
-              (* val () = ( *)
-              (*   print "PRIORITY: "; *)
-              (*   print (String.concatWithMap "," (fn (s, (lvl, prob)) => *)
-              (*     concat ["(", D.slotToString s, ",", Int.toString lvl, ",", *)
-              (*             Real.toString prob, ")"]) slots); *)
-              (*   print "\n" *)
-              (* ) *)
-              val slots = map #1 slots
-          in  take (slots, n)
-          end
-
         fun isShared e =
           (case EnvID.Map.lookup (heap, e)
              of D.Record (_, shared) => shared
@@ -945,10 +997,6 @@ end = struct
               val uses = S.usePoints syn name
           in  LCPS.Set.all isCall uses
           end
-
-        fun isMLSlot (D.Var (_, ty)) = isMLTy ty
-          | isMLSlot (D.Expand (_, _, ty)) = isMLTy ty
-          | isMLSlot _ = true
 
         fun parentOf grp = S.enclosing syn (S.groupExp syn grp)
 
@@ -1002,7 +1050,7 @@ end = struct
                 let val slots = D.SlotSet.toList (filterInScope slots)
                     (* val () = print ("Picking base for " ^ LV.lvarName (#2 f) ^ *)
                     (* "\n") *)
-                    val (taken, _) = pick (pref, heap, slots, n)
+                    val (taken, _) = pickNSlots (pref, heap, slots, n)
                 in  taken
                 end
 
@@ -1029,9 +1077,7 @@ end = struct
           end
 
         fun allocate (heap, f, e, avail, availEnvs) : D.environment * D.heap =
-          let val entry = LCPS.FunTbl.lookup funtbl f
-                          handle e => raise e
-              val pref = preference entry
+          let val pref = getPreference (looptbl, funtbl, syn, f)
               val slots = (case EnvID.Map.lookup (heap, e)
                              of D.Record (slots, false) => slots
                               | D.Record (slots, true) =>
@@ -1045,7 +1091,7 @@ end = struct
                       else
                         List.partition isMLSlot slots
                     val (taken, spilled') =
-                      pick (pref, heap, slots, avail)
+                      pickNSlots (pref, heap, slots, avail)
                 in  (taken, spilled @ spilled')
                 end
               fun insert (heap, e, slots) =
@@ -1197,8 +1243,151 @@ end = struct
     end
     handle e => (D.dump (D.T {repr=repr, allo=allo, heap=heap}, syn); raise e)
 
+  fun fixOvershare (syn, funtbl, looptbl) (D.T {repr, allo, heap}) =
+    let fun scanSharedEnvAndSlack ([], sharedenvs, slack)  = (sharedenvs, slack)
+          | scanSharedEnvAndSlack (D.Null :: slots, sharedenvs, slack) =
+              scanSharedEnvAndSlack (slots, sharedenvs, slack + 1)
+          | scanSharedEnvAndSlack (D.EnvID e :: slots, sharedenvs, slack) =
+              (case EnvID.Map.lookup (heap, e) handle e => raise e
+                 of D.Record (_, true) =>
+                      scanSharedEnvAndSlack (slots, e :: sharedenvs, slack)
+                  | _ =>
+                      scanSharedEnvAndSlack (slots, sharedenvs, slack))
+          | scanSharedEnvAndSlack (_ :: slots, sharedenvs, slack) =
+              scanSharedEnvAndSlack (slots, sharedenvs, slack)
+        datatype slack_data = NoSlack
+                            | Slack of int * LCPS.function list
+        fun mergeSlackData (NoSlack, _) = NoSlack
+          | mergeSlackData (_, NoSlack) = NoSlack
+          | mergeSlackData (Slack (slack1, fs1), Slack (slack2, fs2)) =
+              Slack (Int.min (slack1, slack2), fs1 @ fs2)
+        fun slackDataToString NoSlack = "No"
+          | slackDataToString (Slack (slack, fs)) =
+              concat [Int.toString slack, " [", String.concatWithMap ","
+                      (LV.lvarName o #2) fs, "]"]
+        fun recordSlack (slack, env, s, f) =
+          let val insert = EnvID.Map.insertWith mergeSlackData
+          in  if s = 0 then
+                insert (slack, env, NoSlack)
+              else
+                insert (slack, env, Slack (s, [f]))
+          end
+        fun bestFit envs =
+          let fun sz e =
+                (case EnvID.Map.lookup (heap, e) handle e => raise e
+                   of D.Record (slots, true) => countif isMLSlot slots
+                    | _ => raise Fail "impossible")
+          in  splitMin sz envs
+          end
+        fun collectSlack (f, D.Closure {env, code}, slack) =
+          (case env
+             of D.Flat slots =>
+                  (case scanSharedEnvAndSlack (slots, [], 0)
+                     of ([], _) => slack
+                      | ([e], n) => recordSlack (slack, e, n, f)
+                      | (envs, n) =>
+                          let val (picked, others) = bestFit envs
+                          in  foldl (fn (e, slack) =>
+                                      recordSlack (slack, e, 0, f))
+                                    (recordSlack (slack, picked, n, f))
+                                    others
+                          end)
+              | D.FlatAny _ => raise Fail "unresolved flat any"
+              | D.Boxed env => recordSlack (slack, env, 0, f))
+        val slackmap = LCPS.FunMap.foldli collectSlack EnvID.Map.empty repr
+        (* val () = *)
+        (*   EnvID.Map.appi (fn (e, s) => *)
+        (*     app print [EnvID.toString e, " --> ", slackDataToString s, "\n"] *)
+        (*   ) slackmap *)
+        val slackmap =
+          EnvID.Map.mapPartial (fn NoSlack => NONE | Slack data => SOME data)
+                               slackmap
+        fun recordUse (usecnt, env', env) =
+          if not (EnvID.Map.inDomain (slackmap, env)) then
+            usecnt
+          else
+            EnvID.Map.insertWith (op@) (usecnt, env, [env'])
+        fun useCount (envid, D.Record (slots, _), usecnt) =
+              foldl (fn (D.EnvID e, usecnt) => recordUse (usecnt, envid, e)
+                      | (_, usecnt) => usecnt) usecnt slots
+          | useCount (_, _, usecnt) = usecnt
+        val usecnt = EnvID.Map.foldli useCount EnvID.Map.empty heap
+        (* val () = *)
+        (*   EnvID.Map.appi (fn (e, es) => *)
+        (*     app print [EnvID.toString e, " by ", *)
+        (*                String.concatWithMap "," EnvID.toString es, "\n"] *)
+        (*   ) usecnt *)
+        fun allocateSlack (env, (amount, functions), allocation) =
+          if EnvID.Map.inDomain (usecnt, env) then
+            allocation
+          else
+            let val pref = foldl (fn (f, pref) =>
+                    let val p = getPreference (looptbl, funtbl, syn, f)
+                    in  LV.Map.unionWith mergePref (pref, p)
+                    end
+                  ) LV.Map.empty functions
+                val slots =
+                  (case EnvID.Map.lookup (heap, env) handle e => raise e
+                     of D.Record (slots, true) => slots
+                      | _ => raise Fail "unexpected")
+                val (taken, remains) = pickNSlots (pref, heap, slots, amount)
+            in  EnvID.Map.insert (allocation, env, (remains, taken))
+            end
+        val allocation = EnvID.Map.foldli allocateSlack EnvID.Map.empty slackmap
+        (* val () = *)
+        (*   EnvID.Map.appi (fn (e, (remains, taken)) => *)
+        (*     app print [EnvID.toString e, " new ", *)
+        (*                String.concatWithMap "," D.slotToString remains, "/", *)
+        (*                String.concatWithMap "," D.slotToString taken, "\n"] *)
+        (*   ) allocation *)
+        fun fillslots ([], [], _) = []
+          | fillslots ([], _, _) = raise Fail "not enough NULL slots"
+          | fillslots (slots, [], _) = slots
+          | fillslots (D.Null :: slots, s :: taken, remove) =
+              s :: fillslots (slots, taken, remove)
+          | fillslots ((s as D.EnvID e) :: slots, taken, SOME e') =
+              if EnvID.same (e, e') then
+                fillslots (D.Null :: slots, taken, SOME e')
+              else
+                s :: fillslots (slots, taken, SOME e')
+          | fillslots (s :: slots, taken, remove) =
+              s :: fillslots (slots, taken, remove)
+        fun updateRepr (env, (remains, taken), (repr, heap, purge)) =
+          let val (amount, functions) = EnvID.Map.lookup (slackmap, env) handle e => raise e
+              val (heap, remove, purge) =
+                if List.null remains then 
+                  (#1 (EnvID.Map.remove (heap, env)),
+                   SOME env,
+                   EnvID.Set.add (purge, env))
+                else
+                  (EnvID.Map.insert (heap, env, D.Record (remains, true)),
+                   NONE,
+                   purge)
+              val repr = foldl (fn (f, repr) =>
+                  (case LCPS.FunMap.lookup (repr, f) handle e => raise e
+                     of D.Closure { env=D.Flat slots, code } =>
+                          let val clos = D.Closure {
+                                  env=D.Flat (fillslots (slots, taken, remove)),
+                                  code=code
+                                }
+                          in  LCPS.FunMap.insert (repr, f, clos)
+                          end
+                      | _ => raise Fail "expanding shared env used in non-flat")
+                ) repr functions
+          in  (repr, heap, purge)
+          end
+        val (repr, heap, purge) =
+          EnvID.Map.foldli updateRepr (repr, heap, EnvID.Set.empty) allocation
+        val allo = Group.Map.map (fn envs =>
+            List.filter (fn e => not (EnvID.Set.member (purge, e))) envs
+          ) allo
+    in  D.T {repr=repr, allo=allo, heap=heap}
+    end
+    handle e => raise e
+
   val _ = initial : LCPS.function * S.t -> D.t
   val _ = share   : S.t * CF.block * CF.funtbl * SA.result -> rewriting
+  val _ = unshare   : S.t * CF.funtbl * CF.looptbl -> rewriting
   val _ = analyze'n'flatten : S.t * W.t -> rewriting
   val _ = segregateMLValues  : rewriting
   val _ = removeKnownCodePtr : W.t * S.t -> rewriting
@@ -1242,6 +1431,7 @@ end = struct
           >>> unshare (syn, funtbl, looptbl)
           >>> analyze'n'flatten (syn, web)
           >>> allocate'n'expand (syn, web, funtbl, looptbl)
+          >>> fixOvershare (syn, funtbl, looptbl)
           >>> segregateMLValues
           >>> removeSingletonEnv
 
