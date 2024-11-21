@@ -1330,7 +1330,9 @@ end = struct
                   (case EnvID.Map.lookup (heap, env) handle e => raise e
                      of D.Record (slots, true) => slots
                       | _ => raise Fail "unexpected")
+                val (slots, mustRemain) = List.partition isMLSlot slots
                 val (taken, remains) = pickNSlots (pref, heap, slots, amount)
+                val remains = remains @ mustRemain
             in  EnvID.Map.insert (allocation, env, (remains, taken))
             end
         val allocation = EnvID.Map.foldli allocateSlack EnvID.Map.empty slackmap
@@ -1342,7 +1344,6 @@ end = struct
         (*   ) allocation *)
         fun fillslots ([], [], _) = []
           | fillslots ([], _, _) = raise Fail "not enough NULL slots"
-          | fillslots (slots, [], _) = slots
           | fillslots (D.Null :: slots, s :: taken, remove) =
               s :: fillslots (slots, taken, remove)
           | fillslots ((s as D.EnvID e) :: slots, taken, SOME e') =
@@ -1378,6 +1379,9 @@ end = struct
           end
         val (repr, heap, purge) =
           EnvID.Map.foldli updateRepr (repr, heap, EnvID.Set.empty) allocation
+        (* val () = (print "Purge:\n"; EnvID.Set.app (fn e => *)
+        (*     print (EnvID.toString e ^ "\n") *)
+        (*   ) purge) *)
         val allo = Group.Map.map (fn envs =>
             List.filter (fn e => not (EnvID.Set.member (purge, e))) envs
           ) allo
