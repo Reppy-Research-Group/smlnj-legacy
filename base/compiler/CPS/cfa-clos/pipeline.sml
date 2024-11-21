@@ -786,6 +786,7 @@ end = struct
 
   fun mergePref ((lvl1, prob1: real), (lvl2, prob2: real)) =
     let val lvl = Int.max (lvl1, lvl2)
+        (* val lvl = lvl1 + lvl2 *)
         val prob = prob1 + prob2
     in  (lvl, prob)
     end
@@ -871,16 +872,16 @@ end = struct
         fun pick (pref, heap, slots, n) : D.slot list * D.slot list =
           let val slotsWithPref =
                 map (fn s => (s, slotPref (s, heap, pref))) slots
-              (* fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) = *)
-              (*   if sameProb (prob1, prob2) then *)
-              (*     lvl1 < lvl2 *)
-              (*   else *)
-              (*     prob1 < prob2 *)
               fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) =
-                if lvl1 = lvl2 then
-                  prob1 < prob2
-                else
+                if sameProb (prob1, prob2) then
                   lvl1 < lvl2
+                else
+                  prob1 < prob2
+              (* fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) = *)
+              (*   if lvl1 = lvl2 then *)
+              (*     prob1 < prob2 *)
+              (*   else *)
+              (*     lvl1 < lvl2 *)
               (* TODO: Measure use counts *)
               val slots = ListMergeSort.sort gt slotsWithPref
               (* val () = ( *)
@@ -1339,7 +1340,7 @@ end = struct
         (* val () = *)
         (*   EnvID.Map.appi (fn (e, (remains, taken)) => *)
         (*     app print [EnvID.toString e, " new ", *)
-        (*                String.concatWithMap "," D.slotToString remains, "/", *)
+        (*                String.concatWithMap "," D.slotToString remains, " / ", *)
         (*                String.concatWithMap "," D.slotToString taken, "\n"] *)
         (*   ) allocation *)
         fun fillslots ([], [], _) = []
