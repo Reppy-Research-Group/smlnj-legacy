@@ -4,10 +4,8 @@
 #	run.sh [ --llvm ] prog
 #
 
-unalias echo
-
 NCOMPS=1
-NRUNS=1
+NRUNS=5
 
 if [ x"$1" = "x--new" ] ; then
   CC=yes

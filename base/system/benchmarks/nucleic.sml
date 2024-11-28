@@ -3170,13 +3170,13 @@ fun anticodon_constraint (i,t,n) partial_inst
 
     fun anticodon_length () = length(anticodon())
 
-end;
+end
 
-(* structure Main : BMARK = *)
-(*   struct *)
-(*     val name = "Nucleic" *)
-(*     fun doit () = (Nucleic.anticodon_length (); ()) *)
-(*     fun testit strm = TextIO.output(strm, concat[ *)
-(*             Int.toString (Nucleic.anticodon_length ()), "\n" *)
-(*           ]) *)
-(*   end; *)
+structure Main : BMARK =
+  struct
+    val name = "Nucleic"
+    fun doit () = (Nucleic.anticodon_length (); ())
+    fun testit strm = TextIO.output(strm, concat[
+            Int.toString (Nucleic.anticodon_length ()), "\n"
+          ])
+  end;

@@ -1357,7 +1357,7 @@ end = struct
         fun updateRepr (env, (remains, taken), (repr, heap, purge)) =
           let val (amount, functions) = EnvID.Map.lookup (slackmap, env) handle e => raise e
               val (heap, remove, purge) =
-                if List.null remains then 
+                if List.null remains then
                   (#1 (EnvID.Map.remove (heap, env)),
                    SOME env,
                    EnvID.Set.add (purge, env))
