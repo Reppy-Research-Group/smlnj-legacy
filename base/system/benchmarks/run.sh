@@ -4,7 +4,7 @@
 #	run.sh [ --llvm ] prog
 #
 
-NCOMPS=1
+NCOMPS=3
 NRUNS=10
 
 SML_IMPL='../../../bin/sml'
@@ -17,7 +17,7 @@ if [ x"$1" = "x--new" ] ; then
   OUT_SUFFIX="-new"
   shift
 elif [ x"$1" = "x--reg-limit" ] ; then
-  TAG=no-flat
+  TAG=reg-limit
   SML="$SML_IMPL -Cnc.enable=true"
   OUT_SUFFIX="-new"
   shift
