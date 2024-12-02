@@ -80,6 +80,7 @@ signature NEW_CLOSURE_CONTROL =
     val sharingDistCutOff : int ref
     val sharingSizeCutOff : int ref
     val sharingUseCutOff  : int ref
+    val sharingNoThinning : bool ref
 
     val dumpWeb      : bool ref
     val dumpDecision : bool ref

@@ -219,6 +219,10 @@ structure Control_NC : NEW_CLOSURE_CONTROL =
               "minimum number of times by which a shared closure has to be \
               \shared", 2)
 
+    val sharingNoThinning =
+      new (b, "flatten-no-thinning",
+              "whether to turn off thinning in the same closure", false)
+
     val dumpWeb = new (b, "dump-web", "dump call web", false)
     val dumpDecision = new (b, "dump-decision", "dump decision", false)
     val warnPath = 

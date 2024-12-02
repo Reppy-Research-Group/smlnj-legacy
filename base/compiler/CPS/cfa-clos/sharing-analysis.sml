@@ -504,7 +504,8 @@ end = struct
     let val (grpTbl, packTbl, replaceTbl) =
           preference (cps, syn, funtbl, loopTbl)
         val () = prune (grpTbl, packTbl, replaceTbl)
-        val () = thin (grpTbl, packTbl, syn)
+        val () =
+          if !Config.sharingNoThinning then () else thin (grpTbl, packTbl, syn)
 
         (* val () = Group.Tbl.appi (fn (g, pack) => *)
         (*   let val fs = S.groupFun syn g *)
