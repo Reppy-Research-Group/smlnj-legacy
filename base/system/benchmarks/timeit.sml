@@ -65,15 +65,13 @@ structure Timing : sig
 
   (* Time n runs of the benchmark *)
     fun time (n, outstrm, doit) = let
-          fun loop 0 = ()
+          fun loop 0 = (TextIO.output (outstrm, "],\n"))
             | loop i = (
                 output (outstrm, timeOne doit);
-                if (i > 1) then
-                  TextIO.output (outstrm, ", ")
-                else
-                  TextIO.output (outstrm, "\n");
+                TextIO.output (outstrm, ", ");
                 loop (i-1))
           in
+            TextIO.output (outstrm, "runs=[");
             loop n
           end
 
@@ -94,14 +92,14 @@ end = struct
         } end
 
   fun measurementToString { nbAlloc, nbPromote, nGCs } =
-    concat ["nbAlloc=", IntInf.toString nbAlloc, ", nbPromote=", IntInf.toString
-    nbPromote, ", nGCs=[",  String.concatWithMap "," IntInf.toString nGCs, "]\n"]
+    concat ["alloc={ nbAlloc=", IntInf.toString nbAlloc, ", nbPromote=", IntInf.toString
+    nbPromote, ", nGCs=[",  String.concatWithMap "," IntInf.toString nGCs, "]}\n"]
 
   fun report (outstrm, measurement) =
     TextIO.output (outstrm, measurementToString measurement)
 
   fun measure (outstrm, doit) =
-    let 
+    let
         (* val () = SMLofNJ.Internals.GC.messages true *)
         val () = reset true
         val _ = doit ()
