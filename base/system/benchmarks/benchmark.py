@@ -12,22 +12,24 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 PROGRAMS = [
-    'hamlet2',
-    'vliw',
-    'barnes-hut',
-    'life',
-    'mc-ray',
+    # 'hamlet2',
+    # 'vliw',
+    # 'barnes-hut',
+    # 'life',
+    # 'mc-ray',
     'lexgen',
-    'mandelbrot',
-    'mandelbrot-int'
+    # 'mandelbrot',
+    # 'mandelbrot-int'
 ]
 
 OPTIONS = [
     '--new',
-    '--reg-limit',
+    # '--reg-limit',
     '--no-flatten',
+    '--no-active-sharing',
+    '--no-sharing',
     '--flat-closure',
-    '--conservative',
+    # '--conservative',
     '--old'
 ]
 

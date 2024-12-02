@@ -13,7 +13,7 @@ SML_IMPL='../../../bin/sml'
 if [ x"$1" = "x--new" ] ; then
   TAG=new
   # SML="../../../bin/sml -Cnc.enable=true -Cnc.flatten-reg-limit=false"
-  SML="$SML_IMPL -Cnc.enable=true"
+  SML="$SML_IMPL -Cnc.enable=true -Cnc.flatten-reg-limit=false"
   OUT_SUFFIX="-new"
   shift
 elif [ x"$1" = "x--reg-limit" ] ; then
@@ -28,12 +28,22 @@ elif [ x"$1" = "x--no-flatten" ] ; then
   shift
 elif [ x"$1" = "x--flat-closure" ] ; then
   TAG=flat-closure
-  SML="$SML_IMPL -Cnc.enable=true -Cnc.flat-closure=true"
+  SML="$SML_IMPL -Cnc.enable=true -Cnc.sharing-size-cutoff=100000 -Cnc.sharing-no-thinning=true -Cnc.flatten-policy=0"
   OUT_SUFFIX="-new"
   shift
 elif [ x"$1" = "x--conservative" ] ; then
   TAG=conservative
   SML="$SML_IMPL -Cnc.enable=true -Cnc.flatten-liberally=false"
+  OUT_SUFFIX="-new"
+  shift
+elif [ x"$1" = "x--no-active-sharing" ] ; then
+  TAG="no-active-sharing"
+  SML="$SML_IMPL -Cnc.enable=true -Cnc.sharing-size-cutoff=100000"
+  OUT_SUFFIX="-new"
+  shift
+elif [ x"$1" = "x--no-sharing" ] ; then
+  TAG="no-sharing"
+  SML="$SML_IMPL -Cnc.enable=true -Cnc.sharing-size-cutoff=100000 -Cnc.sharing-no-thinning=true"
   OUT_SUFFIX="-new"
   shift
 elif [ x"$1" = "x--old" ] ; then
