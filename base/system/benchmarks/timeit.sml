@@ -71,7 +71,7 @@ structure Timing : sig
                 TextIO.output (outstrm, ", ");
                 loop (i-1))
           in
-            TextIO.output (outstrm, "runs=[");
+            TextIO.output (outstrm, "\"runs\" : [");
             loop n
           end
 
@@ -92,8 +92,9 @@ end = struct
         } end
 
   fun measurementToString { nbAlloc, nbPromote, nGCs } =
-    concat ["alloc={ nbAlloc=", IntInf.toString nbAlloc, ", nbPromote=", IntInf.toString
-    nbPromote, ", nGCs=[",  String.concatWithMap "," IntInf.toString nGCs, "]}\n"]
+    concat ["\"alloc\" : { \"nbAlloc\": ", IntInf.toString nbAlloc,
+            ", \"nbPromote\" : ", IntInf.toString nbPromote, ", \"nGCs\" : [",
+            String.concatWithMap "," IntInf.toString nGCs, "]}\n"]
 
   fun report (outstrm, measurement) =
     TextIO.output (outstrm, measurementToString measurement)
