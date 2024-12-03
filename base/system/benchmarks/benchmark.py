@@ -23,7 +23,7 @@ PROGRAMS = [
     'mc-ray',
     'lexgen',
     'mandelbrot',
-    'mandelbrsst-int',
+    'mandelbrot-int',
     'nucleic',
 ]
 
