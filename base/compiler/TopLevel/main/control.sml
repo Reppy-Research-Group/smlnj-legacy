@@ -220,7 +220,7 @@ structure Control_NC : NEW_CLOSURE_CONTROL =
               \shared", 2)
 
     val sharingNoThinning =
-      new (b, "flatten-no-thinning",
+      new (b, "sharing-no-thinning",
               "whether to turn off thinning in the same closure", false)
 
     val dumpWeb = new (b, "dump-web", "dump call web", false)
