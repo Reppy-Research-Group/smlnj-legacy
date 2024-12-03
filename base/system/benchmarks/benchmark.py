@@ -23,7 +23,8 @@ PROGRAMS = [
     'mc-ray',
     'lexgen',
     'mandelbrot',
-    'mandelbrot-int'
+    'mandelbrsst-int',
+    'nucleic',
 ]
 
 OPTIONS = [
@@ -77,18 +78,13 @@ def runbench(task_id, program):
         progress.console.log(data)
 
         progress.advance(task_id)
-
-    progress.advance(overall_task)
     return (program, { 'runtimes': runtimes, 'profiles': profiles })
 
 results = {}
-with progress:
-    overall_task = progress.add_task("All", flag="", step="", total=len(PROGRAMS))
-
-    with ThreadPoolExecutor(max_workers=4) as pool:
+with progress, ThreadPoolExecutor(max_workers=4) as pool:
         futures = []
         for program in PROGRAMS:
-            program_task = progress.add_task(program, flag="", step="", total=len(OPTIONS))
+            program_task = progress.add_task(program, flag="", step="", start=False, total=len(OPTIONS))
             fut = pool.submit(runbench, program_task, program)
             futures.append(fut)
 
