@@ -108,4 +108,3 @@ end = struct
     in  report (outstrm, measurement)
     end
 end
-

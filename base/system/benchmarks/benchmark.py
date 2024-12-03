@@ -4,6 +4,10 @@ import os
 import subprocess
 import json
 from datetime import datetime
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    as_completed,
+)
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -12,14 +16,14 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 PROGRAMS = [
-    # 'hamlet2',
-    # 'vliw',
-    # 'barnes-hut',
-    # 'life',
-    # 'mc-ray',
+    'hamlet2',
+    'vliw',
+    'barnes-hut',
+    'life',
+    'mc-ray',
     'lexgen',
-    # 'mandelbrot',
-    # 'mandelbrot-int'
+    'mandelbrot',
+    'mandelbrot-int'
 ]
 
 OPTIONS = [
@@ -36,33 +40,60 @@ OPTIONS = [
 results = []
 
 progress = Progress(
-    TextColumn("[progress.description]{task.description} {task.fields[curr]}"),
+    TextColumn("[progress.description]{task.description} {task.fields[flag]} {task.fields[step]}"),
     BarColumn(),
     MofNCompleteColumn(),
-    TimeElapsedColumn()
+    TimeElapsedColumn(),
+    transient=True
 )
 
-with progress:
-    program_task = progress.add_task("Programs", curr="", total=len(PROGRAMS))
-    options_task = progress.add_task("Options", curr="", total=len(OPTIONS))
+def runbench(task_id, program):
+    progress.start_task(task_id)
+    runtimes = []
+    profiles = []
+    for option in OPTIONS:
+        progress.update(task_id, flag=option, step='measure')
+        with open(os.devnull, "wb") as devnull:
+            subprocess.check_call(
+                ['./run.sh', option, program],
+                stdout=devnull,
+                stderr=subprocess.STDOUT
+            )
+        with open(f"{program}-data", "r") as file:
+            data = eval(file.read())
+        runtimes.append(data)
+        progress.console.log(data)
 
-    for program in PROGRAMS:
-        progress.update(program_task, curr=program)
-        for option in OPTIONS:
-            progress.update(options_task, curr=option)
-            with open(os.devnull, "wb") as devnull:
-                subprocess.check_call(
-                    ['./run.sh', option, program],
-                    stdout=devnull,
-                    stderr=subprocess.STDOUT
-                )
-            with open(f"{program}-data", "r") as file:
-                result = eval(file.read())
-                results.append(result)
-                print(result)
-            progress.advance(options_task)
-        progress.reset(options_task)
-        progress.advance(program_task)
+        progress.update(task_id, flag=option, step='profile')
+        with open(os.devnull, "wb") as devnull:
+            subprocess.check_call(
+                ['./profile.sh', option, program],
+                stdout=devnull,
+                stderr=subprocess.STDOUT
+            )
+        with open(f"{program}-profile", "r") as file:
+            data = eval(file.read())
+        profiles.append(data)
+        progress.console.log(data)
+
+        progress.advance(task_id)
+
+    return (program, { 'runtimes': runtimes, 'profiles': profiles })
+
+results = {}
+with progress:
+    overall_task = progress.add_task("All", flag="", step="", total=len(PROGRAMS))
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = []
+        for program in PROGRAMS:
+            program_task = progress.add_task(program, flag="", step="", total=len(OPTIONS))
+            fut = pool.submit(runbench, program_task, program)
+            futures.append(fut)
+
+        for fut in as_completed(futures):
+            program, result = fut.result()
+            results[program] = result
 
 result_filename = datetime.now().strftime("benchmark_%Y%m%d_%H%M%S.json")
 
