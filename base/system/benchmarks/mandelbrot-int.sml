@@ -65,7 +65,7 @@ structure Main :> sig val doit : unit -> unit val testit : unit -> unit end =
     val side = 5 over 4
 
     val sz = 256
-    val maxCount = 1024
+    val maxCount = 512
 
     val delta = side // sz
 
