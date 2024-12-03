@@ -78,6 +78,7 @@ def runbench(task_id, program):
 
         progress.advance(task_id)
 
+    progress.advance(overall_task)
     return (program, { 'runtimes': runtimes, 'profiles': profiles })
 
 results = {}
