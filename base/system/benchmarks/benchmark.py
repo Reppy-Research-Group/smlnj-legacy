@@ -29,10 +29,12 @@ PROGRAMS = [
 
 OPTIONS = [
     '--new',
+    '--space',
+    '--time',
     # '--reg-limit',
     '--no-flatten',
     '--no-active-sharing',
-    '--no-sharing',
+    # '--no-sharing',
     '--flat-closure',
     '--conservative',
     '--old'

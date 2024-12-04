@@ -76,7 +76,7 @@ progress = Progress(
 )
 
 results = defaultdict(list)
-with progress, ThreadPoolExecutor(max_workers=32) as pool:
+with progress, ThreadPoolExecutor(max_workers=15) as pool:
     total = progress.add_task("All", total=len(all_tasks))
     futures = []
     for program, param in all_tasks:

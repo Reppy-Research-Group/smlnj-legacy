@@ -31,6 +31,16 @@ elif [ x"$1" = "x--no-sharing" ] ; then
   TAG="no-sharing"
   SML="$SML_IMPL -Cnc.enable=true -Cnc.sharing-size-cutoff=100000 -Cnc.sharing-no-thinning=true"
   shift
+elif [ x"$1" = "x--time" ] ; then
+  TAG="time"
+  SML="$SML_IMPL -Cnc.enable=true -Cnc.sharing-size-cutoff=7 -Cnc.sharing-dist-cutoff=1 -Cnc.sharing-use-cutoff=1 -Cnc.flatten-selfref=true -Cnc.flatten-liberally=false"
+  OUT_SUFFIX="-new"
+  shift
+elif [ x"$1" = "x--space" ] ; then
+  TAG="space"
+  SML="$SML_IMPL -Cnc.enable=true -Cnc.sharing-size-cutoff=3 -Cnc.sharing-dist-cutoff=1 -Cnc.sharing-use-cutoff=4 -Cnc.flatten-selfref=true -Cnc.flatten-liberally=true"
+  OUT_SUFFIX="-new"
+  shift
 elif [ x"$1" = "x--old" ] ; then
   TAG=old
   SML="../../../../reference-legacy/bin/sml -Cnc.enable=false"

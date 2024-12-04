@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SML='../../../bin/sml'
-NRUNS=3
+NRUNS=5
 
 prog="$1"
 shift
