@@ -196,7 +196,7 @@ structure Control_NC : NEW_CLOSURE_CONTROL =
       new (i, "flatten-policy", "select policy for closure flattening", 1)
     val flattenLiberally =
       new (b, "flatten-liberally",
-              "use max to resolve arity among functions in the same web", false)
+              "use max to resolve arity among functions in the same web", true)
     val flattenSelfRef =
       new (b, "flatten-selfref",
               "whether to flatten self-referential environments", true)
@@ -212,12 +212,12 @@ structure Control_NC : NEW_CLOSURE_CONTROL =
 
     val sharingSizeCutOff =
       new (i, "sharing-size-cutoff",
-              "minimum size of a shared closure", 7)
+              "minimum size of a shared closure", 4)
 
     val sharingUseCutOff =
       new (i, "sharing-use-cutoff",
               "minimum number of times by which a shared closure has to be \
-              \shared", 1)
+              \shared", 2)
 
     val sharingNoThinning =
       new (b, "sharing-no-thinning",
