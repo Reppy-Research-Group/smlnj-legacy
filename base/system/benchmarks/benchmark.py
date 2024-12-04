@@ -34,7 +34,7 @@ OPTIONS = [
     '--no-active-sharing',
     '--no-sharing',
     '--flat-closure',
-    # '--conservative',
+    '--conservative',
     '--old'
 ]
 
