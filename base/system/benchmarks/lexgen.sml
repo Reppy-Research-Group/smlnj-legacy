@@ -130,6 +130,7 @@ we'll chose the transition from 3 to 4, and end up with "ab"
 as our token, when we should have "a" as our token.
 
 *)
+local
 
 functor RedBlack(B : sig type key
                          val > : key*key->bool
@@ -386,7 +387,7 @@ with
            if String.sub(!b,!p) = #"\n"
               then LineNum := !LineNum - 1
               else ())
-end;
+end
 
 exception Error
 
@@ -1302,6 +1303,7 @@ fun lexGen(infile) =
     end
 end
 
+in
 structure Main :> sig val doit : unit -> unit end =
   struct
     fun testFile () = OS.FileSys.getDir() ^ "/DATA/ml.lex"
@@ -1311,3 +1313,4 @@ structure Main :> sig val doit : unit -> unit end =
     fun testit _ = LexGen.lexGen (testFile ())
 
   end (* Main *)
+end
