@@ -634,8 +634,8 @@ end = struct
         val replacement = LCPS.FunMap.foldli clearNecessary replacement repr
 
         val () = EnvID.Map.appi
-          (fn (e, s) => print ("Removing: " ^ EnvID.toString e ^ " --> " ^ D.slotToString
-          s ^  "\n"))
+          (fn (e, s) => print (
+            "Removing: " ^ EnvID.toString e ^ " --> " ^ D.slotToString s ^ "\n"))
           replacement
 
         fun replace (x as D.EnvID e) =
@@ -660,8 +660,7 @@ end = struct
                   (case replace (D.EnvID e)
                      of (D.EnvID e') =>
                           D.Closure { code=code, env=D.Boxed e' }
-                      | _ =>
-                        raise Fail (EnvID.toString e ^ "boxed becomes unboxed"))
+                      | _ => raise Fail "boxed becomes unboxed")
               | D.FlatAny slots => raise Fail "unresolved flat any"
               | D.Flat slots =>
                   D.Closure { code=code, env=D.Flat (map replace slots) })
