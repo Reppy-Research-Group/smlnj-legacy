@@ -633,10 +633,10 @@ end = struct
               | _ => singletons)
         val replacement = LCPS.FunMap.foldli clearNecessary replacement repr
 
-        val () = EnvID.Map.appi
-          (fn (e, s) => print (
-            "Removing: " ^ EnvID.toString e ^ " --> " ^ D.slotToString s ^ "\n"))
-          replacement
+        (* val () = EnvID.Map.appi *)
+        (*   (fn (e, s) => print ( *)
+        (*     "Removing: " ^ EnvID.toString e ^ " --> " ^ D.slotToString s ^ "\n")) *)
+        (*   replacement *)
 
         fun replace (x as D.EnvID e) =
               (case EnvID.Map.find (replacement, e)
