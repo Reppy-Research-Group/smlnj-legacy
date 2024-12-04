@@ -625,14 +625,18 @@ end = struct
                   in  if EnvID.same (e, e') then
                         remove (singletons, e)
                       else
-                        EnvID.Map.insert (singletons, e, D.EnvID e')
+                        remove (
+                          EnvID.Map.insert (singletons, e, D.EnvID e'),
+                          e'
+                        )
                   end
               | _ => singletons)
         val replacement = LCPS.FunMap.foldli clearNecessary replacement repr
 
-        (* val () = EnvID.Map.appi *)
-        (*   (fn (e, _) => print ("Removing: " ^ EnvID.toString e ^ "\n")) *)
-        (*   replacement *)
+        val () = EnvID.Map.appi
+          (fn (e, s) => print ("Removing: " ^ EnvID.toString e ^ " --> " ^ D.slotToString
+          s ^  "\n"))
+          replacement
 
         fun replace (x as D.EnvID e) =
               (case EnvID.Map.find (replacement, e)
@@ -656,7 +660,8 @@ end = struct
                   (case replace (D.EnvID e)
                      of (D.EnvID e') =>
                           D.Closure { code=code, env=D.Boxed e' }
-                      | _ => raise Fail "boxed becomes unboxed")
+                      | _ =>
+                        raise Fail (EnvID.toString e ^ "boxed becomes unboxed"))
               | D.FlatAny slots => raise Fail "unresolved flat any"
               | D.Flat slots =>
                   D.Closure { code=code, env=D.Flat (map replace slots) })
