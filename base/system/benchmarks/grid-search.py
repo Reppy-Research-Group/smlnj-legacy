@@ -9,6 +9,7 @@ from concurrent.futures import (
     ThreadPoolExecutor,
     as_completed,
 )
+from collections import defaultdict
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -22,22 +23,22 @@ booleans = ["true", "false"]
 
 PARAMETERS = {
     "flatten-selfref": booleans,
-    # "flatten-liberally": booleans,
-    # "sharing-dist-cutoff": range(1, 5),
-    # "sharing-size-cutoff": range(2, 10),
-    # "sharing-use-cutoff": range(1, 5),
+    "flatten-liberally": booleans,
+    "sharing-dist-cutoff": range(1, 5),
+    "sharing-size-cutoff": range(2, 10),
+    "sharing-use-cutoff": range(1, 5),
 }
 
 PROGRAMS = [
     # 'hamlet2',
-    # 'vliw',
-    # 'barnes-hut',
+    'vliw',
+    'barnes-hut',
     'life',
-    # 'mc-ray',
-    # 'lexgen',
-    # 'mandelbrot',
-    # 'mandelbrot-int',
-    # 'nucleic',
+    'mc-ray',
+    'lexgen',
+    'mandelbrot',
+    'mandelbrot-int',
+    'nucleic',
 ]
 
 def get_grid(parameters):
@@ -74,8 +75,8 @@ progress = Progress(
     TimeRemainingColumn(),
 )
 
-results = {}
-with progress, ThreadPoolExecutor(max_workers=1) as pool:
+results = defaultdict(list)
+with progress, ThreadPoolExecutor(max_workers=32) as pool:
     total = progress.add_task("All", total=len(all_tasks))
     futures = []
     for program, param in all_tasks:
@@ -84,7 +85,7 @@ with progress, ThreadPoolExecutor(max_workers=1) as pool:
 
     for fut in as_completed(futures):
         param_id, result = fut.result()
-        results[param_id] = result
+        results[param_id].append(result)
 
 report = {
     "params": dict(grid),
