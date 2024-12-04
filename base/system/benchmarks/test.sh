@@ -9,7 +9,7 @@ out_file=$(mktemp "$prog-XXXXX")
 flags=$@
 
 echo "{\"bmark\" : \"$prog\", \"flags\":\"$@\", " > $out_file
-$SML $flags <<EOF 2>&1
+$SML $flags <<EOF > /dev/null 2>&1
   use "timeit.sml";
   use "$prog.sml";
   val outS = TextIO.openAppend("$out_file");
