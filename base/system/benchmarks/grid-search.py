@@ -3,6 +3,7 @@
 import os
 import subprocess
 import json
+from random import shuffle
 from itertools import product
 from datetime import datetime
 from concurrent.futures import (
@@ -24,6 +25,7 @@ booleans = ["true", "false"]
 PARAMETERS = {
     "flatten-selfref": booleans,
     "flatten-liberally": booleans,
+    "flatten-reg-limit": booleans,
     "sharing-dist-cutoff": range(1, 5),
     "sharing-size-cutoff": range(2, 10),
     "sharing-use-cutoff": range(1, 5),
@@ -66,6 +68,7 @@ def test_param(program, param):
 
 grid = list(get_grid(PARAMETERS))
 all_tasks = list(get_program_param(PROGRAMS, grid))
+shuffle(all_tasks)
 
 progress = Progress(
     TextColumn("[progress.description]{task.description}"),

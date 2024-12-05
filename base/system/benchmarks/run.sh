@@ -48,12 +48,12 @@ elif [ x"$1" = "x--no-sharing" ] ; then
   shift
 elif [ x"$1" = "x--time" ] ; then
   TAG="time"
-  SML="$SML_IMPL -Cnc.enable=true -Cnc.sharing-size-cutoff=7 -Cnc.sharing-dist-cutoff=1 -Cnc.sharing-use-cutoff=1 -Cnc.flatten-selfref=true -Cnc.flatten-liberally=false"
+  SML="$SML_IMPL -Cnc.enable=true -Cnc.flatten-reg-limit=false -Cnc.sharing-size-cutoff=6 -Cnc.sharing-dist-cutoff=1 -Cnc.sharing-use-cutoff=1 -Cnc.flatten-selfref=true -Cnc.flatten-liberally=false"
   OUT_SUFFIX="-new"
   shift
 elif [ x"$1" = "x--space" ] ; then
   TAG="space"
-  SML="$SML_IMPL -Cnc.enable=true -Cnc.sharing-size-cutoff=3 -Cnc.sharing-dist-cutoff=1 -Cnc.sharing-use-cutoff=4 -Cnc.flatten-selfref=true -Cnc.flatten-liberally=true"
+  SML="$SML_IMPL -Cnc.enable=true -Cnc.flatten-reg-limit=true -Cnc.sharing-size-cutoff=3 -Cnc.sharing-dist-cutoff=1 -Cnc.sharing-use-cutoff=1 -Cnc.flatten-selfref=false -Cnc.flatten-liberally=true"
   OUT_SUFFIX="-new"
   shift
 elif [ x"$1" = "x--old" ] ; then
