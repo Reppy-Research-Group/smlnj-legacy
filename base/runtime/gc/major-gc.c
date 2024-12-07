@@ -170,13 +170,8 @@ void MajorGC (ml_state_t *msp, ml_val_t **roots, int level)
     bibop_t	bibop = BIBOP;
     int		i, j;
     int		maxCollectedGen;	/* the oldest generation being collected */
-    int		maxSweptGen;            /* the oldest generation being scanned. */
-#ifdef GC_STATS
-    /* An array remember the top address for each arena in the maxSwept generation.
-     * We use this to count how many bytes have been forwarded into that generation.
-     */
-    ml_val_t	*maxSweptTop[NUM_ARENAS];
-#endif
+    int		maxSweptGen;
+    ml_val_t	*tospTop[NUM_ARENAS]; /* for counting # of bytes forwarded */
 
 #ifndef PAUSE_STATS	/* don't do timing when collecting pause data */
     StartGCTimer(msp->ml_vproc);
@@ -189,12 +184,10 @@ void MajorGC (ml_state_t *msp, ml_val_t **roots, int level)
     maxCollectedGen = Flip (heap, level);
     if (maxCollectedGen < heap->numGens) {
 	maxSweptGen = maxCollectedGen+1;
-#ifdef GC_STATS
       /* Remember the top of to-space for maxSweptGen */
 	for (i = 0;  i < NUM_ARENAS;  i++) {
-	    maxSweptTop[i] = heap->gen[maxSweptGen-1]->arena[i]->nextw;
+	    tospTop[i] = heap->gen[maxSweptGen-1]->arena[i]->nextw;
         }
-#endif /* GC_STATS */
     }
     else {
 	maxSweptGen = maxCollectedGen;
@@ -363,26 +356,22 @@ void MajorGC (ml_state_t *msp, ml_val_t **roots, int level)
 
     HeapMon_UpdateHeap (heap, maxSweptGen);
 
-#ifdef GC_STATS
     /* Count the number of forwarded bytes */
+    if (maxSweptGen != maxCollectedGen) {
+	gen_t *gen = heap->gen[maxSweptGen-1];
+	for (j = 0;  j < NUM_ARENAS;  j++) {
+	    CNTR_INCR(&(heap->numCopied[maxSweptGen-1][j]),
+		gen->arena[j]->nextw - tospTop[j]);
+	}
+    }
     for (i = 0;  i < maxCollectedGen;  i++) {
 	for (j = 0;  j < NUM_ARENAS;  j++) {
-	    arena_t *ap = heap->gen[i]->arena[j];
+	    arena_t	*ap = heap->gen[i]->arena[j];
 	    if (isACTIVE(ap)) {
-		CNTR_INCR(&(heap->numCopied[i][j]),
-                    (Addr_t)ap->nextw - (Addr_t)ap->tospBase);
+		CNTR_INCR(&(heap->numCopied[i][j]), ap->nextw - tospTop[j]);
 	    }
 	}
     }
-    if (maxSweptGen != maxCollectedGen) {
-        /* we also count the bytes copied into maxSweptGen */
-	gen_t	*gen = heap->gen[maxSweptGen-1];
-	for (j = 0;  j < NUM_ARENAS;  j++) {
-	    CNTR_INCR(&(heap->numCopied[maxSweptGen-1][j]),
-		(Addr_t)gen->arena[j]->nextw - (Addr_t)maxSweptTop[j]);
-	}
-    }
-#endif
 
 #ifdef BO_REF_STATS
 SayDebug ("bigobj stats: %d seen, %d lookups, %d forwarded\n",

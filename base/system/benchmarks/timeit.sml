@@ -81,30 +81,41 @@ structure Measuring : sig
   val measure : TextIO.outstream * (unit -> 'a) -> unit
 end = struct
   structure CI = Unsafe.CInterface
-  val read' : unit -> word * word * word list = CI.c_function "SMLNJ-RunT" "gcCounterRead"
-  val reset : bool -> unit = CI.c_function "SMLNJ-RunT" "gcCounterReset"
+  val read' : unit -> word * word * word * word * word list =
+        CI.c_function "SMLNJ-RunT" "gcCounterRead"
+  val reset : bool -> unit =
+        CI.c_function "SMLNJ-RunT" "gcCounterReset"
   fun read () = let
-        val (a, p, ngcs) = read'()
+        (* results are:
+         *   s     -- scaling factor for allocation counts
+         *   a     -- scaled nursery allocation count
+         *   a1    -- scaled first-generation allocation count
+         *   p     -- scaled count of promotions to first generation
+         *   ngcs  -- number of collections by generation
+         *)
+        val (s, a, a1, p, ngcs) = read'()
+        val scale = Word.toLargeInt s
         in {
-          nbAlloc = Word.toLargeInt a,
-          nbPromote = Word.toLargeInt p,
+          nbAlloc = scale * Word.toLargeInt a,
+          nbPromote = scale * Word.toLargeInt p,
           nGCs = List.map Word.toLargeInt ngcs
         } end
 
-  fun measurementToString { nbAlloc, nbPromote, nGCs } =
-    concat ["\"alloc\" : { \"nbAlloc\": ", IntInf.toString nbAlloc,
-            ", \"nbPromote\" : ", IntInf.toString nbPromote, ", \"nGCs\" : [",
-            String.concatWithMap "," IntInf.toString nGCs, "]}\n"]
+  fun measurementToString { nbAlloc, nbPromote, nGCs } = concat [
+          "\"alloc\" : { \"nbAlloc\": ", IntInf.toString nbAlloc,
+          ", \"nbPromote\" : ", IntInf.toString nbPromote, ", \"nGCs\" : [",
+          String.concatWithMap "," IntInf.toString nGCs, "]}\n"
+        ]
 
   fun report (outstrm, measurement) =
-    TextIO.output (outstrm, measurementToString measurement)
+        TextIO.output (outstrm, measurementToString measurement)
 
-  fun measure (outstrm, doit) =
-    let
+  fun measure (outstrm, doit) = let
         (* val () = SMLofNJ.Internals.GC.messages true *)
         val () = reset true
         val _ = doit ()
         val measurement = read ()
-    in  report (outstrm, measurement)
-    end
+        in
+          report (outstrm, measurement)
+        end
 end
