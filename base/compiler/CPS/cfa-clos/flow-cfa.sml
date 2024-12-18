@@ -53,10 +53,11 @@ end = struct
   }
 
   structure Value :> sig
-    datatype t = Function of LCPS.function
-               | Record   of int * lvar
-               | Mutable  of lvar
-               | Value    of LCPS.cty (* TODO: flatten *)
+    datatype t = Function  of LCPS.function
+               | Record    of int * lvar
+               | RecordAny of int
+               | Mutable   of lvar
+               | Value     of LCPS.cty (* TODO: flatten *)
 
     val hash : t -> word
     val same : t * t -> bool
@@ -65,16 +66,18 @@ end = struct
     structure Set : ORD_SET where type Key.ord_key = t
     structure HashSet : MONO_HASH_SET where type Key.hash_key = t
   end = struct
-    datatype t = Function of LCPS.function
-               | Record   of int * lvar
-               | Mutable  of lvar
-               | Value    of LCPS.cty
+    datatype t = Function  of LCPS.function
+               | Record    of int * lvar
+               | RecordAny of int
+               | Mutable   of lvar
+               | Value     of LCPS.cty
 
     fun hash v =
       let val funtag = 0w0
           val rectag = 0w1
           val muttag = 0w2
           val valtag = 0w3
+          val rcatag = 0w4
           val hashvar = Word.fromInt o LV.toId
           fun hashTy (CPS.NUMt _) = 0w0
             | hashTy (CPS.PTRt _) = 0w1
@@ -84,6 +87,7 @@ end = struct
       in  case v
             of Function f => hashCombine (funtag, hashvar (#2 f))
              | Record (i, v) => hashCombine (Word.fromInt i + 0w4, hashvar v)
+             | RecordAny i => hashMix (Word.fromInt i + 0w8)
              | Mutable v => hashCombine (muttag, hashvar v)
              | Value ty => hashCombine (valtag, hashTy ty)
       end
@@ -91,6 +95,7 @@ end = struct
     fun same (Function f1, Function f2) = LV.same (#2 f1, #2 f2)
       | same (Record (i1, v1), Record (i2, v2)) =
           i1 = i2 andalso LV.same (v1, v2)
+      | same (RecordAny i1, RecordAny i2) = i1 = i2
       | same (Mutable v1, Mutable v2) = LV.same (v1, v2)
       | same (Value ty1, Value ty2) =
           (case (ty1, ty2) (* Do we only care about the first level? *)
@@ -111,6 +116,9 @@ end = struct
               | order => order)
       | compare (Record _, _) = GREATER
       | compare (_, Record _) = LESS
+      | compare (RecordAny i1, RecordAny i2) = Int.compare (i1, i2)
+      | compare (RecordAny _, _) = GREATER
+      | compare (_, RecordAny _) = LESS
       | compare (Mutable v1, Mutable v2) = LV.compare (v1, v2)
       | compare (Mutable _, _) = GREATER
       | compare (_, Mutable _) = LESS
@@ -133,6 +141,8 @@ end = struct
     fun toString (Function f) = LV.lvarName (#2 f) ^ "[f]"
       | toString (Record (i, v)) =
           concat ["{.", Int.toString i, " = ", LV.lvarName v, "} [R]"]
+      | toString (RecordAny i) =
+          concat ["{.", Int.toString i, " = Any } [R]"]
       | toString (Mutable v) = concat [LV.lvarName v, "[REF]"]
       | toString (Value cty) = CPSUtil.ctyToString cty
 
@@ -414,6 +424,7 @@ end = struct
               let fun collect (Function f, {known, unknown}) =
                         {known=f::known, unknown=unknown}
                     | collect (Record _, acc) = acc
+                    | collect (RecordAny _, acc) = acc
                     | collect (Mutable _, acc) = acc
                     | collect (Value (CPS.FUNt | CPS.CNTt | CPS.PTRt _),
                                {known, unknown}) =
@@ -460,6 +471,7 @@ end = struct
           fun valueSetTally set =
             let fun v (Function _, ls) = 0 :: ls
                   | v (Record _, ls) = 1 :: ls
+                  | v (RecordAny _, ls) = 4 :: ls
                   | v (Mutable _, ls) = 2 :: ls
                   | v (Value _, ls) = 3 :: ls
                 fun v (fact as Record _, ls) = Word.toInt (Value.hash fact mod 0w16) :: ls
@@ -874,6 +886,13 @@ end = struct
               (fn SELECT (_, i, _, dest, _, _) =>
                     if i = i' then add (v >-> dest) else ()
                 | cexp => record (cexp, x))
+        | propagateValue (RecordAny i', x) =
+            forallUsesOf x
+              (fn SELECT (_, i, _, dest, ty, _) =>
+                    if i = i' then add (fromType (dest, ty)) else ()
+                | RECORD (_, _, fields, dest, _) =>
+                    add (RecordAny (#1 (fieldOf (fields, x))) --> dest)
+                | _ => ())
         | propagateValue (Mutable r, x) =
             forallUsesOf x
               (* TODO: ignore unboxed assign, handle update *)
@@ -900,7 +919,7 @@ end = struct
                  * just need to handle the case of PTRt. *)
 
                 | RECORD (_, _, fields, dest, _) =>
-                    add (Value bogusTy --> dest)
+                    add (RecordAny (#1 (fieldOf (fields, x))) --> dest)
                 | PURE   (_, _, _, dest, ty, _) =>
                     add (fromType (dest, ty))
                 | _ => ())
@@ -915,6 +934,7 @@ end = struct
                  transitivity (Value CPS.FUNt, v);
                  forallValuesOf v escape)
               else ()
+        | escape (RecordAny _) = ()
         | escape (Value _) = ()
       and record (cexp, x) =
             (case cexp
