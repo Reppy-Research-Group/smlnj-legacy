@@ -296,7 +296,7 @@ functor MLRiscGen (
           fun addTypBinding (x, ty) = Tbl.insert typTbl (x, ty) (* TODO: HERE *)
           fun typmap x = Tbl.lookup typTbl x
                          handle TypTbl =>
-                         (print (LambdaVar.lvarName x ^ " missing in typTbl"); 
+                         (print (LambdaVar.lvarName x ^ " missing in typTbl");
                           raise TypTbl)
 
 	(*
@@ -459,7 +459,7 @@ functor MLRiscGen (
 	     * The following function looks up the MLTREE expression associated
 	     * with a general purpose value expression.
 	     *)
-    fun lookupGpRegTbl x = Tbl.lookup gpRegTbl x
+              fun lookupGpRegTbl x = Tbl.lookup gpRegTbl x
                            handle RegMap => (print (LambdaVar.lvarName x ^ " gp unbound");
                                              raise RegMap)
 
@@ -507,7 +507,7 @@ functor MLRiscGen (
 	     * The following function looks up the MLTREE expression associated
 	     * with a floating point value expression.
 	     *)
-            fun lookupFpRegTbl v = Tbl.lookup fpRegTbl v
+              fun lookupFpRegTbl v = Tbl.lookup fpRegTbl v
                            handle RegMap => (print (LambdaVar.lvarName v ^ " fp unbound");
                                              raise RegMap)
 	      fun fregbind (C.VAR v) = lookupFpRegTbl v
@@ -555,7 +555,9 @@ functor MLRiscGen (
 		    | eFcopy(xs, rl) = let
 		        val fs = map (fn _ => Cells.newFreg()) xs
 		        in
-			  ListPair.app (fn (x,f) => addFregBinding(x,M.FREG(fty,f))) (xs,fs);
+			  ListPair.app
+                            (fn (x,f) => addFregBinding(x,M.FREG(fty,f)))
+                            (xs,fs);
 			  emit(M.FCOPY(fty, fs, rl))
 		        end
 		  val (vl', rl') = eCopy(vl, rl, [], [], [], [])
@@ -579,6 +581,9 @@ functor MLRiscGen (
 	     * Note: We have accounted for the extra space this eats up in
 	     *    limit.sml
 	     *)
+(* FIXME: on 64-bit systems, there is no reason to have the allocation pointer
+ * pointing to an odd word address (see `mkFblock` below).
+ *)
 	      fun updtHeapPtr 0 = ()
 		| updtHeapPtr hp = let
 		    fun advBy hp = (
