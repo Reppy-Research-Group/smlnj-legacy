@@ -36,6 +36,7 @@ OBJS =		smlnj-runt-lib.o \
 		itick.o \
 		mkexec.o \
 		mkliterals.o \
+		prof-counter.o \
 		record1.o \
 		record-concat.o \
 		sysinfo.o \
