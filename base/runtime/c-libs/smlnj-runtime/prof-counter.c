@@ -12,8 +12,6 @@
 #include "ml-state.h"
 #include <string.h>
 
-#define MAX_LENGTH 64
-
 /* COUNTER_PTR points to a heap-allocated array of length COUNTER_LEN.
  * Invariant: (COUNTER_LEN == 0) <--> (COUNTER_PTR == NULL)
  */
