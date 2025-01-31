@@ -90,15 +90,21 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       val lcps =
         timeit "avail exp" AvailableExpression.transform lcps
         handle e => (print "8\n"; raise e)
-      (* val () = (print "RESULT >>>>>\n"; PPCps.printcps0 (LCPS.unlabelF lcps'); print "<<<<<\n") *)
+      (* val () = (print "RESULT >>>>>\n"; PPCps.printcps0 (LCPS.unlabelF lcps); print "<<<<<\n") *)
 
       (* val decision = timeit "flat" FlatClosureDecision.produce (lcps, syntactic) *)
       (* handle e => (print "4\n"; raise e) *)
       (* val lcps = timeit "transform" Transform.transform (lcps, decision, web, syntactic) *)
       (* handle e => (print "6\n"; raise e) *)
       (* val () = InvariantChecker.check (decision', syntactic) *)
+      val cps = LCPS.unlabelF lcps
+      val cps =
+        if !Config.instrument then
+          Instrumentation.instrument (ClosureDecision.toInstrumentInfo decision, cps)
+        else
+          cps
     in
-      UnRebind.unrebind (LCPS.unlabelF lcps)
+      UnRebind.unrebind cps
       (* Cheat.closeCPS cps *)
     end
     handle e =>

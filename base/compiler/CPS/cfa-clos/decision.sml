@@ -2,6 +2,7 @@ structure ClosureDecision = struct
   structure LCPS = LabelledCPS
   structure LV = LambdaVar
   structure S = SyntacticInfo
+  structure I = Instrumentation
 
   structure EnvID :> sig
     type t
@@ -283,5 +284,30 @@ structure ClosureDecision = struct
         end
     in
       printGroup grp
+    end
+  fun toInstrumentInfo (T { repr, allo, heap }) : CPS.function -> I.info =
+    let fun kindOfS (EnvID env) =
+              (case EnvID.Map.lookup (heap, env)
+                 of RawBlock (xs, _) => I.Record (map (fn _ => I.Variable) xs)
+                  | Record (slots, _) => I.Record (map kindOfS slots))
+          | kindOfS Null = I.Null
+          | kindOfS _ = I.Variable
+        fun shapeOfC closure : I.shape =
+          (case closure
+             of Closure { env=Boxed e, ... } => [kindOfS (EnvID e)]
+              | Closure { env=Flat slots, ... } => map kindOfS slots
+              | Closure { env=FlatAny _, ... } => raise Fail "impossible")
+        val nameTbl =
+          LV.Tbl.mkTable (LCPS.FunMap.numItems repr, Fail "instrumentTbl")
+        fun calculate (f as (_, name, _, _, _): LCPS.function, closure) =
+          LV.Tbl.insert nameTbl (name, shapeOfC closure)
+        val () = LCPS.FunMap.appi calculate repr
+        fun info ((kind, name, args, _, _): CPS.function) =
+          let val shape = LV.Tbl.lookup nameTbl name
+          in  case kind
+                of CPS.KNOWN => ListPair.zip (args, shape)
+                 | _ => ListPair.zip (List.tl args, shape)
+          end
+    in  info
     end
 end

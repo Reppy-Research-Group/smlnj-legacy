@@ -85,6 +85,7 @@ end = struct
                       val fields =
                         (case env
                            of (D.Boxed _) => [Var (v, ty, lifetime)]
+                            | D.FlatAny _ => raise Fail "impossible"
                             | D.Flat slots =>
                                 List.mapPartiali
                                   (fn (_, (D.Code _ | D.Null)) => NONE
