@@ -80,11 +80,13 @@ structure Timing : sig
 structure Measuring : sig
   val measure : TextIO.outstream * (unit -> 'a) -> unit
 end = struct
-  structure CI = Unsafe.CInterface
-  val read' : unit -> word * word * word * word * word list =
-        CI.c_function "SMLNJ-RunT" "gcCounterRead"
-  val reset : bool -> unit =
-        CI.c_function "SMLNJ-RunT" "gcCounterReset"
+  (* structure CI = Unsafe.CInterface *)
+  (* val read' : unit -> word * word * word * word * word list = *)
+  (*       CI.c_function "SMLNJ-RunT" "gcCounterRead" *)
+  (* val reset : bool -> unit = *)
+  (*       CI.c_function "SMLNJ-RunT" "gcCounterReset" *)
+  val reset = SMLofNJ.Internals.GC.resetCounters
+  val read' = SMLofNJ.Internals.GC.readCounters
   fun read () = let
         (* results are:
          *   s     -- scaling factor for allocation counts
@@ -93,18 +95,17 @@ end = struct
          *   p     -- scaled count of promotions to first generation
          *   ngcs  -- number of collections by generation
          *)
-        val (s, a, a1, p, ngcs) = read'()
-        val scale = Word.toLargeInt s
+        val {nGCs, nStores, nbAlloc, nbAlloc1, nbPromote} = read' ()
         in {
-          nbAlloc = scale * Word.toLargeInt a,
-          nbPromote = scale * Word.toLargeInt p,
-          nGCs = List.map Word.toLargeInt ngcs
+          nbAlloc = nbAlloc,
+          nbPromote = nbPromote,
+          nGCs = nGCs
         } end
 
   fun measurementToString { nbAlloc, nbPromote, nGCs } = concat [
           "\"alloc\" : { \"nbAlloc\": ", IntInf.toString nbAlloc,
           ", \"nbPromote\" : ", IntInf.toString nbPromote, ", \"nGCs\" : [",
-          String.concatWithMap "," IntInf.toString nGCs, "]}\n"
+          String.concatWithMap "," Int.toString nGCs, "]}\n"
         ]
 
   fun report (outstrm, measurement) =
