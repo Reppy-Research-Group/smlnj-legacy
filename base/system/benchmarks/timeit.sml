@@ -119,3 +119,26 @@ end = struct
           report (outstrm, measurement)
         end
 end
+
+structure Profiling : sig
+  (* val profile : TextIO.outstream * (unit -> 'a) -> unit *)
+  val schema1Init : unit -> unit
+  val schema1Read : TextIO.outstream -> unit
+end = struct
+  structure CI = Unsafe.CInterface
+
+  val init : int -> unit      = CI.c_function "SMLNJ-RunT" "profCounterInit"
+  val read : unit -> int list = CI.c_function "SMLNJ-RunT" "profCounterRead"
+
+  fun schema1Init () = init 4
+  fun schema1Read out =
+    (case read ()
+       of [allocs, compute, move, both] =>
+            TextIO.output (out, concat [
+              "\"allocs\": ", Int.toString allocs,
+              ", \"compute\": ", Int.toString compute,
+              ", \"move\": ", Int.toString move,
+              ", \"both\": ", Int.toString both
+            ])
+        | _ => raise Fail "impossible")
+end
