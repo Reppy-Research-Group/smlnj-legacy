@@ -214,5 +214,7 @@ win-dist/smlnj
 base/system/
 base/system/unittests
 base/system/benchmarks
+!base/system/benchmarks/*.py
+!base/system/benchmarks/*.sh
 Session.vim
 NOTES
