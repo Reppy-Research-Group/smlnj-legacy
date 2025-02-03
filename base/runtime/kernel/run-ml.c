@@ -34,6 +34,8 @@
 /* local functions */
 PVT void UncaughtExn (ml_val_t e);
 
+/* Profiler counters, see c-libs/smlnj-runtime/prof-counter.c */
+extern Word_t   PROF_COUNTERS[];
 
 /* ApplyMLFn:
  *
@@ -93,6 +95,7 @@ void RunML (ml_state_t *msp)
     int		request;
     vproc_state_t *vsp = msp->ml_vproc;
     ml_val_t	prevProfIndex = PROF_OTHER;
+    msp->ml_varReg = PTR_CtoML(PROF_COUNTERS);
 
     for (;;) {
 
