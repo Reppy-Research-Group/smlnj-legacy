@@ -13,19 +13,20 @@ end = struct
 
   type info = (LambdaVar.lvar * kind) list
 
-  datatype usage = Unused | Move | Compute | Both
+  datatype usage = Unused | Move | Compute | Link | Mixed
   fun joinUsage (Unused, x) = x
     | joinUsage (x, Unused) = x
-    | joinUsage (_, Both) = Both
-    | joinUsage (Both, _) = Both
-    | joinUsage (Move, Compute) = Both
-    | joinUsage (Compute, Move) = Both
+    | joinUsage (_, Mixed) = Mixed
+    | joinUsage (Mixed, _) = Mixed
     | joinUsage (Compute, Compute) = Compute
+    | joinUsage (Link, Link) = Link
     | joinUsage (Move, Move) = Move
+    | joinUsage (_, _) = Mixed
   fun usageToString Unused = "unused"
     | usageToString Move   = "move"
     | usageToString Compute = "compute"
-    | usageToString Both = "both"
+    | usageToString Link    = "link"
+    | usageToString Mixed = "mixed"
 
   (* fun trace msgs = app print msgs *)
   fun trace _ = ()
@@ -71,6 +72,12 @@ end = struct
       else
         c
 
+    fun recordLink (c as { env, loads, allocs }: ctx, v) =
+      if LV.Map.inDomain (loads, v) then
+        { env=env, loads=markUsage (loads, v, Link), allocs=allocs }
+      else
+        c
+
     fun recordAlloc ({ env, loads, allocs }: ctx, name, kind, size) =
       { env=env, loads=loads, allocs=(name, kind, size)::allocs }
 
@@ -85,7 +92,7 @@ end = struct
                                   raise Subscript)
                 in  { env=LV.Map.insert (env, dest, kind),
                       loads=markUsage (
-                        markUsage (loads, src, Compute), dest, Unused
+                        markUsage (loads, src, Link), dest, Unused
                       ),
                       allocs=allocs }
                 end
@@ -97,8 +104,7 @@ end = struct
     fun mktmp () = LV.namedLvar tmpName
 
     fun visitRecord (c as { env, loads, allocs }: ctx, kind, fields, dest) =
-      let fun doPath (k, x, CPS.OFFp 0, c) = k (c, x)
-            | doPath (k, _, CPS.OFFp _, _) = raise Fail "no"
+      let fun doPath (k, x, CPS.OFFp 0, c) = k (c, x) | doPath (k, _, CPS.OFFp _, _) = raise Fail "no"
             | doPath (k, x, CPS.SELp (_, pth), c) =
                 doPath (k, mktmp (), pth, recordCompute (c, x))
           fun doField k ((CPS.VAR x, pth), c) = doPath (k, x, pth, c)
@@ -174,20 +180,27 @@ end = struct
          )
 
     fun schema1 (ctx: C.ctx) =
-      (* [#sz of closure allocation, #loads/compute, #loads/move, #loads/both] *)
+      (* [
+       *  #sz of closure allocation,
+       *  #loads/compute,
+       *  #loads/move,
+       *  #loads/link,
+       *  #loads/mixed
+       * ] *)
       let val closureAllocs =
             foldl (fn ((_, _, sz), sum) => sz + sum) 0 (C.allocs ctx)
-          val (compute, move, both) =
-            LV.Map.foldl (fn (usage, (c, m, b)) =>
+          val (compute, move, link, mixed) =
+            LV.Map.foldl (fn (usage, (c, m, l, b)) =>
               (case usage
                  of Unused  => raise Fail "unused"
-                  | Move    => (c, m + 1, b)
-                  | Compute => (c + 1, m, b)
-                  | Both    => (c, m, b + 1))
-            ) (0, 0, 0) (C.loads ctx)
+                  | Compute => (c + 1, m, l, b)
+                  | Move    => (c, m + 1, l, b)
+                  | Link    => (c, m, l + 1, b)
+                  | Mixed   => (c, m, l, b + 1))
+            ) (0, 0, 0, 0) (C.loads ctx)
           val () = trace [String.concatWithMap "," Int.toString [closureAllocs,
-          compute, move, both], "\n"]
-      in  updateList [closureAllocs, compute, move, both]
+          compute, move, link, mixed], "\n"]
+      in  updateList [closureAllocs, compute, move, link, mixed]
       end
   end
 

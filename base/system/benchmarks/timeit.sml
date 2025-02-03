@@ -128,18 +128,19 @@ structure Profiling : sig
 end = struct
   structure CI = Unsafe.CInterface
 
-  val init : int -> unit      = CI.c_function "SMLNJ-RunT" "profCounterInit"
-  val read : unit -> int list = CI.c_function "SMLNJ-RunT" "profCounterRead"
+  val clear : int -> unit      = CI.c_function "SMLNJ-RunT" "profCounterClear"
+  val read  : unit -> int list = CI.c_function "SMLNJ-RunT" "profCounterRead"
 
-  fun schema1Init () = init 4
+  fun schema1Init () = clear 5
   fun schema1Read out =
     (case read ()
-       of [allocs, compute, move, both] =>
+       of [allocs, compute, move, link, both] =>
             TextIO.output (out, concat [
               "\"allocs\": ", Int.toString allocs,
               ", \"compute\": ", Int.toString compute,
               ", \"move\": ", Int.toString move,
-              ", \"both\": ", Int.toString both
+              ", \"link\": ", Int.toString link,
+              ", \"mixed\": ", Int.toString both
             ])
         | _ => raise Fail "impossible")
 end

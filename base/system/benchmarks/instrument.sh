@@ -10,7 +10,7 @@ out_file=$(mktemp "$prog-XXXXX")
 flags=$(./presets.sh $@)
 
 echo "{\"bmark\" : \"$prog\", \"flags\":\"$@\", " > $out_file
-$SML $flags <<EOF > /dev/null 2>&1
+$SML $flags <<EOF 2>&1
   use "timeit.sml";
   Profiling.schema1Init ();
   Control.NC.instrument := true;
