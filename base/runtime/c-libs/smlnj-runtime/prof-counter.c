@@ -12,13 +12,6 @@
 #include "ml-state.h"
 #include <string.h>
 
-#define MAX_COUNTERS 128
-
-/* PCOUNTERa heap-allocated array of length COUNTER_LEN.
- */
-Word_t         PROF_COUNTERS[MAX_COUNTERS] = { 0 };
-static Int_t   COUNTER_LEN = 0;
-
 /* ml_RunT_prof_counter_init: int -> unit
  *
  * initializes an array of counters of length `arg` and installs the pointer
@@ -27,15 +20,22 @@ static Int_t   COUNTER_LEN = 0;
  */
 ml_val_t _ml_RunT_prof_counter_clear (ml_state_t *msp, ml_val_t arg)
 {
-    Int_t length = INT_MLtoC(arg);
-    if (length > MAX_COUNTERS) {
-        Error ("prof_counter_init: length > MAX_COUNTERS");
-    } else if (length > 0) {
-        COUNTER_LEN = length;
-        memset(PROF_COUNTERS, 0, length * sizeof(*PROF_COUNTERS));
+    Word_t *counters   = PTR_MLtoC(Word_t, msp->ml_varReg);
+    Word_t *curr_len_p = &counters[-1];
+    Int_t  new_len = INT_MLtoC(arg);
+    if (counters == NULL) {
+        Error ("varReg uninitialized\n");
+    }
+    if (new_len > MAX_PROF_COUNTERS - 1) {
+        Error ("prof_counter_init: length > MAX_PROF_COUNTERS\n");
+    }
+
+    if (new_len > 0) {
+        *curr_len_p = new_len;
+        memset(counters, 0, new_len * sizeof(*counters));
     } else {
-        COUNTER_LEN = 0;
-        SayDebug ("prof_counter_init: length <= 0");
+        *curr_len_p = 0;
+        SayDebug ("prof_counter_init: length <= 0\n");
     }
 
     return ML_unit;
@@ -51,8 +51,10 @@ ml_val_t _ml_RunT_prof_counter_read (ml_state_t *msp, ml_val_t arg)
 {
     (void) arg;
     ml_val_t lst = LIST_nil;
-    for (Int_t i = COUNTER_LEN - 1; i >= 0; i--) {
-        Word_t curr = PROF_COUNTERS[i];
+    Word_t *counters = PTR_MLtoC(Word_t, msp->ml_varReg);
+    Word_t length    = counters[-1];
+    for (Int_t i = length - 1; i >= 0; i--) {
+        Word_t curr = counters[i];
         LIST_cons(msp, lst, INT_CtoML(curr), lst);
     }
     return lst;

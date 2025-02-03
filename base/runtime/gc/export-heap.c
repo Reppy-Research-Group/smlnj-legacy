@@ -45,6 +45,7 @@ PVT void RepairHeap (export_table_t *tbl, heap_t *heap);
  */
 status_t ExportHeapImage (ml_state_t *msp, FILE *file)
 {
+    msp->ml_varReg = ML_unit; /* varReg contains local variables */
     return ExportImage (msp, EXPORT_HEAP_IMAGE, file);
 
 } /* end of ExportHeapImage. */

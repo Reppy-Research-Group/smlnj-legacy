@@ -70,6 +70,8 @@
 #  define ALIGN_REALDS
 #endif
 
+/* the maximum number of profiling counters */
+#define MAX_PROF_COUNTERS 128
 
 #ifndef _ASM_
 
