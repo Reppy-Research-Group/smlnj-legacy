@@ -3,8 +3,6 @@
  * COPYRIGHT (c) 2021 The Fellowship of SML/NJ (http://www.smlnj.org)
  * All rights reserved.
  *)
-
-
 signature BMARK =
   sig
     val doit : unit -> unit
@@ -122,25 +120,44 @@ end = struct
 end
 
 structure Profiling : sig
-  (* val profile : TextIO.outstream * (unit -> 'a) -> unit *)
-  val schema1Init : unit -> unit
-  val schema1Read : TextIO.outstream -> unit
+  val profile : TextIO.outstream * (unit -> 'a) -> unit
+  (* val schema1Init : unit -> unit *)
+  (* val schema1Read : TextIO.outstream -> unit *)
 end = struct
   structure CI = Unsafe.CInterface
 
   val clear : int -> unit      = CI.c_function "SMLNJ-RunT" "profCounterClear"
   val read  : unit -> int list = CI.c_function "SMLNJ-RunT" "profCounterRead"
 
-  fun schema1Init () = clear 5
-  fun schema1Read out =
-    (case read ()
-       of [allocs, compute, move, link, both] =>
-            TextIO.output (out, concat [
-              "\"allocs\": ", Int.toString allocs,
-              ", \"compute\": ", Int.toString compute,
-              ", \"move\": ", Int.toString move,
-              ", \"link\": ", Int.toString link,
-              ", \"mixed\": ", Int.toString both
-            ])
-        | _ => raise Fail "impossible")
+  fun profile1 (outstrm, doit) =
+    let val () = clear 5
+        val _  = doit ()
+    in  case read ()
+          of [allocs, compute, move, link, both] =>
+               TextIO.output (outstrm, concat [
+                 "\"allocs\": ", Int.toString allocs,
+                 ", \"compute\": ", Int.toString compute,
+                 ", \"move\": ", Int.toString move,
+                 ", \"link\": ", Int.toString link,
+                 ", \"mixed\": ", Int.toString both
+               ])
+           | _ => raise Fail "impossible"
+    end
+
+  fun profile2 (outstrm, doit) =
+    let val () = clear 6
+        val _  = doit ()
+    in  case read ()
+          of [allocs, compute, move, link, both, dataAllocs] =>
+               TextIO.output (outstrm, concat [
+                 "\"allocs\": ", Int.toString allocs,
+                 ", \"compute\": ", Int.toString compute,
+                 ", \"move\": ", Int.toString move,
+                 ", \"link\": ", Int.toString link,
+                 ", \"mixed\": ", Int.toString both,
+                 ", \"dataAllocs\": ", Int.toString dataAllocs
+               ])
+           | _ => raise Fail "impossible"
+    end
+  val profile = profile2
 end

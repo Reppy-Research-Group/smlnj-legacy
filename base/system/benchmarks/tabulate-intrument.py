@@ -90,22 +90,30 @@ for col in columns:
     table.add_column(col, justify='right', no_wrap=True)
 
 def loads(data):
-    return data["compute"] + data["move"] + data["both"]
+    return data["compute"] + data["move"] + data["link"] + data["mixed"]
 
 for program in programs:
     time_row = [program + ' (time)'] + [f"{runtime_table[program][col][0]:.3f}" for col in columns]
-    alloc_row = [program + ' (allocs)'] + [readable(instrument_table[program][col]["allocs"]) for col in columns]
-    loads_row = [program + ' (all loads)'] + [readable(loads(instrument_table[program][col])) for col in columns]
+    alloc_row = [program + ' (clos allocs)'] + [readable(instrument_table[program][col]["allocs"]) for col in columns]
+    data_alloc = [program + ' (data allocs)'] + [readable(instrument_table[program][col]["dataAllocs"]) for col in columns]
+    diff_alloc = [program + ' (diff allocs)'] + [readable(alloc_table[program][col] // 8 - instrument_table[program][col]["allocs"] - instrument_table[program][col]["dataAllocs"]) for col in columns]
+    loads_row = [program + ' (clos loads)'] + [readable(loads(instrument_table[program][col])) for col in columns]
+    diff_loads_row = [program + ' (all loads)'] + [readable(load_table[program][col]) for col in columns]
     compute_row = [program + ' (compute)'] + [readable(instrument_table[program][col]["compute"]) for col in columns]
     move_row = [program + ' (move)'] + [readable(instrument_table[program][col]["move"]) for col in columns]
-    both_row = [program + ' (both)'] + [readable(instrument_table[program][col]["both"]) for col in columns]
+    link_row = [program + ' (link)'] + [readable(instrument_table[program][col]["link"]) for col in columns]
+    mixed_row = [program + ' (mixed)'] + [readable(instrument_table[program][col]["mixed"]) for col in columns]
 
     table.add_row(*time_row)
     table.add_row(*alloc_row)
+    table.add_row(*data_alloc)
+    table.add_row(*diff_alloc)
     table.add_row(*loads_row)
+    table.add_row(*diff_loads_row)
     table.add_row(*compute_row)
     table.add_row(*move_row)
-    table.add_row(*both_row)
+    table.add_row(*link_row)
+    table.add_row(*mixed_row)
     table.add_section()
 
 Console().print(table)
