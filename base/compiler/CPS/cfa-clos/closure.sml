@@ -103,6 +103,7 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
           Instrumentation.instrument (ClosureDecision.toInstrumentInfo decision, cps)
         else
           cps
+      val () = PPCps.printcps0 cps
     in
       UnRebind.unrebind cps
       (* Cheat.closeCPS cps *)

@@ -43,45 +43,54 @@ end = struct
     val recordCompute : ctx * LV.lvar -> ctx
     val loads : ctx -> usage LV.Map.map
     val allocs : ctx -> (LV.lvar * CPS.record_kind * int) list
+    val dataAllocs : ctx -> int
   end = struct
     type ctx = {
       env: kind LV.Map.map,
       loads: usage LV.Map.map,
-      allocs: (LV.lvar * CPS.record_kind * int) list
+      allocs: (LV.lvar * CPS.record_kind * int) list,
+      dataAllocs: int
     }
 
     fun new (kinds: info) : ctx =
       { env=foldl LV.Map.insert' LV.Map.empty kinds,
         loads=LV.Map.empty,
-        allocs=[] }
+        allocs=[],
+        dataAllocs=0 }
 
     val markUsage = LV.Map.insertWith joinUsage
 
-    fun recordLoad (c as { env, loads, allocs }: ctx, v) =
-      { env=env, loads=markUsage (loads, v, Unused), allocs=allocs }
+    fun recordLoad (c as { env, loads, allocs, dataAllocs }: ctx, v) =
+      { env=env, loads=markUsage (loads, v, Unused), allocs=allocs,
+        dataAllocs=dataAllocs }
 
-    fun recordMove (c as { env, loads, allocs }: ctx, v) =
+    fun recordMove (c as { env, loads, allocs, dataAllocs }: ctx, v) =
       if LV.Map.inDomain (loads, v) then
-        { env=env, loads=markUsage (loads, v, Move), allocs=allocs }
+        { env=env, loads=markUsage (loads, v, Move), allocs=allocs,
+          dataAllocs=dataAllocs }
       else
         c
 
-    fun recordCompute (c as { env, loads, allocs }: ctx, v) =
+    fun recordCompute (c as { env, loads, allocs, dataAllocs }: ctx, v) =
       if LV.Map.inDomain (loads, v) then
-        { env=env, loads=markUsage (loads, v, Compute), allocs=allocs }
+        { env=env, loads=markUsage (loads, v, Compute), allocs=allocs,
+          dataAllocs=dataAllocs }
       else
         c
 
-    fun recordLink (c as { env, loads, allocs }: ctx, v) =
-      if LV.Map.inDomain (loads, v) then
-        { env=env, loads=markUsage (loads, v, Link), allocs=allocs }
-      else
-        c
+    fun markLink (loads, src) =
+      (case LV.Map.find (loads, src)
+         of NONE => loads
+          | SOME usage => LV.Map.insert (loads, src, joinUsage (usage, Link)))
 
-    fun recordAlloc ({ env, loads, allocs }: ctx, name, kind, size) =
-      { env=env, loads=loads, allocs=(name, kind, size)::allocs }
+    fun recordAlloc ({ env, loads, allocs, dataAllocs }: ctx, name, kind, size) =
+      { env=env, loads=loads, allocs=(name, kind, size)::allocs,
+        dataAllocs=dataAllocs }
 
-    fun visitSelect (c as { env, loads, allocs }: ctx, i, CPS.VAR src, dest) =
+    fun recordDataAllocs ({ env, loads, allocs, dataAllocs }: ctx, size) =
+      { env=env, loads=loads, allocs=allocs, dataAllocs=dataAllocs + size }
+
+    fun visitSelect (c as { env, loads, allocs, dataAllocs }: ctx, i, CPS.VAR src, dest) =
         (case LV.Map.find (env, src)
            of NONE => (trace [LV.lvarName src, " uninteresting\n"];
                        recordCompute (c, src))
@@ -91,10 +100,8 @@ end = struct
                                  (trace [LV.lvarName src, " out of bound\n"];
                                   raise Subscript)
                 in  { env=LV.Map.insert (env, dest, kind),
-                      loads=markUsage (
-                        markUsage (loads, src, Link), dest, Unused
-                      ),
-                      allocs=allocs }
+                      loads=markUsage (markLink (loads, src), dest, Unused),
+                      allocs=allocs, dataAllocs=dataAllocs }
                 end
             | SOME _ => (trace [LV.lvarName src, " coincidental\n"];
                          recordCompute (c, src)))
@@ -103,7 +110,7 @@ end = struct
     val tmpName = Symbol.varSymbol "tmpPath"
     fun mktmp () = LV.namedLvar tmpName
 
-    fun visitRecord (c as { env, loads, allocs }: ctx, kind, fields, dest) =
+    fun visitRecord (c: ctx, kind, fields, dest) =
       let fun doPath (k, x, CPS.OFFp 0, c) = k (c, x) | doPath (k, _, CPS.OFFp _, _) = raise Fail "no"
             | doPath (k, x, CPS.SELp (_, pth), c) =
                 doPath (k, mktmp (), pth, recordCompute (c, x))
@@ -111,7 +118,9 @@ end = struct
             | doField k (_, c) = c
       in  case kind
             of (CPS.RK_VECTOR | CPS.RK_RECORD) =>
-                 foldl (doField recordCompute) c fields
+                 foldl (doField recordCompute)
+                       (recordDataAllocs (c, List.length fields + 1))
+                       fields
              | _ =>
                  let val c = foldl (doField recordMove) c fields
                  in  recordAlloc (c, dest, kind, List.length fields + 1)
@@ -119,7 +128,7 @@ end = struct
                  end
       end
 
-    fun dump ({ env, loads, allocs }: ctx) =
+    fun dump ({ env, loads, allocs, dataAllocs }: ctx) =
       (print "== LOADS ==\n";
        LV.Map.appi (fn (name, usage) =>
          app print [LV.lvarName name, " : ", usageToString usage, "\n"]
@@ -128,15 +137,18 @@ end = struct
        List.app (fn (name, _, sz) =>
          app print [LV.lvarName name, " : ", Int.toString sz, "\n"]
        ) allocs;
+       app print ["== DATA ALLOCS = ", Int.toString dataAllocs, "\n"];
        print "== END ==\n";
        ())
 
     fun loads (x: ctx) = #loads x
     fun allocs (x: ctx) = #allocs x
+    fun dataAllocs (x: ctx) = #dataAllocs x
   end
 
   structure Code :> sig
     val schema1 : C.ctx -> CPS.cexp -> CPS.cexp
+    val schema2 : C.ctx -> CPS.cexp -> CPS.cexp
   end = struct
     open CPS
     val tmpName = Symbol.varSymbol "instrument"
@@ -202,6 +214,31 @@ end = struct
           compute, move, link, mixed], "\n"]
       in  updateList [closureAllocs, compute, move, link, mixed]
       end
+
+    fun schema2 (ctx: C.ctx) =
+      (* [
+       *  #sz of closure allocation,
+       *  #loads/compute,
+       *  #loads/move,
+       *  #loads/link,
+       *  #loads/mixed
+       * ] *)
+      let val closureAllocs =
+            foldl (fn ((_, _, sz), sum) => sz + sum) 0 (C.allocs ctx)
+          val (compute, move, link, mixed) =
+            LV.Map.foldl (fn (usage, (c, m, l, b)) =>
+              (case usage
+                 of Unused  => raise Fail "unused"
+                  | Compute => (c + 1, m, l, b)
+                  | Move    => (c, m + 1, l, b)
+                  | Link    => (c, m, l + 1, b)
+                  | Mixed   => (c, m, l, b + 1))
+            ) (0, 0, 0, 0) (C.loads ctx)
+          val data = C.dataAllocs ctx
+          (* val () = trace [String.concatWithMap "," Int.toString [closureAllocs, *)
+          (* compute, move, link, mixed], "\n"] *)
+      in  updateList [closureAllocs, compute, move, link, mixed, data]
+      end
   end
 
   fun values (ctx, []) = ctx
@@ -225,8 +262,8 @@ end = struct
           | exp (ctx, CPS.OFFSET _) = raise Fail "no"
           | exp (ctx, CPS.APP (f, args)) =
               let val ctx = values (ctx, f :: args)
-                  (* val () = C.dump ctx *)
-                  val hdr = Code.schema1 ctx
+                  val () = C.dump ctx
+                  val hdr = Code.schema2 ctx
               in  hdr (CPS.APP (f, args))
               end
           | exp (ctx, CPS.FIX (functions, e)) =
