@@ -216,6 +216,7 @@ void RecordGlobals ()
 #if (CALLEESAVE == 0)
     RecordCSymbol ("return_a",		PTR_CtoML(return_a));
 #endif
+    RecordCSymbol ("prof_counters_p",   prof_counters_p);
 
   /* RunVec */
     RecordCSymbol ("RunVec.array",	PTR_CtoML(array_v+1));

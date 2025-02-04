@@ -31,6 +31,10 @@
 #include "valgrind/cachegrind.h"
 #endif
 
+/* Profiler counters, see c-libs/smlnj-runtime/prof-counter.c */
+static Word_t PROF_COUNTERS_A[MAX_PROF_COUNTERS] = { 0 };
+ml_val_t prof_counters_p = PTR_CtoML(PROF_COUNTERS_A + 1);
+
 /* local functions */
 PVT void UncaughtExn (ml_val_t e);
 
@@ -93,9 +97,7 @@ void RunML (ml_state_t *msp)
     vproc_state_t *vsp = msp->ml_vproc;
     ml_val_t	prevProfIndex = PROF_OTHER;
 
-    /* Profiler counters, see c-libs/smlnj-runtime/prof-counter.c */
-    Word_t prof_counters[MAX_PROF_COUNTERS] = { 0 };
-    msp->ml_varReg = PTR_CtoML(prof_counters + 1);
+    msp->ml_varReg = prof_counters_p;
 
     for (;;) {
 
@@ -166,11 +168,11 @@ SayDebug ("run-ml: poll event\n");
 	      case REQ_RETURN:
 	      /* do a minor collection to clear the store list */
 		InvokeGC (msp, 0);
-                goto cleanup;
+                return;
 
 	      case REQ_EXN: /* an UncaughtExn exception */
 		UncaughtExn (msp->ml_arg);
-                goto cleanup;
+                return;
 
 	      case REQ_FAULT: { /* a hardware fault */
 		    ml_val_t	loc, traceStk, exn;
@@ -289,10 +291,6 @@ SayDebug("REQ_SIG_RESUME: arg = %#x\n", msp->ml_arg);
 	    } /* end switch */
 	}
     } /* end of while */
-
-cleanup:
-    msp->ml_varReg = ML_unit;
-
 } /* end of RunML */
 
 

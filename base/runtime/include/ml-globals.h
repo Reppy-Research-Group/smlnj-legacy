@@ -46,6 +46,9 @@ extern ml_val_t callc_v[];
 extern ml_val_t handle_v[];
 extern ml_val_t *return_c;
 
+/* Profiler counters, see c-libs/smlnj-runtime/prof-counter.c */
+extern ml_val_t prof_counters_p;
+
 extern ml_val_t _MLPollHandler[];
 #define MLPollHandler PTR_CtoML(_MLPollHandler+1)
 
