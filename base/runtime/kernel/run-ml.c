@@ -104,12 +104,12 @@ void RunML (ml_state_t *msp)
 	ASSIGN(ProfCurrent, prevProfIndex);
 #ifdef ENABLE_CACHEGRIND
         /* turn on cachegrind instrumentation for ML code */
-        CACHEGRIND_START_INSTRUMENTATION
+        CACHEGRIND_START_INSTRUMENTATION;
 #endif
 	request = restoreregs(msp);
 #ifdef ENABLE_CACHEGRIND
         /* turn off cachegrind instrumentation for ML code */
-        CACHEGRIND_STOP_INSTRUMENTATION
+        CACHEGRIND_STOP_INSTRUMENTATION;
 #endif
 	prevProfIndex = DEREF(ProfCurrent);
 	ASSIGN(ProfCurrent, PROF_RUNTIME);
