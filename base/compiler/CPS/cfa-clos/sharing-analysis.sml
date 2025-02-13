@@ -392,13 +392,48 @@ end = struct
     ) =
     let val knownFun = S.knownFun syn
         fun packOf f = Group.Tbl.lookup grpTbl (S.groupOf syn f)
+        val lookupPack = PackID.Tbl.lookup packTbl
+        (* fun reachableInDepthN (n, Pack { packs, loose, ... }) = *)
+        (*   let datatype either = datatype Either.either *)
+        (*       fun go ([], packs, loose) = (packs, loose) *)
+        (*         | go ((depth, INL pack) :: todo, packs, loose) = *)
+        (*             if depth <= n - 1 then *)
+        (*               let val Pack { packs=packsP, loose=looseP, ... } = *)
+        (*                     lookupPack pack *)
+        (*                   val todop = map (fn p => (depth + 1, INL p)) packsP *)
+        (*                   val todol = map (fn l => (depth + 1, INR l)) looseP *)
+        (*                   val packs = PackID.Set.insert (packs, pack) *)
+        (*               in  go (todop @ todol @ todo, packs, loose) *)
+        (*               end *)
+        (*             else *)
+        (*               go (todo, PackID.Set.insert (packs, pack), loose) *)
+        (*         | go ((depth, INR v) :: todo, packs, loose) = *)
+        (*             (case knownFun v *)
+        (*                of NONE   => go (todo, packs, LV.Set.insert (loose, v)) *)
+        (*                 | SOME f => *)
+        (*                     if depth <= n - 1 then *)
+        (*                       let val Pack { packs=packsF, loose=looseF, ... } = *)
+        (*                             packOf f (1* NB: f's layout is decided *1) *)
+        (*                           val todop = *)
+        (*                             map (fn p => (depth + 1, INL p)) packsF *)
+        (*                           val todol = *)
+        (*                             map (fn p => (depth + 1, INL l)) looseF *)
+        (*                       in  go (todop @ todol @ todo, packs, *)
+        (*                               LV.Set.insert (loose, v)) *)
+        (*                       end) *)
+        (*       val todop = map (fn p => (1, INL p)) packs *)
+        (*       val todol = map (fn l => (1, INR l)) loose *)
+        (*   in  go (todop @ todol, PackID.Set.empty, LV.Set.empty) *)
+        (*   end *)
+
         fun thinning (Pack { loose, packs, fv }) =
           let fun go (v, (loose, packs)) =
                 (case knownFun v
                    of NONE => (loose, packs)
                     | SOME f =>
-                        let val Pack { packs=packsF, fv=fvF, ... } = packOf f
-                            val loose = LV.Set.difference (loose, fvF)
+                        let val Pack { packs=packsF, loose=looseF, ... } =
+                              packOf f
+                            val loose = LV.Set.difference (loose, looseF)
                             val packs = PackID.Set.difference (packs, packsF)
                         in  (loose, packs)
                         end)
