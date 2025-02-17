@@ -73,7 +73,7 @@ programs = [
 
 columns = [
     "flat-closure",
-    # "no-active-sharing",
+    "no-active-sharing",
     "no-flatten",
     # "conservative",
     "new",

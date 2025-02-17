@@ -28,15 +28,16 @@ PROGRAMS = [
 
 OPTIONS = [
     '--new',
-    '--space',
-    '--time',
+    '--new2',
+    # '--space',
+    # '--time',
     # '--reg-limit',
-    '--no-flatten',
-    '--no-active-sharing',
+    # '--no-flatten',
+    # '--no-active-sharing',
     # '--no-sharing',
-    '--flat-closure',
-    '--conservative',
-    '--old'
+    # '--flat-closure',
+    # '--conservative',
+    # '--old'
 ]
 
 progress = Progress(

@@ -5,6 +5,9 @@ flags=""
 if [ x"$1" = "x--new" ] ; then
   flags="-Cnc.enable=true -Cnc.flatten-reg-limit=false"
   shift
+elif [ x"$1" = "x--new2" ] ; then
+  flags="-Cnc.enable=true -Cnc.sharing-policy=2 -Cnc.flatten-reg-limit=false"
+  shift
 elif [ x"$1" = "x--reg-limit" ] ; then
   flags="-Cnc.enable=true"
   shift

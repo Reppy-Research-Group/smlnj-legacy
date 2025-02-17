@@ -7,13 +7,20 @@
 NCOMPS=3
 NRUNS=10
 
-SML_IMPL='../../../bin/sml'
+# SML_IMPL='../../../bin/sml'
+SML_IMPL='../testml'
 # SML_IMPL='../../../../reference-legacy/bin/sml'
 
 if [ x"$1" = "x--new" ] ; then
   TAG=new
   # SML="../../../bin/sml -Cnc.enable=true -Cnc.flatten-reg-limit=false"
   SML="$SML_IMPL -Cnc.enable=true -Cnc.flatten-reg-limit=false"
+  OUT_SUFFIX="-new"
+  shift
+elif [ x"$1" = "x--new2" ] ; then
+  TAG=new
+  # SML="../../../bin/sml -Cnc.enable=true -Cnc.flatten-reg-limit=false"
+  SML="$SML_IMPL -Cnc.enable=true -Cnc.sharing-policy=2 -Cnc.flatten-reg-limit=false"
   OUT_SUFFIX="-new"
   shift
 elif [ x"$1" = "x--reg-limit" ] ; then
