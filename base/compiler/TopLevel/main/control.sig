@@ -77,6 +77,7 @@ signature NEW_CLOSURE_CONTROL =
     val flattenSelfRef   : bool ref
     val flattenRegLimit  : bool ref
 
+    val sharingPolicy     : int ref
     val sharingDistCutOff : int ref
     val sharingSizeCutOff : int ref
     val sharingUseCutOff  : int ref

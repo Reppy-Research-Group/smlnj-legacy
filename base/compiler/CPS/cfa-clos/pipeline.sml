@@ -12,12 +12,13 @@ end = struct
   structure EnvID = D.EnvID
   structure LCPS = LabelledCPS
   structure LV = LambdaVar
-  structure PackID = SharingAnalysis.PackID
+  (* structure PackID = SharingAnalysis.PackID *)
   structure Prob = Probability
   structure S = SyntacticInfo
   structure SA = SharingAnalysis
   structure W = Web
   structure FA = FlatteningAnalysis(MachSpec)
+
 
   val maxgpregs = MachSpec.numRegs
   val maxfpregs = MachSpec.numFloatRegs - 2  (* need 1 or 2 temps *)
@@ -776,6 +777,7 @@ end = struct
           end
         fun processGrp (grp, heap) (* : D.heap * EnvID.Set.set *) =
           (case S.groupFun syn grp
+                (* FIXME: DO BETTER *)
              of #[f as (CPS.KNOWN_TAIL, name, _, _, _)] =>
                   let val inners = innerFs (LCPS.FunTbl.lookup funtbl f)
                   in  if freeInInners (f, inners) orelse numUsage f >= 2 then

@@ -205,6 +205,9 @@ structure Control_NC : NEW_CLOSURE_CONTROL =
               "whether to impose register limit for known function environment \
               \passing", true)
 
+    val sharingPolicy =
+      new (i, "sharing-policy",
+              "which sharing analysis to use", 1)
     val sharingDistCutOff =
       new (i, "sharing-dist-cutoff",
               "maximum difference of binding time among variables in a shared \

@@ -393,12 +393,12 @@ end = struct
         (* val () = app print [ *)
         (*   "SelfRef: [", String.concatWithMap "," W.idToString *)
         (*   (W.Set.listItems selfRef), "]\n"] *)
-        (* val () = app print [ "Bandwidth:\n" ] *)
-        (* val () = W.Map.appi (fn (id, bw) => app print [ *)
-        (*   W.idToString id, " : ", bandwidthToString bw, "\n" ] *)
-        (* ) bandwidth *)
-        (* val () = app print [ "Reminder: maxgpregs=", Int.toString maxgpregs, *)
-        (* "\n"] *)
+        val () = app print [ "Bandwidth:\n" ]
+        val () = W.Map.appi (fn (id, bw) => app print [
+          W.idToString id, " : ", bandwidthToString bw, "\n" ]
+        ) bandwidth
+        val () = app print [ "Reminder: maxgpregs=", Int.toString maxgpregs,
+        "\n"]
 
         val webArity = analyzeArity policy isFlattenable (repr, heap, web)
         val resolve = resolveArity policy dec

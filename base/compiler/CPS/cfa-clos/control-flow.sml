@@ -24,6 +24,8 @@ structure ControlFlow :> sig
       | Fake of block list
 
     structure NodeTbl : MONO_HASH_TABLE where type Key.hash_key = node
+
+    val nodeToString : node -> string
   end
 
   datatype node_type = NonHeader | Self | Reducible | Irreducible
@@ -334,8 +336,8 @@ end = struct
     val numNodes : t -> int
     val nodeToString : node -> string
 
-    val dumpDot : t -> unit
-    val dumpDot' : t * (node -> string) -> unit
+    val dumpDot : t * S.t-> unit
+    val dumpDot' : t * S.t * (node -> string) -> unit
   end = struct
 
     datatype node = Start of LCPS.label | Node of block
@@ -470,7 +472,7 @@ end = struct
           ("B" ^ LV.lvarName label ^ "[" ^ LV.lvarName (#2 function) ^ "]")
 
     local open DotLanguage in
-      fun dumpDot' (Graph { start, funtbl, succ, pred }, ann) =
+      fun dumpDot' (Graph { start, funtbl, succ, pred }, syn, ann) =
         let val nodeId = LV.lvarName o nodeLabel
             fun blockId (Block {label, ...}) = LV.lvarName label
             fun probToS p = Real.fmt (StringCvt.FIX (SOME 3)) (Prob.toReal p)
@@ -507,9 +509,15 @@ end = struct
                         | Switch blocks =>
                             blocknode b :: List.concatMap (walk o #1) blocks
                         | _ => [blocknode b])
-                  val fname = LV.lvarName (#2 f)
+                  fun funname (_, name, _, _, _) = LV.lvarName name
+                  val fname = funname f
+                  val label =
+                    (case #1 f
+                       of (CPS.CONT | CPS.KNOWN_CONT) =>
+                            concat [fname, " in ", funname (S.enclosingUser syn (#5 f))]
+                        | _ => fname)
                   val stmts = ATTR "graph[style=dotted]"
-                           :: ATTR (concat ["label=\"", fname, "\""])
+                           :: ATTR (concat ["label=\"", label, "\""])
                            :: walk block
                   val name = concat ["cluster_", fname]
               in  << (dot, SUBGRAPH (SOME name, stmts))
@@ -522,7 +530,7 @@ end = struct
             val dot = NodeTbl.foldi addEdges dot succ
         in  dump dot
         end
-      fun dumpDot graph = dumpDot' (graph, fn _ => "")
+      fun dumpDot (graph, syn) = dumpDot' (graph, syn, fn _ => "")
     end
   end
 
@@ -531,7 +539,7 @@ end = struct
   type looptbl = loop_info Graph.NodeTbl.hash_table
 
   structure LoopNestingTree :> sig
-    val build : Graph.t -> looptbl
+    val build : Graph.t * S.t -> looptbl
   end = struct
     type number_tbl = int Graph.NodeTbl.hash_table
     type node_tbl   = Graph.node Array.array
@@ -735,11 +743,11 @@ end = struct
                   Int.toString nestingDepth, ",", nodeTyToString ty, ")"]
       end
 
-    fun build (graph: Graph.t) =
+    fun build (graph: Graph.t, syn: S.t) =
       let val (numTbl, nodeTbl, lastTbl) = getPreorderNumbers graph
           val (header, tyTbl) = analyzeLoops (graph, numTbl, lastTbl)
           val loopTbl = convertTree (nodeTbl, header, tyTbl)
-          (* val () = Graph.dumpDot' (graph, annotateWithTbl (numTbl, loopTbl)) *)
+          (* val () = Graph.dumpDot' (graph, syn, annotateWithTbl (numTbl, loopTbl)) *)
       in  loopTbl
       end
   end
@@ -751,7 +759,7 @@ end = struct
   fun analyze (cps, syn, flow: FlowCFA.result) =
     let val funtbl = Summary.analyze syn
         val graph  = timeit "  build-graph" Graph.build (funtbl, syn, flow)
-        val looptbl = timeit "  loop-nest" LoopNestingTree.build graph
+        val looptbl = timeit "  loop-nest" LoopNestingTree.build (graph, syn)
         (* val _ = SharingAnalysis.analyze (cps, syn, funtbl, loopTbl) *)
     in  (funtbl, looptbl)
     end

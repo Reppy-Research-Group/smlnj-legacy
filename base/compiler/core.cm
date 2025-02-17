@@ -311,6 +311,7 @@ CPS/cfa-clos/pipeline.sml
 CPS/cfa-clos/avail-exp.sml
 CPS/cfa-clos/flattening-analysis.sml
 CPS/cfa-clos/instrument.sml
+CPS/cfa-clos/sharing-analysis2.sml
 
 CPS/convert/convert.sml
 CPS/convert/cpstrans.sml

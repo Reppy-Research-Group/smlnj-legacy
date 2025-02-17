@@ -74,7 +74,13 @@ functor CFAClosure(MachSpec : MACH_SPEC) : CLOSURE = struct
       val (funtbl, looptbl) =
         timeit "control-flow" ControlFlow.analyze (lcps, syntactic, result)
       val shr =
-        timeit "sharing" SharingAnalysis.analyze (lcps, syntactic, funtbl, looptbl)
+        (case !Config.sharingPolicy
+           of 1 =>
+                timeit "sharing" SharingAnalysis.analyze (lcps, syntactic, funtbl, looptbl)
+            | 2 =>
+                timeit "sharing" SharingAnalysis2.analyze (lcps, syntactic, funtbl, looptbl)
+            | _ =>
+                raise Fail "sharingPolicy: choose 1 or 2")
 
       val decision =
         if !Config.flatClosure then

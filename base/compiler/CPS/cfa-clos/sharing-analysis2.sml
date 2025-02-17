@@ -1,22 +1,6 @@
-structure PackID : IDENTIFIER = IdentifierFn ()
-signature SHARING_ANALYSIS = sig
-  datatype pack = Pack of {
-    packs: PackID.Set.set,
-    loose: LambdaVar.Set.set,
-    (* Invariant: disjointU (loose :: map #fv packs) = fv *)
-    fv: LambdaVar.Set.set
-  }
-
-  type result = pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table
-
-  val analyze : LabelledCPS.function
-              * SyntacticInfo.t
-              * ControlFlow.funtbl
-              * ControlFlow.looptbl
-              -> result
-end
-
-structure SharingAnalysis :> SHARING_ANALYSIS = struct
+structure SharingAnalysis2 :>
+  SHARING_ANALYSIS where type pack = SharingAnalysis.pack
+= struct
   (* structure PackID = IdentifierFn( ) *)
   structure LCPS = LabelledCPS
   structure LV = LambdaVar
@@ -24,16 +8,138 @@ structure SharingAnalysis :> SHARING_ANALYSIS = struct
   structure W = Web
   structure Prob = Probability
   structure Config = Control.NC
+
   structure CF = ControlFlow
+  structure Graph = CF.Graph
 
+  datatype usage = Accretion | Use of real | InLoopUse
 
-  datatype pack = Pack of {
-    packs: PackID.Set.set,
-    loose: LV.Set.set,
-    fv: LV.Set.set (* Invariant: disjointU (packs, loose) = fv *)
-  }
+  fun mergeUsage (Accretion, x)   = x
+    | mergeUsage (x, Accretion)   = x
+    | mergeUsage (Use p1, Use p2) = Use (p1 + p2)
+    | mergeUsage (InLoopUse, x)   = InLoopUse
+    | mergeUsage (x, InLoopUse)   = InLoopUse
 
-  type result = pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table
+  fun getProb (NONE, n)   = 1.0 / (real n)
+    | getProb (SOME p, _) = Prob.toReal p
+
+  type loopvartbl = (LV.Set.set * Graph.node list) Graph.NodeTbl.hash_table
+
+  fun analyzeUsage (
+    syn: S.t,
+    funtbl: CF.funtbl,
+    looptbl: CF.looptbl,
+    loopvars: loopvartbl
+  ) (f: LCPS.function): usage LV.Map.map =
+    let val freevar = S.groupFV syn
+        val union   = LV.Map.unionWith mergeUsage
+        val insert  = LV.Map.insertWith mergeUsage
+        fun getloopvar block =
+          let val node = Graph.Node block
+              val { header=loophdr, ty=ty, ... } =
+                Graph.NodeTbl.lookup looptbl (Graph.Node block)
+              val (loopvars, _) =
+                (case (loophdr, ty)
+                   of (Graph.Start _, CF.NonHeader) => (LV.Set.empty, [])
+                    | (_, CF.NonHeader) => Graph.NodeTbl.lookup loopvars loophdr
+                    | _ => Graph.NodeTbl.lookup loopvars node)
+          in  loopvars
+          end
+        val entry  = LCPS.FunTbl.lookup funtbl f
+        val loopvars = getloopvar entry
+        fun walk (prob: real, b as CF.Block {term, fix, uses, ...}) =
+          let val accretions = foldl (fn ((g, _), ac) =>
+                  union (LV.Map.map (fn _ => Accretion) (freevar g), ac)
+                ) LV.Map.empty fix
+              val usages = LV.Set.foldl (fn (x, ac) =>
+                  if LV.Set.member (loopvars, x) then
+                    insert (ac, x, InLoopUse)
+                  else
+                    insert (ac, x, Use prob)
+                ) accretions uses
+          in  case term
+                of CF.Branch (_, _, b1, b2, p) =>
+                     let val p       = getProb (p, 2)
+                         val usages1 = walk (prob * p, b1)
+                         val usages2 = walk (prob * (1.0 - p), b2)
+                     in  union (usages, union (usages1, usages2))
+                     end
+                 | CF.Switch blocks =>
+                     let val n = List.length blocks
+                     in  foldl (fn ((b, p), usages) =>
+                           union (walk (getProb (p, n), b), usages)
+                         ) usages blocks
+                     end
+                 | _ => usages
+          end
+        val fv     = S.groupFV syn (S.groupOf syn f)
+        val usages = walk (1.0, entry)
+    in  LV.Map.intersectWith (fn (u, _) => u) (usages, fv)
+    end
+
+  fun analyzeLoopVars (
+    looptbl: CF.looptbl
+  ) : loopvartbl =
+    let open ControlFlow
+        exception NotAHeader
+        val loopvars : loopvartbl = Graph.NodeTbl.mkTable (32, NotAHeader)
+        fun addUses (header as Graph.Start _, uses) = ()
+          | addUses (header, uses) =
+              (case Graph.NodeTbl.find loopvars header
+                 of SOME (uses', inners) =>
+                      Graph.NodeTbl.insert
+                        loopvars (header, (LV.Set.union (uses, uses'), inners))
+                  | NONE =>
+                      Graph.NodeTbl.insert loopvars (header, (uses, [])))
+        fun addInner (header as Graph.Start _, inner) = ()
+          | addInner (header, inner) =
+              (case Graph.NodeTbl.find loopvars header
+                 of SOME (uses, inners) =>
+                      Graph.NodeTbl.insert
+                        loopvars (header, (uses, inner :: inners))
+                  | NONE =>
+                      Graph.NodeTbl.insert
+                        loopvars (header, (LV.Set.empty, [inner])))
+        fun addNode (node, { header, ty, ... }: loop_info) =
+          (case (node, ty)
+             of (Graph.Start _, CF.NonHeader) => ()
+              | (Graph.Start _, _) => ()
+              | (Graph.Node (Block { uses, ... }), CF.NonHeader) =>
+                  addUses (header, uses)
+              | (Graph.Node (Block { uses, ... }), _) => (* all are headers *)
+                  (addUses (node, uses); addInner (header, node)))
+        val () = Graph.NodeTbl.appi addNode looptbl
+    in  loopvars
+    end
+
+  fun dumpUsage (f: LCPS.function, map: usage LV.Map.map) =
+    let val (accretion, use, inloop) =
+            LV.Map.foldli (fn
+                (x, Accretion, (a, u, i)) => (x :: a, u, i)
+              | (x, Use _, (a, u, i)) => (a, x :: u, i)
+              | (x, InLoopUse, (a, u, i)) => (a, u, x :: i)
+          ) ([], [], []) map
+        fun plist xs =
+          (print "[";
+           print (String.concatWithMap "," LV.lvarName xs);
+           print "]")
+    in  print (LV.lvarName (#2 f) ^ ": ");
+        print "\tA"; plist accretion;
+        print "\tU"; plist use;
+        print "\tI"; plist inloop;
+        print "\n";
+        ()
+    end
+
+  (* datatype pack = Pack of { *)
+  (*   packs: PackID.Set.set, *)
+  (*   loose: LV.Set.set, *)
+  (*   fv: LV.Set.set (1* Invariant: disjointU (packs, loose) = fv *1) *)
+  (* } *)
+  datatype pack = datatype SharingAnalysis.pack
+
+  (* type result = pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table *)
+  type result = SharingAnalysis.result
 
   fun packToString (Pack { packs, loose, fv }) =
     concat [
@@ -138,14 +244,15 @@ structure SharingAnalysis :> SHARING_ANALYSIS = struct
     cps: LCPS.function,
     syn: S.t,
     funtbl: CF.funtbl,
-    loopTbl: CF.looptbl
+    looptbl: CF.looptbl,
+    loopvars: loopvartbl
   ) =
     let open ControlFlow
         val sizeCutoff = !Config.sharingSizeCutOff
         val distCutoff = !Config.sharingDistCutOff
         val lookupBlock = LCPS.FunTbl.lookup funtbl
         fun lookupLoopInfo block =
-          Graph.NodeTbl.lookup loopTbl (Graph.Node block)
+          Graph.NodeTbl.lookup looptbl (Graph.Node block)
         fun isUsed fs v =
           List.exists (fn f => LCPS.FunSet.member (S.useSites syn v, f)) fs
         fun sortFixes blocks =
@@ -193,6 +300,9 @@ structure SharingAnalysis :> SHARING_ANALYSIS = struct
         val insertGroup = Group.Tbl.insert grpTbl
         val lookupGroup = Group.Tbl.lookup grpTbl
 
+        val getUsage   = analyzeUsage (syn, funtbl, looptbl, loopvars)
+        val unionUsage = LV.Map.unionWith mergeUsage
+
         val replaceTbl = PackID.Tbl.mkTable (64, Fail "replace table")
         fun replace (from, to) =
           (case PackID.Tbl.find replaceTbl from
@@ -224,15 +334,18 @@ structure SharingAnalysis :> SHARING_ANALYSIS = struct
         fun ask (grp: Group.t, functions: LCPS.function list) : pack =
           let val blocks = map lookupBlock functions
               val fv     = setOfKeys (S.groupFV syn grp)
+              val usage  = foldl (fn (f, u) =>
+                  unionUsage (getUsage f, u)
+                ) LV.Map.empty functions
               val fixes  = sortFixes blocks
               val packs  = map ask fixes
               val lowerLevelPacks = allPacks (packs, [])
 
-              (* val () = *)
-              (*   let val name = String.concatWithMap "," (LV.lvarName o #2) *)
-              (*                                        functions *)
-              (*   in  app print ["IN FUNCTIONS ", name, "\n"] *)
-              (*   end *)
+              val () =
+                let val name = String.concatWithMap "," (LV.lvarName o #2)
+                                                     functions
+                in  app print ["IN FUNCTIONS ", name, "\n"]
+                end
 
               (* See if we can throw any of the lower-level packs up since if
                * not we are responsible for allocating the pack. *)
@@ -241,15 +354,27 @@ structure SharingAnalysis :> SHARING_ANALYSIS = struct
                   LV.Set.exists (introducedAt functions) fv
                 ) lowerLevelPacks
 
-              (* val () = *)
-              (*   app print [ *)
-              (*   "candidates=[", String.concatWithMap ", " *)
-              (*   (PackID.toString o #1) candidates, "]\n", *)
-              (*   "ineligibles=[", String.concatWithMap ", " *)
-              (*   (PackID.toString o #1) ineligibles, "]\n"] *)
+              val () =
+                app print [
+                "candidates=[", String.concatWithMap ", "
+                (PackID.toString o #1) candidates, "]\n",
+                "ineligibles=[", String.concatWithMap ", "
+                (PackID.toString o #1) ineligibles, "]\n"]
 
-
-              (* val (usedFV, unusedFV) = LV.Set.partition (isUsed functions) fv *)
+              val (loopFV, computeFV, unusedFV) =
+                LV.Set.foldl (fn (v, (l, c, u)) =>
+                  (case LV.Map.find (usage, v)
+                     of NONE => raise Fail "Incomprehensive usage map"
+                      | SOME InLoopUse => (LV.Set.add (l, v), c, u)
+                      | SOME (Use _)   => (l, LV.Set.add (c, v), u)
+                      | SOME Accretion => (l, c, LV.Set.add (u, v)))
+                ) (LV.Set.empty, LV.Set.empty, LV.Set.empty) fv
+              (* loopFV -- we are currently in a loop and this is a loop
+               *           invariant.
+               * computeFV -- this fv is used directly for computation
+               * unusedFV  -- this fv is captured for a nested function
+               *
+               * loopFV will be not be put into a shared record. *)
 
               (* TODO: Use a better heuristics *)
               val (packs, remainingFV) =
@@ -259,7 +384,7 @@ structure SharingAnalysis :> SHARING_ANALYSIS = struct
                           | (c :: cs, _) =>
                               let fun szinter (_, Pack {fv, ...}) =
                                     let val inter =
-                                          LV.Set.intersection (fv, remain)
+                                          LV.Set.intersection (fv, unusedFV)
                                     in  LV.Set.numItems inter
                                     end
                                   val (c, cs) = removeMax szinter (c :: cs)
@@ -281,12 +406,12 @@ structure SharingAnalysis :> SHARING_ANALYSIS = struct
                 in  List.filter (not o inPacks) candidates
                 end
 
-              (* val () = *)
-              (*   app print [ *)
-              (*   "picked=[", String.concatWithMap ", " *)
-              (*   (PackID.toString o #1) packs, "]\n", *)
-              (*   "rejected=[", String.concatWithMap ", " *)
-              (*   (PackID.toString o #1) rejected, "]\n"] *)
+              val () =
+                app print [
+                "picked=[", String.concatWithMap ", "
+                (PackID.toString o #1) packs, "]\n",
+                "rejected=[", String.concatWithMap ", "
+                (PackID.toString o #1) rejected, "]\n"]
 
 
               val () =
@@ -300,25 +425,26 @@ structure SharingAnalysis :> SHARING_ANALYSIS = struct
                     fun checkDup rejected =
                       app (fn c => replaceIfSame (rejected, c)) packs
 
-                    (* val () = app print ["#rejected=", Int.toString (List.length *)
-                    (* rejected), "\n"] *)
+                    val () = app print ["#rejected=", Int.toString (List.length
+                    rejected), "\n"]
                 in  app checkDup rejected
                 end
 
               (* These are the free variables that the packs have not
                * accounted for. *)
-              val loose =
-                let val fv = foldl (fn ((_, Pack { fv, ... }), set) =>
-                        LV.Set.difference (set, fv)
-                      ) fv packs
-                    val fv = LV.Set.listItems fv
-                in  map (fn v => (v, defDepth v)) fv
+              val (remainingCompute, remainingUnused) =
+                let val (compute, unused) =
+                      foldl (fn ((_, Pack { fv, ... }), (c, u)) =>
+                        (LV.Set.difference (c, fv), LV.Set.difference (u, fv))
+                      ) (computeFV, unusedFV) packs
+                    val unused  = LV.Set.listItems unused
+                in  (compute, map (fn v => (v, defDepth v)) unused)
                 end
 
               val currDepth = S.depthOf syn (List.hd functions)
 
-              val (packs, loose) =
-                let val loose = sortBy #2 loose
+              val (packs, looseUnused) =
+                let val loose = sortBy #2 remainingUnused
                     fun findCandidatePacks (vs, fstDepth, currPack, packs) =
                       (case vs
                          of [] => currPack :: packs
@@ -362,12 +488,17 @@ structure SharingAnalysis :> SHARING_ANALYSIS = struct
                 in  (packs, loose)
                 end
 
+              val loose = LV.Set.union (
+                LV.Set.fromList (map #1 looseUnused),
+                LV.Set.union (loopFV, remainingCompute)
+              )
+
               val result = Pack {
                   packs=PackID.Set.fromList (map #1 packs),
-                  loose=LV.Set.fromList (map #1 loose),
+                  loose=loose,
                   fv=fv
                 }
-              (* val () = print "\n\n" *)
+              val () = print "\n\n"
           in  insertGroup (grp, result); result
           end
 
@@ -395,6 +526,39 @@ structure SharingAnalysis :> SHARING_ANALYSIS = struct
     let val knownFun = S.knownFun syn
         fun packOf f = Group.Tbl.lookup grpTbl (S.groupOf syn f)
         val lookupPack = PackID.Tbl.lookup packTbl
+        (* fun reachableInDepthN (n, Pack { packs, loose, ... }) = *)
+        (*   let datatype either = datatype Either.either *)
+        (*       fun go ([], packs, loose) = (packs, loose) *)
+        (*         | go ((depth, INL pack) :: todo, packs, loose) = *)
+        (*             if depth <= n - 1 then *)
+        (*               let val Pack { packs=packsP, loose=looseP, ... } = *)
+        (*                     lookupPack pack *)
+        (*                   val todop = map (fn p => (depth + 1, INL p)) packsP *)
+        (*                   val todol = map (fn l => (depth + 1, INR l)) looseP *)
+        (*                   val packs = PackID.Set.insert (packs, pack) *)
+        (*               in  go (todop @ todol @ todo, packs, loose) *)
+        (*               end *)
+        (*             else *)
+        (*               go (todo, PackID.Set.insert (packs, pack), loose) *)
+        (*         | go ((depth, INR v) :: todo, packs, loose) = *)
+        (*             (case knownFun v *)
+        (*                of NONE   => go (todo, packs, LV.Set.insert (loose, v)) *)
+        (*                 | SOME f => *)
+        (*                     if depth <= n - 1 then *)
+        (*                       let val Pack { packs=packsF, loose=looseF, ... } = *)
+        (*                             packOf f (1* NB: f's layout is decided *1) *)
+        (*                           val todop = *)
+        (*                             map (fn p => (depth + 1, INL p)) packsF *)
+        (*                           val todol = *)
+        (*                             map (fn p => (depth + 1, INL l)) looseF *)
+        (*                       in  go (todop @ todol @ todo, packs, *)
+        (*                               LV.Set.insert (loose, v)) *)
+        (*                       end) *)
+        (*       val todop = map (fn p => (1, INL p)) packs *)
+        (*       val todol = map (fn l => (1, INR l)) loose *)
+        (*   in  go (todop @ todol, PackID.Set.empty, LV.Set.empty) *)
+        (*   end *)
+
         fun thinning (Pack { loose, packs, fv }) =
           let fun go (v, (loose, packs)) =
                 (case knownFun v
@@ -503,10 +667,11 @@ structure SharingAnalysis :> SHARING_ANALYSIS = struct
     cps: LCPS.function,
     syn: S.t,
     funtbl: CF.funtbl,
-    loopTbl: CF.looptbl
+    looptbl: CF.looptbl
   ) : pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table =
-    let val (grpTbl, packTbl, replaceTbl) =
-          preference (cps, syn, funtbl, loopTbl)
+    let val loopvars = analyzeLoopVars looptbl
+        val (grpTbl, packTbl, replaceTbl) =
+          preference (cps, syn, funtbl, looptbl, loopvars)
         val () = prune (grpTbl, packTbl, replaceTbl)
         val () =
           if !Config.sharingNoThinning then () else thin (grpTbl, packTbl, syn)
@@ -521,8 +686,30 @@ structure SharingAnalysis :> SHARING_ANALYSIS = struct
         (* val () = PackID.Tbl.appi (fn (p, pack) => *)
         (*   app print [PackID.toString p, " --> ", packToString pack, "\n"] *)
         (* ) packTbl *)
+
+        (* fun appF f = Vector.app (fn g => *)
+        (*   let val fs = S.groupFun syn g *)
+        (*   in  Vector.app f fs *)
+        (*   end) (S.groups syn) *)
+        (* val () = appF (fn f => *)
+        (*     let val usage = analyzeUsage (syn, funtbl, looptbl, loopvars) f *)
+        (*     in  dumpUsage (f, usage) *)
+        (*     end *)
+        (*   ) *)
+        (* val () = ControlFlow.Graph.NodeTbl.appi (fn (node, (lv, inners)) => *)
+        (*     (print (ControlFlow.Graph.nodeToString node ^ "\n"); *)
+        (*      app print [ *)
+        (*        "\t[", *)
+        (*        String.concatWithMap "," LV.lvarName (LV.Set.listItems lv), *)
+        (*        "]\n"]; *)
+        (*      app print [ *)
+        (*        "\tinner [", *)
+        (*        String.concatWithMap "," ControlFlow.Graph.nodeToString inners, *)
+        (*        "]\n" *)
+        (*       ]) *)
+        (*   ) loopvars *)
     in  (grpTbl, packTbl)
     end
 
-    (* Generate a dot file *)
+
 end
