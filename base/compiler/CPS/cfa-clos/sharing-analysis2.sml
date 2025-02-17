@@ -300,6 +300,10 @@ structure SharingAnalysis2 :>
         val insertGroup = Group.Tbl.insert grpTbl
         val lookupGroup = Group.Tbl.lookup grpTbl
 
+        val pinnedTbl = Group.Tbl.mkTable (S.numFuns syn, Fail "pinned table")
+        val insertPin = Group.Tbl.insert pinnedTbl
+        val lookupPin = Group.Tbl.lookup pinnedTbl
+
         val getUsage   = analyzeUsage (syn, funtbl, looptbl, loopvars)
         val unionUsage = LV.Map.unionWith mergeUsage
 
@@ -499,7 +503,9 @@ structure SharingAnalysis2 :>
                   fv=fv
                 }
               (* val () = print "\n\n" *)
-          in  insertGroup (grp, result); result
+          in  insertGroup (grp, result);
+              insertPin (grp, loopFV);
+              result
           end
 
         val () =
@@ -508,7 +514,7 @@ structure SharingAnalysis2 :>
           in  ()
           end
 
-    in  (grpTbl, packTbl, replaceTbl)
+    in  (grpTbl, packTbl, replaceTbl, pinnedTbl)
     end
 
     (* TODO:
@@ -521,11 +527,13 @@ structure SharingAnalysis2 :>
     fun thin (
       grpTbl : pack Group.Tbl.hash_table,
       packTbl : pack PackID.Tbl.hash_table,
+      pinnedTbl : LV.Set.set Group.Tbl.hash_table,
       syn : S.t
     ) =
     let val knownFun = S.knownFun syn
         fun packOf f = Group.Tbl.lookup grpTbl (S.groupOf syn f)
         val lookupPack = PackID.Tbl.lookup packTbl
+        val lookupPin  = Group.Tbl.lookup pinnedTbl
         (* fun reachableInDepthN (n, Pack { packs, loose, ... }) = *)
         (*   let datatype either = datatype Either.either *)
         (*       fun go ([], packs, loose) = (packs, loose) *)
@@ -559,13 +567,14 @@ structure SharingAnalysis2 :>
         (*   in  go (todop @ todol, PackID.Set.empty, LV.Set.empty) *)
         (*   end *)
 
-        fun thinning (Pack { loose, packs, fv }) =
+        fun thinning (pinned, Pack { loose, packs, fv }) =
           let fun go (v, (loose, packs)) =
                 (case knownFun v
                    of NONE => (loose, packs)
                     | SOME f =>
                         let val Pack { packs=packsF, fv=looseF, ... } =
                               packOf f
+                            val looseF = LV.Set.difference (looseF, pinned)
                             val loose = LV.Set.difference (loose, looseF)
                             val packs = PackID.Set.difference (packs, packsF)
                         in  (loose, packs)
@@ -574,8 +583,10 @@ structure SharingAnalysis2 :>
                 LV.Set.foldl go (loose, packs) fv
           in  Pack { loose=loose, packs=packs, fv=fv }
           end
-        val () = Group.Tbl.modify thinning grpTbl
-        val () = PackID.Tbl.modify thinning packTbl
+        val () =
+          Group.Tbl.modifyi (fn (g, pck) => thinning (lookupPin g, pck)) grpTbl
+        val () =
+          PackID.Tbl.modify (fn pck => thinning (LV.Set.empty, pck)) packTbl
     in  ()
     end
 
@@ -670,11 +681,14 @@ structure SharingAnalysis2 :>
     looptbl: CF.looptbl
   ) : pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table =
     let val loopvars = analyzeLoopVars looptbl
-        val (grpTbl, packTbl, replaceTbl) =
+        val (grpTbl, packTbl, replaceTbl, pinnedTbl) =
           preference (cps, syn, funtbl, looptbl, loopvars)
         val () = prune (grpTbl, packTbl, replaceTbl)
         val () =
-          if !Config.sharingNoThinning then () else thin (grpTbl, packTbl, syn)
+          if !Config.sharingNoThinning then
+            ()
+          else
+            thin (grpTbl, packTbl, pinnedTbl, syn)
 
         (* val () = Group.Tbl.appi (fn (g, pack) => *)
         (*   let val fs = S.groupFun syn g *)
