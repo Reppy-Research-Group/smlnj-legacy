@@ -29,6 +29,7 @@ PROGRAMS = [
 
 OPTIONS = [
     '--new',
+    '--new2',
     '--space',
     '--time',
     # '--reg-limit',

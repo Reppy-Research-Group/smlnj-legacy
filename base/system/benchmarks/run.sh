@@ -18,7 +18,7 @@ if [ x"$1" = "x--new" ] ; then
   OUT_SUFFIX="-new"
   shift
 elif [ x"$1" = "x--new2" ] ; then
-  TAG=new
+  TAG=new2
   # SML="../../../bin/sml -Cnc.enable=true -Cnc.flatten-reg-limit=false"
   SML="$SML_IMPL -Cnc.enable=true -Cnc.sharing-policy=2 -Cnc.flatten-reg-limit=false"
   OUT_SUFFIX="-new"
@@ -65,8 +65,8 @@ elif [ x"$1" = "x--space" ] ; then
   shift
 elif [ x"$1" = "x--old" ] ; then
   TAG=old
-  SML="../../../../reference-legacy/bin/sml -Cnc.enable=false"
-  # SML="$SML_IMPL -Cnc.enable=false"
+  # SML="../../../../reference-legacy/bin/sml -Cnc.enable=false"
+  SML="$SML_IMPL -Cnc.enable=false"
   # SML="../../../bin/sml -Cnc.enable=false"
   OUT_SUFFIX="-old"
   shift
