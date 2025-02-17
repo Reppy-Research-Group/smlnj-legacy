@@ -341,11 +341,11 @@ structure SharingAnalysis2 :>
               val packs  = map ask fixes
               val lowerLevelPacks = allPacks (packs, [])
 
-              val () =
-                let val name = String.concatWithMap "," (LV.lvarName o #2)
-                                                     functions
-                in  app print ["IN FUNCTIONS ", name, "\n"]
-                end
+              (* val () = *)
+              (*   let val name = String.concatWithMap "," (LV.lvarName o #2) *)
+              (*                                        functions *)
+              (*   in  app print ["IN FUNCTIONS ", name, "\n"] *)
+              (*   end *)
 
               (* See if we can throw any of the lower-level packs up since if
                * not we are responsible for allocating the pack. *)
@@ -354,12 +354,12 @@ structure SharingAnalysis2 :>
                   LV.Set.exists (introducedAt functions) fv
                 ) lowerLevelPacks
 
-              val () =
-                app print [
-                "candidates=[", String.concatWithMap ", "
-                (PackID.toString o #1) candidates, "]\n",
-                "ineligibles=[", String.concatWithMap ", "
-                (PackID.toString o #1) ineligibles, "]\n"]
+              (* val () = *)
+              (*   app print [ *)
+              (*   "candidates=[", String.concatWithMap ", " *)
+              (*   (PackID.toString o #1) candidates, "]\n", *)
+              (*   "ineligibles=[", String.concatWithMap ", " *)
+              (*   (PackID.toString o #1) ineligibles, "]\n"] *)
 
               val (loopFV, computeFV, unusedFV) =
                 LV.Set.foldl (fn (v, (l, c, u)) =>
@@ -406,12 +406,12 @@ structure SharingAnalysis2 :>
                 in  List.filter (not o inPacks) candidates
                 end
 
-              val () =
-                app print [
-                "picked=[", String.concatWithMap ", "
-                (PackID.toString o #1) packs, "]\n",
-                "rejected=[", String.concatWithMap ", "
-                (PackID.toString o #1) rejected, "]\n"]
+              (* val () = *)
+              (*   app print [ *)
+              (*   "picked=[", String.concatWithMap ", " *)
+              (*   (PackID.toString o #1) packs, "]\n", *)
+              (*   "rejected=[", String.concatWithMap ", " *)
+              (*   (PackID.toString o #1) rejected, "]\n"] *)
 
 
               val () =
@@ -425,8 +425,8 @@ structure SharingAnalysis2 :>
                     fun checkDup rejected =
                       app (fn c => replaceIfSame (rejected, c)) packs
 
-                    val () = app print ["#rejected=", Int.toString (List.length
-                    rejected), "\n"]
+                    (* val () = app print ["#rejected=", Int.toString (List.length *)
+                    (* rejected), "\n"] *)
                 in  app checkDup rejected
                 end
 
@@ -498,7 +498,7 @@ structure SharingAnalysis2 :>
                   loose=loose,
                   fv=fv
                 }
-              val () = print "\n\n"
+              (* val () = print "\n\n" *)
           in  insertGroup (grp, result); result
           end
 
@@ -564,7 +564,7 @@ structure SharingAnalysis2 :>
                 (case knownFun v
                    of NONE => (loose, packs)
                     | SOME f =>
-                        let val Pack { packs=packsF, loose=looseF, ... } =
+                        let val Pack { packs=packsF, fv=looseF, ... } =
                               packOf f
                             val loose = LV.Set.difference (loose, looseF)
                             val packs = PackID.Set.difference (packs, packsF)
