@@ -34,8 +34,11 @@ structure ControlFlow :> sig
   type funtbl = block LabelledCPS.FunTbl.hash_table
   type looptbl = loop_info Graph.NodeTbl.hash_table
 
+  type loopvartbl =
+    (LambdaVar.Set.set * Graph.node list) Graph.NodeTbl.hash_table
+
   val analyze : LabelledCPS.function * SyntacticInfo.t * FlowCFA.result
-              -> funtbl * looptbl
+              -> funtbl * looptbl * loopvartbl
 end = struct
   structure LCPS = LabelledCPS
   structure LV = LambdaVar
@@ -752,6 +755,44 @@ end = struct
       end
   end
 
+  type loopvartbl =
+    (LV.Set.set * Graph.node list) Graph.NodeTbl.hash_table
+
+  fun analyzeLoopVars (
+    looptbl: looptbl
+  ) : loopvartbl =
+    let exception NotAHeader
+        val loopvars : loopvartbl = Graph.NodeTbl.mkTable (32, NotAHeader)
+        fun addUses (header as Graph.Start _, uses) = ()
+          | addUses (header, uses) =
+              (case Graph.NodeTbl.find loopvars header
+                 of SOME (uses', inners) =>
+                      Graph.NodeTbl.insert
+                        loopvars (header, (LV.Set.union (uses, uses'), inners))
+                  | NONE =>
+                      Graph.NodeTbl.insert loopvars (header, (uses, [])))
+        fun addInner (header as Graph.Start _, inner) = ()
+          | addInner (header, inner) =
+              (case Graph.NodeTbl.find loopvars header
+                 of SOME (uses, inners) =>
+                      Graph.NodeTbl.insert
+                        loopvars (header, (uses, inner :: inners))
+                  | NONE =>
+                      Graph.NodeTbl.insert
+                        loopvars (header, (LV.Set.empty, [inner])))
+        fun addNode (node, { header, ty, ... }: loop_info) =
+          (case (node, ty)
+             of (Graph.Start _, NonHeader) => ()
+              | (Graph.Start _, _) => ()
+              | (Graph.Node (Block { uses, ... }), NonHeader) =>
+                  addUses (header, uses)
+              | (Graph.Node (Block { uses, ... }), _) => (* all are headers *)
+                  (addUses (node, uses); addInner (header, node)))
+        val () = Graph.NodeTbl.appi addNode looptbl
+    in  loopvars
+    end
+
+
   fun timeit _ f x = f x
 
   type looptbl = loop_info Graph.NodeTbl.hash_table
@@ -760,7 +801,8 @@ end = struct
     let val funtbl = Summary.analyze syn
         val graph  = timeit "  build-graph" Graph.build (funtbl, syn, flow)
         val looptbl = timeit "  loop-nest" LoopNestingTree.build (graph, syn)
+        val loopvars = analyzeLoopVars looptbl
         (* val _ = SharingAnalysis.analyze (cps, syn, funtbl, loopTbl) *)
-    in  (funtbl, looptbl)
+    in  (funtbl, looptbl, loopvars)
     end
 end

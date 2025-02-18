@@ -23,13 +23,12 @@ structure SharingAnalysis2 :>
   fun getProb (NONE, n)   = 1.0 / (real n)
     | getProb (SOME p, _) = Prob.toReal p
 
-  type loopvartbl = (LV.Set.set * Graph.node list) Graph.NodeTbl.hash_table
 
   fun analyzeUsage (
     syn: S.t,
     funtbl: CF.funtbl,
     looptbl: CF.looptbl,
-    loopvars: loopvartbl
+    loopvars: CF.loopvartbl
   ) (f: LCPS.function): usage LV.Map.map =
     let val freevar = S.groupFV syn
         val union   = LV.Map.unionWith mergeUsage
@@ -75,41 +74,6 @@ structure SharingAnalysis2 :>
         val fv     = S.groupFV syn (S.groupOf syn f)
         val usages = walk (1.0, entry)
     in  LV.Map.intersectWith (fn (u, _) => u) (usages, fv)
-    end
-
-  fun analyzeLoopVars (
-    looptbl: CF.looptbl
-  ) : loopvartbl =
-    let open ControlFlow
-        exception NotAHeader
-        val loopvars : loopvartbl = Graph.NodeTbl.mkTable (32, NotAHeader)
-        fun addUses (header as Graph.Start _, uses) = ()
-          | addUses (header, uses) =
-              (case Graph.NodeTbl.find loopvars header
-                 of SOME (uses', inners) =>
-                      Graph.NodeTbl.insert
-                        loopvars (header, (LV.Set.union (uses, uses'), inners))
-                  | NONE =>
-                      Graph.NodeTbl.insert loopvars (header, (uses, [])))
-        fun addInner (header as Graph.Start _, inner) = ()
-          | addInner (header, inner) =
-              (case Graph.NodeTbl.find loopvars header
-                 of SOME (uses, inners) =>
-                      Graph.NodeTbl.insert
-                        loopvars (header, (uses, inner :: inners))
-                  | NONE =>
-                      Graph.NodeTbl.insert
-                        loopvars (header, (LV.Set.empty, [inner])))
-        fun addNode (node, { header, ty, ... }: loop_info) =
-          (case (node, ty)
-             of (Graph.Start _, CF.NonHeader) => ()
-              | (Graph.Start _, _) => ()
-              | (Graph.Node (Block { uses, ... }), CF.NonHeader) =>
-                  addUses (header, uses)
-              | (Graph.Node (Block { uses, ... }), _) => (* all are headers *)
-                  (addUses (node, uses); addInner (header, node)))
-        val () = Graph.NodeTbl.appi addNode looptbl
-    in  loopvars
     end
 
   fun dumpUsage (f: LCPS.function, map: usage LV.Map.map) =
@@ -245,7 +209,7 @@ structure SharingAnalysis2 :>
     syn: S.t,
     funtbl: CF.funtbl,
     looptbl: CF.looptbl,
-    loopvars: loopvartbl
+    loopvars: CF.loopvartbl
   ) =
     let open ControlFlow
         val sizeCutoff = !Config.sharingSizeCutOff
@@ -441,13 +405,15 @@ structure SharingAnalysis2 :>
                       foldl (fn ((_, Pack { fv, ... }), (c, u)) =>
                         (LV.Set.difference (c, fv), LV.Set.difference (u, fv))
                       ) (computeFV, unusedFV) packs
+                    (* val compute = LV.Set.listItems compute *)
                     val unused  = LV.Set.listItems unused
-                in  (compute, map (fn v => (v, defDepth v)) unused)
+                in  (compute,
+                     map (fn v => (v, defDepth v)) unused)
                 end
 
               val currDepth = S.depthOf syn (List.hd functions)
 
-              val (packs, looseUnused) =
+              val (packs, looseUnusedAndCompute) =
                 let val loose = sortBy #2 remainingUnused
                     fun findCandidatePacks (vs, fstDepth, currPack, packs) =
                       (case vs
@@ -493,8 +459,8 @@ structure SharingAnalysis2 :>
                 end
 
               val loose = LV.Set.union (
-                LV.Set.fromList (map #1 looseUnused),
-                LV.Set.union (loopFV, remainingCompute)
+                LV.Set.fromList (map #1 looseUnusedAndCompute),
+                LV.Set.union (remainingCompute, loopFV)
               )
 
               val result = Pack {
@@ -678,11 +644,11 @@ structure SharingAnalysis2 :>
     cps: LCPS.function,
     syn: S.t,
     funtbl: CF.funtbl,
-    looptbl: CF.looptbl
+    looptbl: CF.looptbl,
+    loopvartbl: CF.loopvartbl
   ) : pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table =
-    let val loopvars = analyzeLoopVars looptbl
-        val (grpTbl, packTbl, replaceTbl, pinnedTbl) =
-          preference (cps, syn, funtbl, looptbl, loopvars)
+    let val (grpTbl, packTbl, replaceTbl, pinnedTbl) =
+          preference (cps, syn, funtbl, looptbl, loopvartbl)
         val () = prune (grpTbl, packTbl, replaceTbl)
         val () =
           if !Config.sharingNoThinning then

@@ -13,6 +13,7 @@ signature SHARING_ANALYSIS = sig
               * SyntacticInfo.t
               * ControlFlow.funtbl
               * ControlFlow.looptbl
+              * ControlFlow.loopvartbl
               -> result
 end
 
@@ -503,7 +504,8 @@ structure SharingAnalysis :> SHARING_ANALYSIS = struct
     cps: LCPS.function,
     syn: S.t,
     funtbl: CF.funtbl,
-    loopTbl: CF.looptbl
+    loopTbl: CF.looptbl,
+    _
   ) : pack Group.Tbl.hash_table * pack PackID.Tbl.hash_table =
     let val (grpTbl, packTbl, replaceTbl) =
           preference (cps, syn, funtbl, loopTbl)

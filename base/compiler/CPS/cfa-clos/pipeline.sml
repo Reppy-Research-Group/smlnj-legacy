@@ -5,6 +5,7 @@ functor ClosureDecisionPipeline(MachSpec : MACH_SPEC) :> sig
                * SharingAnalysis.result
                * ControlFlow.funtbl
                * ControlFlow.looptbl
+               * ControlFlow.loopvartbl
               -> ClosureDecision.t
 end = struct
   structure CF = ControlFlow
@@ -18,7 +19,7 @@ end = struct
   structure SA = SharingAnalysis
   structure W = Web
   structure FA = FlatteningAnalysis(MachSpec)
-
+  structure Config = Control.NC
 
   val maxgpregs = MachSpec.numRegs
   val maxfpregs = MachSpec.numFloatRegs - 2  (* need 1 or 2 temps *)
@@ -37,6 +38,17 @@ end = struct
   fun numfp (m,CPS.CNTt::z) = numfp(m-numCSfpregs,z)
     | numfp (m,x::z) = if isFltCty(x) then numfp(m-1,z) else numfp(m,z)
     | numfp (m,[]) = m
+
+  fun countReg slots =
+    let fun go ([], ngp, nfp) = (ngp, nfp)
+          | go (D.Var (_, ty) :: ss, ngp, nfp) =
+              if isFltCty ty then
+                go (ss, ngp, nfp + 1)
+              else
+                go (ss, ngp + 1, nfp)
+          | go (_ :: ss, ngp, nfp) = go (ss, ngp + 1, nfp)
+    in  go (slots, 0, 0)
+    end
 
   fun argmin f [] = raise Empty
     | argmin f (x :: xs) =
@@ -790,23 +802,37 @@ end = struct
     in  D.T { allo=allo, heap=heap, repr=repr }
     end
 
-  fun mergePref ((lvl1, prob1: real), (lvl2, prob2: real)) =
+  fun mergePref ((inloop1, lvl1, prob1: real), (inloop2, lvl2, prob2: real)) =
     let val lvl = Int.max (lvl1, lvl2)
         (* val lvl = lvl1 + lvl2 *)
         val prob = prob1 + prob2
-    in  (lvl, prob)
+    in  (inloop1 orelse inloop2, lvl, prob)
     end
 
   fun getPreference (
     looptbl: CF.looptbl,
     funtbl: CF.funtbl,
+    loopvars : CF.loopvartbl,
     syn: S.t,
     f: LCPS.function
-  ) : (int * real) LV.Map.map =
+  ) : (bool * int * real) LV.Map.map =
     let fun lookupBlock b = CF.Graph.NodeTbl.lookup looptbl (CF.Graph.Node b)
-        fun preference entry : (int * real) LV.Map.map =
+        fun getloopvar block =
+          let val node = CF.Graph.Node block
+              val { header=loophdr, ty=ty, ... } =
+                CF.Graph.NodeTbl.lookup looptbl (CF.Graph.Node block)
+              val (loopvars, _) =
+                (case (loophdr, ty)
+                   of (CF.Graph.Start _, CF.NonHeader) => (LV.Set.empty, [])
+                    | (_, CF.NonHeader) => CF.Graph.NodeTbl.lookup loopvars loophdr
+                    | _ => CF.Graph.NodeTbl.lookup loopvars node)
+          in  loopvars
+          end
+        fun preference entry : (bool * int * real) LV.Map.map =
           let fun getProb (NONE, n) = 1.0 / Real.fromInt n
                 | getProb (SOME p, _) = Prob.toReal p
+              val loopvars = getloopvar entry
+              fun isLoopVar v = LV.Set.member (loopvars, v)
               val insert = LV.Map.insertWith mergePref
               val union = LV.Map.unionWith mergePref
               fun build (b as CF.Block { term, uses, fix, ... }, prob) =
@@ -816,7 +842,7 @@ end = struct
                                         LV.Map.listKeys (S.groupFV syn grp))
                       ) uses fix
                     val pref = LV.Set.foldl (fn (v, pref) =>
-                        insert (pref, v, (nestingDepth, prob))
+                        insert (pref, v, (isLoopVar v, nestingDepth, prob))
                       ) LV.Map.empty augUses
                 in  case term
                       of CF.Branch (_, _, b1, b2, p) =>
@@ -837,11 +863,12 @@ end = struct
                 end
           in  build (entry, 1.0)
           end
-    in  preference (LCPS.FunTbl.lookup funtbl f)
+        val entry = LCPS.FunTbl.lookup funtbl f
+    in  preference entry
     end
 
   fun pickNSlots (pref, heap, slots, n) : D.slot list * D.slot list =
-    let val botPref = (~1, ~1.0)
+    let val botPref = (false, ~1, ~1.0)
         fun slotPref (slot, heap, pref) =
           (case slot
              of D.EnvID e =>
@@ -878,11 +905,18 @@ end = struct
         fun pick (pref, heap, slots, n) : D.slot list * D.slot list =
           let val slotsWithPref =
                 map (fn s => (s, slotPref (s, heap, pref))) slots
-              fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) =
-                if sameProb (prob1, prob2) then
-                  lvl1 < lvl2
-                else
-                  prob1 < prob2
+              fun gt ((v, (inloop1, lvl1, prob1)), (w, (inloop2, lvl2, prob2)))=
+                let fun breakTie () =
+                      if sameProb (prob1, prob2) then
+                        lvl1 < lvl2
+                      else
+                        prob1 < prob2
+                in case (inloop1, inloop2)
+                     of (true, true)   => breakTie ()
+                      | (true, false)  => false
+                      | (false, true)  => true
+                      | (false, false) => breakTie ()
+                end
               (* fun gt ((v, (lvl1, prob1)), (w, (lvl2, prob2))) = *)
               (*   if lvl1 = lvl2 then *)
               (*     prob1 < prob2 *)
@@ -904,7 +938,8 @@ end = struct
     end
 
   fun allocate'n'expand
-    (syn: S.t, web: W.t, funtbl: CF.funtbl, looptbl: CF.looptbl)
+    (syn: S.t, web: W.t, funtbl: CF.funtbl, looptbl: CF.looptbl,
+     loopvartbl: CF.loopvartbl)
     (D.T { repr, heap, allo })
   : D.t =
     let
@@ -1084,7 +1119,7 @@ end = struct
           end
 
         fun allocate (heap, f, e, avail, availEnvs) : D.environment * D.heap =
-          let val pref = getPreference (looptbl, funtbl, syn, f)
+          let val pref = getPreference (looptbl, funtbl, loopvartbl, syn, f)
               val slots = (case EnvID.Map.lookup (heap, e)
                              of D.Record (slots, false) => slots
                               | D.Record (slots, true) =>
@@ -1142,18 +1177,19 @@ end = struct
                   raise Fail "unboxing non direct function"
                 else
                   ()
-              (* val avail = numgp(maxgpregs, #4 f) *)
+              val avail = numgp(maxgpregs, #4 f)
+              val (ngp, nfp) = countReg slots
               (* val e1 = allocate (heap, f, e, avail, availEnvs) *)
               (* val heap = EnvID.Map.insert (heap, e, D.Record ([], false)) *)
               (* val e2 = (D.Flat slots, heap) *)
-              val numArgCutOff = maxgpregs + maxfpregs
-              val nargs = List.length (#3 f)
-          in  if List.length slots + nargs <= numArgCutOff then
+              (* val numArgCutOff = maxgpregs + maxfpregs *)
+              (* val nargs = List.length (#3 f) *)
+          in  if !Config.flattenRegLimit andalso ngp <= avail then
                 let val heap = EnvID.Map.insert (heap, e, D.Record ([], false))
                 in  (D.Flat slots, heap)
                 end
               else
-                allocate (heap, f, e, numArgCutOff - nargs, availEnvs)
+                allocate (heap, f, e, avail + nfp, availEnvs)
           end
         (* Environments now look like one of the following:
          * 1. Boxed e
@@ -1250,7 +1286,7 @@ end = struct
     end
     handle e => (D.dump (D.T {repr=repr, allo=allo, heap=heap}, syn); raise e)
 
-  fun fixOvershare (syn, funtbl, looptbl) (D.T {repr, allo, heap}) =
+  fun fixOvershare (syn, funtbl, looptbl, loopvartbl) (D.T {repr, allo, heap}) =
     let fun scanSharedEnvAndSlack ([], sharedenvs, slack)  = (sharedenvs, slack)
           | scanSharedEnvAndSlack (D.Null :: slots, sharedenvs, slack) =
               scanSharedEnvAndSlack (slots, sharedenvs, slack + 1)
@@ -1329,7 +1365,7 @@ end = struct
             allocation
           else
             let val pref = foldl (fn (f, pref) =>
-                    let val p = getPreference (looptbl, funtbl, syn, f)
+                    let val p = getPreference (looptbl, funtbl, loopvartbl, syn, f)
                     in  LV.Map.unionWith mergePref (pref, p)
                     end
                   ) LV.Map.empty functions
@@ -1404,7 +1440,8 @@ end = struct
   val _ = removeKnownCodePtr : W.t * S.t -> rewriting
   val _ = removeEmptyEnv : S.t * W.t -> rewriting
   val _ = removeSingletonEnv : rewriting
-  val _ = allocate'n'expand  : S.t * W.t * CF.funtbl * CF.looptbl -> rewriting
+  val _ = allocate'n'expand 
+        : S.t * W.t * CF.funtbl * CF.looptbl * CF.loopvartbl -> rewriting
 
   fun fake syn (f : rewriting) : rewriting = fn dec =>
     let val () = print "BEFORE\n:"
@@ -1432,7 +1469,8 @@ end = struct
     web: W.t,
     shr: SA.result,
     funtbl: CF.funtbl,
-    looptbl: CF.looptbl
+    looptbl: CF.looptbl,
+    loopvartbl: CF.loopvartbl
   ): D.t =
     let val process =
               initial
@@ -1441,8 +1479,8 @@ end = struct
           >>> removeEmptyEnv (syn, web)
           >>> unshare (syn, funtbl, looptbl)
           >>> analyze'n'flatten (syn, web)
-          >>> allocate'n'expand (syn, web, funtbl, looptbl)
-          >>> fixOvershare (syn, funtbl, looptbl)
+          >>> allocate'n'expand (syn, web, funtbl, looptbl, loopvartbl)
+          >>> fixOvershare (syn, funtbl, looptbl, loopvartbl)
           >>> segregateMLValues
           >>> removeSingletonEnv
 
