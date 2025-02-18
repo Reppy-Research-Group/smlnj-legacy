@@ -26,6 +26,7 @@ PARAMETERS = {
     "flatten-selfref": booleans,
     "flatten-liberally": booleans,
     "flatten-reg-limit": booleans,
+    # "sharing-no-thinning": booleans,
     "sharing-policy": range(1, 3),
     "flatten-policy": range(2),
     "sharing-dist-cutoff": range(1, 5),
@@ -35,14 +36,30 @@ PARAMETERS = {
 
 PROGRAMS = [
     # 'hamlet2',
-    'vliw',
     'barnes-hut',
-    'life',
-    'mc-ray',
+    'boyer',
+    # 'delta-blue',
+    'dlx',
+    'fft',
+    # 'hamlet',
+    # 'hamlet2',
+    'knuth-bendix',
     'lexgen',
-    'mandelbrot',
+    'life',
+    'list',
+    'logic',
     'mandelbrot-int',
+    'mandelbrot',
+    'mazefun',
+    'mc-ray',
     'nucleic',
+    'plclub-ray',
+    'profile',
+    'simple',
+    'smith-nf',
+    'timeit',
+    'tsp',
+    'vliw',
 ]
 
 def get_grid(parameters):
@@ -56,15 +73,18 @@ def get_program_param(programs, grid):
 def test_param(program, param):
     param_id, param_dict = param
     param_list = [f"-Cnc.{flag}={value}" for flag, value in param_dict.items()]
-    param_list.append("-Cnc.flatten-reg-limit=false")
+    # param_list.append("-Cnc.flatten-reg-limit=false")
 
-    process = subprocess.run(
-        ["./test.sh", program] + param_list,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    result = eval(process.stdout)
+    try:
+        process = subprocess.run(
+            ["./test.sh", program] + param_list,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = eval(process.stdout)
+    except:
+        raise Exception(" ".join(["./test.sh", program] + param_list))
     progress.advance(total)
     return (param_id, result)
 
@@ -81,7 +101,7 @@ progress = Progress(
 )
 
 results = defaultdict(list)
-with progress, ThreadPoolExecutor(max_workers=15) as pool:
+with progress, ThreadPoolExecutor(max_workers=1) as pool:
     total = progress.add_task("All", total=len(all_tasks))
     futures = []
     for program, param in all_tasks:

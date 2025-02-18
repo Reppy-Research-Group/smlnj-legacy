@@ -245,7 +245,7 @@ structure Main : BMARK =
 	caveToMaze (pierceRandomly (shuffle possibleHoles) cave)
       end
 
-    val iterations = 10000
+    val iterations = 1000
 
     (*
     The 11 x 11 version should look like this:
