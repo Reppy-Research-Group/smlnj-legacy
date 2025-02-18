@@ -1,12 +1,40 @@
+(* /Users/byron/Documents/School/Research/master-thesis/benchmarks/programs/life/all.sml -- all sources for life *)
+local
+(******************** bmark.sig ********************)
+(* bmark.sig
+ *
+ * COPYRIGHT (c) 2024 The Fellowship of SML/NJ (https://www.smlnj.org)
+ * All rights reserved.
+ *)
+
+signature BMARK =
+  sig
+(* TODO: add some form of benchmark description *)
+
+    (* the short name for the benchmark *)
+    val name : string
+
+    (* run the benchmark program for timing purposes (no output) *)
+    val doit : unit -> unit
+
+    (* run the benchmark program and direct its output to the specified
+     * outstream.  This function can be used to verify that the benchmark
+     * is producing the expected results.
+     *)
+    val testit : TextIO.outstream -> unit
+
+  end
+in
 (* life.sml
  *
  * COPYRIGHT (c) 2021 The Fellowship of SML/NJ (http://www.smlnj.org)
  * All rights reserved.
  *)
 
-(* structure Main : BMARK = *)
-structure Main :> sig val doit : unit -> unit end =
+structure Main : BMARK =
   struct
+
+    val name = "life"
 
     fun map f [] = []
       | map f (a::x) = f a :: map f x
@@ -20,17 +48,17 @@ structure Main :> sig val doit : unit -> unit end =
     fun error str = raise ex_undefined str
 
     fun accumulate f = let
-          fun foldf a [] = a
+	  fun foldf a [] = a
             | foldf a (b::x) = foldf (f a b) x
           in
-            foldf
-          end
+	    foldf
+	  end
 
     fun filter p = let
-          fun consifp x a = if p a then a::x else x
+	  fun consifp x a = if p a then a::x else x
           in
-            rev o accumulate consifp []
-          end
+	    rev o accumulate consifp []
+	  end
 
 
     fun exists p = let fun existsp [] = false
@@ -64,7 +92,6 @@ structure Main :> sig val doit : unit -> unit end =
       and lexless(a1:int,b1:int)(a2,b2) =
            if a2<a1 then true else if a2=a1 then b2<b1 else false
       and lexgreater pr1 pr2 = lexless pr2 pr1
-
       fun collect f list =
              let fun accumf sofar [] = sofar
                    | accumf sofar (a::x) = accumf (revonto sofar (f a)) x
@@ -78,7 +105,7 @@ structure Main :> sig val doit : unit -> unit end =
                    if member x3 a then f (a::xover) x3 x2 x1 x else
                    if member x2 a then f xover (a::x3) x2 x1 x else
                    if member x1 a then f xover x3 (a::x2) x1 x else
-                                       f xover x3 x2 (a::x1) x
+		                       f xover x3 x2 (a::x1) x
               and diff x y = filter (not o member y) x
            in f [] [] [] [] x end
      in
@@ -91,18 +118,16 @@ structure Main :> sig val doit : unit -> unit end =
                   val isalive = member living
                   val liveneighbours = length o filter isalive o neighbours
                   fun twoorthree n = n=2 orelse n=3
-                  val survivors = filter (twoorthree o liveneighbours) living
-                  val newnbrlist = collect (filter (not o isalive) o neighbours) living
-                  val newborn = occurs3 newnbrlist
-               in mkgen (survivors @ newborn) end
+	          val survivors = filter (twoorthree o liveneighbours) living
+	          val newnbrlist = collect (filter (not o isalive) o neighbours) living
+	          val newborn = occurs3 newnbrlist
+	       in mkgen (survivors @ newborn) end
      end
     end
 
-
     fun neighbours (i,j) = [(i-1,j-1),(i-1,j),(i-1,j+1),
-                            (i,j-1),(i,j+1),
-                            (i+1,j-1),(i+1,j),(i+1,j+1)]
-
+			    (i,j-1),(i,j+1),
+			    (i+1,j-1),(i+1,j),(i+1,j+1)]
 
     local val xstart = 0 and ystart = 0
           fun markafter n string = string ^ spaces n ^ "0"
@@ -135,7 +160,7 @@ structure Main :> sig val doit : unit -> unit end =
        end
 
     val genB = mkgen(glider at (2,2) @ bail at (2,12)
-                     @ rotate (barberpole 4) at (5,20))
+		     @ rotate (barberpole 4) at (5,20))
 
     fun nthgen g 0 = g | nthgen g i = nthgen (mk_nextgen_fn neighbours g) (i-1)
 
@@ -148,10 +173,16 @@ structure Main :> sig val doit : unit -> unit end =
 
     fun show pr = (app (fn s => (pr s; pr "\n"))) o plot o alive
 
-    fun doit () = show (fn _ => ()) (nthgen gun 50000)
+    fun runOnce () = nthgen gun 50
 
-    fun testit strm = show (fn c => TextIO.output (strm, c)) (nthgen gun 50)
+    fun doit () = let
+          fun lp 0 = ()
+            | lp n = (runOnce(); lp(n-1))
+          in
+            lp 100
+          end
 
+    fun testit strm = show (fn c => TextIO.output (strm, c)) (runOnce())
 
-  end (* Life *)
-
+  end (* Main *)
+end; (* local *)

@@ -1,3 +1,30 @@
+(* /Users/byron/Documents/School/Research/master-thesis/benchmarks/programs/nucleic/all.sml -- all sources for nucleic *)
+local
+(******************** bmark.sig ********************)
+(* bmark.sig
+ *
+ * COPYRIGHT (c) 2024 The Fellowship of SML/NJ (https://www.smlnj.org)
+ * All rights reserved.
+ *)
+
+signature BMARK =
+  sig
+(* TODO: add some form of benchmark description *)
+
+    (* the short name for the benchmark *)
+    val name : string
+
+    (* run the benchmark program for timing purposes (no output) *)
+    val doit : unit -> unit
+
+    (* run the benchmark program and direct its output to the specified
+     * outstream.  This function can be used to verify that the benchmark
+     * is producing the expected results.
+     *)
+    val testit : TextIO.outstream -> unit
+
+  end
+(******************** nucleic.sml ********************)
 (* File: "nucleic.sml" *)
 
 structure Nucleic : sig
@@ -25,12 +52,12 @@ fun pt_dist (x1,y1,z1) (x2,y2,z2) = let
     end
 
 fun pt_phi (x,y,z) = let
-      val b = Math.atan2 (x, z)
+      val b = Math.atan2(x, z)
     in
-      Math.atan2 (((Math.cos b) * z + ((Math.sin b) * x)), y)
+      Math.atan2 (Math.cos b * z + Math.sin b * x, y)
     end
 
-fun pt_theta (x,y,z) =  Math.atan2 (x, z)
+fun pt_theta (x,y,z) =  Math.atan2(x, z)
 
 (* -- COORDINATE TRANSFORMATIONS --------------------------------------------*)
 
@@ -3166,17 +3193,28 @@ fun anticodon_constraint (i,t,n) partial_inst
 (* Anticodon*)
 
     fun anticodon () =
-          queue_to_list (search [] (anticodon_domains ()) anticodon_constraint)
+	  queue_to_list (search [] (anticodon_domains ()) anticodon_constraint)
 
     fun anticodon_length () = length(anticodon())
 
-end
+end;
+
+in
+(* main.sml
+ *
+ * COPYRIGHT (c) 2024 The Fellowship of SML/NJ (https://www.smlnj.org)
+ * All rights reserved.
+ *)
 
 structure Main : BMARK =
   struct
-    val name = "Nucleic"
+    val name = "nucleic"
+
     fun doit () = (Nucleic.anticodon_length (); ())
+
     fun testit strm = TextIO.output(strm, concat[
-            Int.toString (Nucleic.anticodon_length ()), "\n"
-          ])
-  end;
+	    Int.toString (Nucleic.anticodon_length ()), "\n"
+	  ])
+
+  end
+end; (* local *)
