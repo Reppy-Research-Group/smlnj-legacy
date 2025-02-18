@@ -26,6 +26,8 @@ PARAMETERS = {
     "flatten-selfref": booleans,
     "flatten-liberally": booleans,
     "flatten-reg-limit": booleans,
+    "sharing-policy": range(1, 3),
+    "flatten-policy": range(2),
     "sharing-dist-cutoff": range(1, 5),
     "sharing-size-cutoff": range(2, 10),
     "sharing-use-cutoff": range(1, 5),

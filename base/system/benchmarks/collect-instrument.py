@@ -30,12 +30,12 @@ OPTIONS = [
     '--new',
     '--new2',
     # '--space',
-    # '--time',
+    '--time',
     # '--reg-limit',
     # '--no-flatten',
-    # '--no-active-sharing',
-    # '--no-sharing',
-    # '--flat-closure',
+    '--no-active-sharing',
+    '--no-sharing',
+    '--flat-closure',
     # '--conservative',
     # '--old'
 ]
